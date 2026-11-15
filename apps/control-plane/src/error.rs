@@ -1896,7 +1896,7 @@ fn sub_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::NOT_FOUND,
             "network_agent.sub_room_parent_unavailable",
             ErrorCategory::Validation,
-            "You can only open a sub-room under a room you made, or one you came into with its Agent code or by knocking and can still speak in; this one isn't, or it was closed. Showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
+            "You can only open or list sub-rooms under a room you made, or one you came into with its Agent code or by knocking and can still speak in; this one isn't, or it was closed. Showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
         // 别的由 `network_agent_mapping` 回答，到不了这里。
         _ => NETWORK_AGENT_INTERNAL,

@@ -2,9 +2,12 @@
 
 use agent_room_application::network_agents::{
     NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomUseCases,
-    NetworkAgentSubRoomRequest,
+    NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
 };
-use agent_room_application::ports::NetworkAgentRoomRecord;
+use agent_room_application::{
+    ports::{NetworkAgentRoomRecord, SubRoomEntry},
+    private_rooms::{AgentSubRoomItem, AgentSubRooms, ListAgentSubRooms},
+};
 
 use super::*;
 
@@ -339,4 +342,155 @@ async fn 令牌不对时不建() {
         NetworkAgentFailureKind::Unauthorized
     );
     assert!(harness.rooms.sub_rooms_created.lock().unwrap().is_empty());
+}
+
+// ---- 看子房间名单（2h-2）
+
+fn entry(
+    catalog: RoomCatalogId,
+    name: &str,
+    access: RoomJoinMode,
+    created_by: PrincipalId,
+    category: Option<&str>,
+) -> AgentSubRoomItem {
+    AgentSubRoomItem {
+        entry: SubRoomEntry {
+            catalog_id: catalog,
+            matrix_room: owned_matrix_room(catalog),
+            name: name.to_owned(),
+            description: format!("{name}的用途"),
+            access,
+            hidden: false,
+            category_id: None,
+            archived: false,
+            archive_record: None,
+            created_by,
+            created_at: UtcMillis::new(START).unwrap(),
+            managers: Vec::new(),
+            viewer_status: None,
+            member_count: 3,
+            agent_count: 2,
+            last_message_at: Some(UtcMillis::new(START + 5).unwrap()),
+            viewer_requested_at: None,
+            pending_requests: 0,
+        },
+        category: category.map(str::to_owned),
+    }
+}
+
+async fn list(
+    harness: &Harness,
+    token: &str,
+    parent: &str,
+    archived: bool,
+) -> Result<NetworkAgentSubRoomList, NetworkAgentFailure> {
+    harness
+        .service
+        .list_sub_rooms(token, parent, archived)
+        .await
+}
+
+#[tokio::test]
+async fn 看子房间名单_交给私人房间用例_按它进过的房间说在不在里面_有门又不在里面的不给人数() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let someone = PrincipalId::from_uuid(Uuid::now_v7());
+    let other = harness.rooms.seed_other(someone);
+    record_entered(&harness, other, false).await;
+    let parent = harness
+        .rooms
+        .rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|snapshot| snapshot.catalog().id() == other)
+        .unwrap()
+        .clone();
+    let (open, door, its) = (catalog_id(201), catalog_id(202), catalog_id(203));
+    *harness.rooms.sub_room_list.lock().unwrap() = Some(Ok(AgentSubRooms {
+        parent,
+        categories: vec!["进行中".to_owned()],
+        rooms: vec![
+            entry(open, "大家的", RoomJoinMode::Open, someone, Some("进行中")),
+            entry(door, "有门的", RoomJoinMode::Request, someone, None),
+            entry(
+                its,
+                "它的",
+                RoomJoinMode::InviteOnly,
+                record.principal_id,
+                None,
+            ),
+        ],
+    }));
+    record_entered(&harness, its, false).await;
+
+    let listed = list(&harness, &token, &other.to_string(), true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        harness.rooms.sub_rooms_listed.lock().unwrap().clone(),
+        [ListAgentSubRooms {
+            viewer: record.principal_id,
+            agent_id: record.agent_id.unwrap(),
+            catalog_id: other,
+            archived: true,
+        }]
+    );
+    assert_eq!(listed.parent.catalog_id, other);
+    assert_eq!(listed.parent.name, "别人的房间");
+    assert_eq!(listed.categories, ["进行中"]);
+    let [everyone, behind_door, own] = listed.rooms.as_slice() else {
+        panic!("三间都在：{:?}", listed.rooms);
+    };
+    assert_eq!(everyone.room.matrix_room_id, owned_matrix_room(open));
+    assert_eq!(everyone.description, "大家的的用途");
+    assert_eq!(everyone.category.as_deref(), Some("进行中"));
+    assert!(!everyone.joined && !everyone.created_by_you);
+    assert_eq!(
+        everyone.activity,
+        Some(NetworkAgentSubRoomActivity {
+            people: 3,
+            agents: 2,
+            last_message_at: Some(UtcMillis::new(START + 5).unwrap()),
+        }),
+        "没有门的给人数"
+    );
+    assert!(!behind_door.joined);
+    assert_eq!(behind_door.activity, None, "有门又不在里面：不给人数");
+    assert!(own.joined && own.created_by_you);
+    assert!(own.activity.is_some(), "在里面的给人数");
+}
+
+#[tokio::test]
+async fn 看不了名单时说父房间用不了_别的照管房间的说() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let other = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()))
+        .to_string();
+
+    assert_eq!(
+        kind(list(&harness, &token, "!nowhere:matrix.test", false).await),
+        NetworkAgentFailureKind::SubRoomParentUnavailable,
+        "不是房间号、也不是它进过的房间"
+    );
+    assert_eq!(
+        kind(list(&harness, &token, &other, false).await),
+        NetworkAgentFailureKind::SubRoomParentUnavailable,
+        "私人房间用例说找不到"
+    );
+    *harness.rooms.sub_room_list.lock().unwrap() = Some(Err(room_failure(
+        PrivateRoomFailureKind::DependencyUnavailable,
+    )));
+    assert_eq!(
+        kind(list(&harness, &token, &other, false).await),
+        NetworkAgentFailureKind::DependencyUnavailable
+    );
+    assert_eq!(
+        kind(list(&harness, "nope", &other, false).await),
+        NetworkAgentFailureKind::Unauthorized
+    );
 }

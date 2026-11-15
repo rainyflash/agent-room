@@ -20,8 +20,8 @@ use agent_room_application::{
         NetworkAgentLobbyExit, NetworkAgentMatrixDevice, NetworkAgentOwnedRoom,
         NetworkAgentOwnedSubRoom, NetworkAgentPendingExit, NetworkAgentPlacement,
         NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomRequest,
-        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomList,
+        NetworkAgentSubRoomRequest, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -490,6 +490,15 @@ impl NetworkAgentRoomUseCases for FakeAgents {
             .pop_front()
             .expect("测试给了建子房间的结果");
         Box::pin(async move { owned })
+    }
+
+    fn list_sub_rooms<'a>(
+        &'a self,
+        _token: &'a str,
+        _parent: &'a str,
+        _archived: bool,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSubRoomList>> {
+        unreachable!("看子房间名单只动账，不经过网关")
     }
 
     fn close_room<'a>(

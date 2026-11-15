@@ -38,11 +38,12 @@ use agent_room_application::{
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
-        AgentAccessView, AgentSubRoomCreated, AgentSubRoomCreation, AnswerKnock,
-        ArchivePrivateRoom, ChangePrivateRoomPermissions, CreateAgentSubRoom, CreatePrivateRoom,
-        GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom,
-        InvitePrivateRoomMember, JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult,
-        ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
+        AgentAccessView, AgentSubRoomCreated, AgentSubRoomCreation, AgentSubRoomListing,
+        AgentSubRooms, AnswerKnock, ArchivePrivateRoom, ChangePrivateRoomPermissions,
+        CreateAgentSubRoom, CreatePrivateRoom, GeneratedJoinCode, GovernPrivateRoomMember,
+        InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller,
+        KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
+        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
         PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
         PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
         PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember, RenamePrivateRoom,
@@ -1432,6 +1433,9 @@ struct FakeRooms {
     /// 建子房间的请求（2h），和下一次要回的拒绝。
     sub_rooms_created: Mutex<Vec<CreateAgentSubRoom>>,
     sub_room_refusal: Mutex<Option<PrivateRoomFailure>>,
+    /// 看子房间名单的请求（2h-2），和要回的名单：没给时回找不到。
+    sub_rooms_listed: Mutex<Vec<ListAgentSubRooms>>,
+    sub_room_list: Mutex<Option<PrivateRoomResult<AgentSubRooms>>>,
 }
 
 /// 父房间里有的分类：要别的名字就放进“未分类”。
@@ -1489,6 +1493,23 @@ impl AgentSubRoomCreation for FakeRooms {
             Err,
         );
         self.sub_rooms_created.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+}
+
+/// 照测试给的名单回答。
+impl AgentSubRoomListing for FakeRooms {
+    fn agent_sub_rooms(
+        &self,
+        request: ListAgentSubRooms,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRooms>> {
+        self.sub_rooms_listed.lock().unwrap().push(request);
+        let result = self
+            .sub_room_list
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| Err(room_failure(PrivateRoomFailureKind::NotFound)));
         Box::pin(async move { result })
     }
 }
@@ -2006,6 +2027,7 @@ impl Harness {
             access: access.clone(),
             rooms: rooms.clone(),
             sub_rooms: rooms.clone(),
+            sub_room_listing: rooms.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             listings: Arc::new(FakeListings),
             public_rooms: Arc::new(FakePublicRooms),

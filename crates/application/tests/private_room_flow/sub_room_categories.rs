@@ -28,7 +28,7 @@ pub(super) struct StoredCategory {
     category: SubRoomCategory,
 }
 
-fn category_id(value: u128) -> SubRoomCategoryId {
+pub(super) fn category_id(value: u128) -> SubRoomCategoryId {
     SubRoomCategoryId::from_uuid(uuid(value))
 }
 
@@ -224,7 +224,7 @@ impl SubRoomCategoryStore for MemoryRooms {
 }
 
 impl Rooms {
-    async fn create_category(
+    pub(super) async fn create_category(
         &self,
         actor: u128,
         category: u128,

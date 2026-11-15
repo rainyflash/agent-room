@@ -25,7 +25,7 @@ use agent_room_domain::{
 
 use super::{
     NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentResult, NetworkAgentRoom,
-    NetworkAgentService, dependency, internal, repository,
+    NetworkAgentService, NetworkAgentSubRoomList, dependency, internal, repository,
 };
 use crate::{
     ports::{NetworkAgentRecord, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
@@ -50,14 +50,24 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         name: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>>;
 
-    /// 在它建的、还没关的房间下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）：它是这一间
-    /// 的管理员，子房间没有口令。这间房下面已经有没归档的同名子房间（不分大小写）就回到那间。
-    /// 还没进去：由网关让它的加密客户端就绪后再进。
+    /// 在它建的、还没关的房间下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步），或者在它凭口令、
+    /// 敲门进了的房间下面建（2h-1b，它记成这一间的 Agent 成员）。子房间没有口令。这间房下面已经有
+    /// 没归档的同名子房间（不分大小写；别人的房间下面只认它建的）就回到那间。还没进去：由网关让它的
+    /// 加密客户端就绪后再进。
     fn create_sub_room<'a>(
         &'a self,
         token: &'a str,
         request: NetworkAgentSubRoomRequest<'a>,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>>;
+
+    /// 一间房下面它看得到的子房间（第 2h-2 步）：`parent` 是它建的或进了的房间（也收它下面的子房间），
+    /// 房间号或 Matrix 房间 ID。`archived` 为 true 时只有归档了的，不然只有没归档的。
+    fn list_sub_rooms<'a>(
+        &'a self,
+        token: &'a str,
+        parent: &'a str,
+        archived: bool,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSubRoomList>>;
 
     /// 关掉（归档）自己当房主的房间：谁都不能再说话，之前的消息照样看得到。已经关了的也算成功。
     /// `room` 是房间号（私人房间网址的最后一段，也收整段网址），或它进过的房间的 Matrix 房间 ID。
@@ -705,7 +715,11 @@ impl NetworkAgentService {
     }
 
     /// 认出要管的房间：房间号，或它进过的房间的 Matrix 房间 ID。
-    async fn room_of(&self, id: NetworkAgentId, room: &str) -> NetworkAgentResult<RoomCatalogId> {
+    pub(super) async fn room_of(
+        &self,
+        id: NetworkAgentId,
+        room: &str,
+    ) -> NetworkAgentResult<RoomCatalogId> {
         if let Some(catalog_id) = parse_room_number(room) {
             return Ok(catalog_id);
         }
@@ -774,6 +788,15 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         request: NetworkAgentSubRoomRequest<'a>,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>> {
         Box::pin(self.create_sub_room_internal(token, request))
+    }
+
+    fn list_sub_rooms<'a>(
+        &'a self,
+        token: &'a str,
+        parent: &'a str,
+        archived: bool,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSubRoomList>> {
+        Box::pin(self.list_sub_rooms_internal(token, parent, archived))
     }
 
     fn close_room<'a>(
@@ -937,7 +960,7 @@ fn sub_room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
     NetworkAgentFailure::new(kind)
 }
 
-fn owned_room(snapshot: &PrivateRoomSnapshot) -> NetworkAgentRoom {
+pub(super) fn owned_room(snapshot: &PrivateRoomSnapshot) -> NetworkAgentRoom {
     NetworkAgentRoom {
         catalog_id: snapshot.catalog().id(),
         matrix_room_id: snapshot.instance().matrix_room_id().clone(),
@@ -956,7 +979,7 @@ fn creation_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
 }
 
 /// 房间不存在和不是它的都只说不是它的房间，不透露别人的房间在不在。
-fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
+pub(super) fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
     match failure.kind() {
         PrivateRoomFailureKind::NotFound
         | PrivateRoomFailureKind::Forbidden
@@ -1030,7 +1053,7 @@ const fn parent_unavailable() -> NetworkAgentFailure {
 }
 
 /// 认不出父房间（不是房间号，也不是它进过的房间的 Matrix 房间 ID）：照建子房间的说法回答。
-fn unavailable_parent(failure: NetworkAgentFailure) -> NetworkAgentFailure {
+pub(super) fn unavailable_parent(failure: NetworkAgentFailure) -> NetworkAgentFailure {
     if failure.kind() == NetworkAgentFailureKind::RoomNotOwned {
         parent_unavailable()
     } else {

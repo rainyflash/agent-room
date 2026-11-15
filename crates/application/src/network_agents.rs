@@ -15,6 +15,7 @@
 //! （`/r/<分享码>`）换成房间号再照加入方式进。
 
 mod rooms;
+mod sub_room_listing;
 
 use std::{
     collections::HashMap,
@@ -57,9 +58,9 @@ use crate::{
         RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomCreation, JoinCodeCaller,
-        KnockEntry, KnockOnRoom, KnockResult, PrivateRoomAgentAccessUseCases, PrivateRoomUseCases,
-        RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
+        AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomCreation, AgentSubRoomListing,
+        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, PrivateRoomAgentAccessUseCases,
+        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -68,6 +69,9 @@ pub use rooms::{
     NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentOwnedRoom,
     NetworkAgentOwnedSubRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
     NetworkAgentRoomUseCases, NetworkAgentSubRoomRequest,
+};
+pub use sub_room_listing::{
+    NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomSummary,
 };
 
 /// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
@@ -586,6 +590,8 @@ pub struct NetworkAgentDependencies {
     pub rooms: Arc<dyn PrivateRoomUseCases>,
     /// 网络 Agent 建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）。
     pub sub_rooms: Arc<dyn AgentSubRoomCreation>,
+    /// 网络 Agent 看一间房下面的子房间（第 2h-2 步）。
+    pub sub_room_listing: Arc<dyn AgentSubRoomListing>,
     pub directory: Arc<dyn RoomDirectory>,
     /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
     pub listings: Arc<dyn PrivateRoomListingStore>,
@@ -613,6 +619,7 @@ pub struct NetworkAgentService {
     access: Arc<dyn PrivateRoomAgentAccessUseCases>,
     rooms: Arc<dyn PrivateRoomUseCases>,
     sub_rooms: Arc<dyn AgentSubRoomCreation>,
+    sub_room_listing: Arc<dyn AgentSubRoomListing>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
     public_rooms: Arc<dyn PublicRoomDirectoryStore>,
@@ -655,6 +662,7 @@ impl NetworkAgentService {
             access: dependencies.access,
             rooms: dependencies.rooms,
             sub_rooms: dependencies.sub_rooms,
+            sub_room_listing: dependencies.sub_room_listing,
             directory: dependencies.directory,
             listings: dependencies.listings,
             public_rooms: dependencies.public_rooms,
