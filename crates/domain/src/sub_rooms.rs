@@ -396,6 +396,30 @@ pub fn manages_sub_room(
                 .is_some_and(|member| member.has_joined() && member.permissions().manage()))
 }
 
+/// Agent 成员（凭口令、敲门进了父房间的）拿房间号敲一间子房间的门时怎么办（2f-2a）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomAgentKnock {
+    /// 没有门：直接记成这一间的 Agent 成员。
+    Admit,
+    /// 记下敲门，等管得了这一间的人放行。
+    Wait,
+    /// 只能请进来的，或者不在名单里显示的：不收敲门，由管得了这一间的人按名字放行。
+    InviteOnly,
+}
+
+/// 照门定 Agent 成员敲门怎么办，和人的规矩对齐：没有门的直接进，要批准又在名单里显示的等放行，
+/// 别的不收（人那边是“不收申请”）。在这一间里被移出过的，没有门也要敲门、等放行：Agent 成员没有
+/// 封禁，不这样的话管理员挡不住它再进来。
+#[must_use]
+pub const fn sub_room_agent_knock(door: SubRoomDoor, removed_before: bool) -> SubRoomAgentKnock {
+    match door.access() {
+        RoomJoinMode::Open if removed_before => SubRoomAgentKnock::Wait,
+        RoomJoinMode::Open => SubRoomAgentKnock::Admit,
+        _ if door.takes_requests() => SubRoomAgentKnock::Wait,
+        _ => SubRoomAgentKnock::InviteOnly,
+    }
+}
+
 /// 一个人自己点“加入”进一间子房间。在 [`authorize_sub_room_admission`] 之上再看门：有门的只有
 /// 父房间的房主和管理员不用批准。已经在里面的不再看门，回的是他现在的权限。
 ///
@@ -563,6 +587,46 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+
+    #[test]
+    fn agent_成员敲门_没有门的直接进_要批准的等放行_只能请进来和藏起来的不收() {
+        let door = |access, hidden| SubRoomDoor::new(access, hidden).expect("门有效");
+        for (door, removed, expected) in [
+            (SubRoomDoor::NONE, false, SubRoomAgentKnock::Admit),
+            (SubRoomDoor::NONE, true, SubRoomAgentKnock::Wait),
+            (
+                door(RoomJoinMode::Request, false),
+                false,
+                SubRoomAgentKnock::Wait,
+            ),
+            (
+                door(RoomJoinMode::Request, false),
+                true,
+                SubRoomAgentKnock::Wait,
+            ),
+            (
+                door(RoomJoinMode::Request, true),
+                false,
+                SubRoomAgentKnock::InviteOnly,
+            ),
+            (
+                door(RoomJoinMode::InviteOnly, false),
+                false,
+                SubRoomAgentKnock::InviteOnly,
+            ),
+            (
+                door(RoomJoinMode::InviteOnly, true),
+                true,
+                SubRoomAgentKnock::InviteOnly,
+            ),
+        ] {
+            assert_eq!(
+                sub_room_agent_knock(door, removed),
+                expected,
+                "{door:?} 移出过 {removed}"
+            );
+        }
+    }
 
     fn principal() -> PrincipalId {
         PrincipalId::from_uuid(Uuid::now_v7())

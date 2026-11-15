@@ -9,9 +9,10 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         JoinRequestRecord, NewSubRoom, PortFuture, SubRoomAdmission, SubRoomArchiveRecord,
-        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome,
-        SubRoomLink, SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord,
-        SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorSource, SubRoomEntry,
+        SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
+        SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope,
+        SubRoomSyncTask,
     },
 };
 use agent_room_domain::{
@@ -46,6 +47,15 @@ use super::{
 };
 
 const HOUR_MS: i64 = 3_600_000;
+
+impl SubRoomDoorSource for PostgresRepositories {
+    fn sub_room_door(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>> {
+        SubRoomStore::sub_room_link(self, catalog_id)
+    }
+}
 
 impl SubRoomStore for PostgresRepositories {
     fn sub_room_link(

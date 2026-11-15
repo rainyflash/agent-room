@@ -1738,6 +1738,7 @@ fn build_private_room_agent_access(
             source_weights,
             listings: dependencies.repositories.clone(),
             holds: dependencies.repositories.clone(),
+            sub_room_doors: dependencies.repositories.clone(),
         },
     ))
 }

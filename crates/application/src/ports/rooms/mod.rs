@@ -96,9 +96,9 @@ pub use sub_room_categories::{
 };
 pub use sub_rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
-    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
-    SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope,
-    SubRoomSyncTask,
+    SubRoomDoorSource, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange,
+    SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore,
+    SubRoomSyncScope, SubRoomSyncTask,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1142,6 +1142,8 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
                 "test.knockable",
                 AgentAccessFailureKind::ClosedToNetworkAgents,
             ))
+        } else if catalog_id == sub_room_catalog() {
+            Ok(KnockEntry::SubRoom)
         } else {
             Err(AgentAccessFailure::new(
                 "test.knockable",
@@ -1159,7 +1161,12 @@ impl PrivateRoomAgentAccessUseCases for FakeAccess {
         ));
         let open = request.catalog_id == open_catalog()
             && !self.removed.lock().unwrap().contains(&request.agent_id);
-        let result = if open {
+        let result = if request.catalog_id == sub_room_catalog() {
+            Err(AgentAccessFailure::new(
+                "test.knock",
+                AgentAccessFailureKind::InviteOnly,
+            ))
+        } else if open {
             Ok(KnockResult::Member(open_redeemed()))
         } else if request.catalog_id != private_catalog() && request.catalog_id != open_catalog() {
             Err(AgentAccessFailure::new(
@@ -3647,6 +3654,11 @@ fn closed_catalog() -> RoomCatalogId {
     catalog_id(11)
 }
 
+/// 只能请进来的子房间（2f-2a）：`FakeAccess` 敲门说不收。
+fn sub_room_catalog() -> RoomCatalogId {
+    catalog_id(12)
+}
+
 fn knock_on(catalog: RoomCatalogId) -> NetworkAgentRoomRequest {
     NetworkAgentRoomRequest::Lobby(Some(catalog.to_string()))
 }
@@ -3830,6 +3842,53 @@ async fn 关了网络_agent_的公开房间拿房间号进不来_什么都不建
     );
     assert!(harness.access.knocked.lock().unwrap().is_empty());
     assert_eq!(naming_used(&harness, [1; 32]), 1, "只有进大厅那一次");
+}
+
+#[tokio::test]
+async fn 子房间的房间号_新来的说找不到什么都不建_已有的不占名额_只能请进来的说去找管理者() {
+    let harness = Harness::enabled();
+    assert_eq!(
+        harness
+            .create("Scout", Some(&sub_room_catalog().to_string()))
+            .await
+            .err(),
+        Some(NetworkAgentFailureKind::RoomNotFound),
+        "新来的不会是父房间里的 Agent 成员"
+    );
+    assert!(harness.store.agents.lock().unwrap().is_empty());
+    assert!(harness.access.knocked.lock().unwrap().is_empty());
+    assert_eq!(naming_used(&harness, [1; 32]), 0);
+
+    let created = harness.create("Other", None).await.unwrap();
+    assert_eq!(
+        harness
+            .service
+            .admit(
+                created.token.expose(),
+                knock_on(sub_room_catalog()),
+                [1; 32]
+            )
+            .await
+            .unwrap_err()
+            .kind(),
+        NetworkAgentFailureKind::SubRoomInviteOnly
+    );
+    assert_eq!(
+        harness.access.knocked.lock().unwrap().len(),
+        1,
+        "敲到了子房间"
+    );
+    assert_eq!(naming_used(&harness, [1; 32]), 1, "只有进大厅那一次");
+    assert!(
+        !harness
+            .store
+            .windows
+            .lock()
+            .unwrap()
+            .keys()
+            .any(|bucket| bucket.starts_with("knock:")),
+        "不占敲门的名额"
+    );
 }
 
 #[tokio::test]
@@ -4112,8 +4171,8 @@ async fn 放行后按_agent_取会话替它进房间_不记活动_停用的不�
             .await
             .unwrap_err()
             .kind(),
-        NetworkAgentFailureKind::Unauthorized,
-        "不是网络 Agent"
+        NetworkAgentFailureKind::NotNetworkAgent,
+        "不是网络 Agent：子房间里按名字放行的本机 Agent 成员由它自己进"
     );
     harness
         .service

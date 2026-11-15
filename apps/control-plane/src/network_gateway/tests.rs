@@ -79,9 +79,9 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::{
-    AdmittedAgentEntry, EncryptedSessions, EncryptedSpeaker, NetworkAgentCleanupOutcome,
-    NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentMessaging, NetworkAgentWait,
-    NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
+    AdmittedAgentEntry, AdmittedEntry, EncryptedSessions, EncryptedSpeaker,
+    NetworkAgentCleanupOutcome, NetworkAgentEntry, NetworkAgentMessageDraft, NetworkAgentMessaging,
+    NetworkAgentWait, NetworkGateway, NetworkGatewayDependencies, NetworkGatewayFailure,
 };
 use agent_room_bridge_ipc::wake::{WaitOptions, WakeReason, WakeRule};
 
@@ -95,6 +95,8 @@ const OWN_AGENT: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const OWN_INSTANCE: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
 const OTHER_AGENT: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e61";
 const OTHER_INSTANCE: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e62";
+/// 子房间里按名字放行的本机 Agent 成员：不是网络 Agent。
+const LOCAL_AGENT: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e71";
 /// 验签替身把全是 0xFF 的签名当成伪造的。
 const FORGED_SIGNATURE: [u8; 64] = [0xFF; 64];
 
@@ -252,6 +254,10 @@ impl NetworkAgentUseCases for FakeAgents {
         self.log.lock().unwrap().push("session_of_agent".to_owned());
         let result = if agent_id == agent(OWN_AGENT) && self.disabled.lock().unwrap().is_empty() {
             Ok(self.own_session())
+        } else if agent_id == agent(LOCAL_AGENT) {
+            Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::NotNetworkAgent,
+            ))
         } else {
             Err(NetworkAgentFailure::new(
                 NetworkAgentFailureKind::Unauthorized,
@@ -4032,7 +4038,7 @@ async fn 放行后替它进房间_和凭口令一样先切到加密客户端建�
         .await
         .expect("替它进去了");
 
-    assert_eq!(room, private_room());
+    assert_eq!(room, AdmittedEntry::Entered(private_room()));
     assert_eq!(
         harness.agents.log(),
         [
@@ -4058,6 +4064,22 @@ async fn 放行后替它进房间_和凭口令一样先切到加密客户端建�
         .await
         .unwrap();
     assert!(harness.matrix.requests().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn 放行的不是网络_agent_不替它进_也不碰加密客户端() {
+    let harness = harness();
+    assert_eq!(
+        harness
+            .gateway
+            .enter_admitted(agent(LOCAL_AGENT), private_room())
+            .await
+            .expect("它自己进"),
+        AdmittedEntry::OnItsOwn
+    );
+    assert_eq!(harness.agents.log(), ["session_of_agent"]);
+    assert!(harness.encrypted.prepared.lock().unwrap().is_empty());
+    assert!(harness.agents.entered.lock().unwrap().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

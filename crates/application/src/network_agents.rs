@@ -365,6 +365,11 @@ pub enum NetworkAgentFailureKind {
     AgentNotInRoom,
     /// 公开房间的房主关了没有账号的网络 Agent：拿房间号进不来，口令照旧能用。
     RoomClosed,
+    /// 只能请进来（或者不在名单里显示）的子房间不收敲门：要这一间的管理者按名字放它进来（2f-2a）。
+    SubRoomInviteOnly,
+    /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
+    /// 不往外说。
+    NotNetworkAgent,
     DependencyUnavailable,
     Internal,
 }
@@ -507,7 +512,7 @@ pub trait NetworkAgentUseCases: Send + Sync {
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>>;
 
     /// 管理者放行敲门以后，网关替它进房间时用：按 Agent 取它的会话（不用令牌，不记活动）。
-    /// 只对生效中的网络 Agent；不是网络 Agent 或已停用时回答未认证。
+    /// 只对生效中的网络 Agent：已停用时回答未认证，根本不是网络 Agent 时回答 `NotNetworkAgent`。
     fn session_of_agent(
         &self,
         agent_id: AgentId,
@@ -887,6 +892,10 @@ impl NetworkAgentService {
                             self.take_knock(source_digest).await?;
                             None
                         }
+                        // 子房间只收父房间里的 Agent 成员，新来的不会是：说的和没有这间房一样。
+                        KnockEntry::SubRoom => {
+                            return Err(NetworkAgentFailure::room_not_found(Vec::new()));
+                        }
                     };
                     Ok((CreationTarget::Knock(catalog), naming))
                 }
@@ -1080,7 +1089,7 @@ impl NetworkAgentService {
             KnockEntry::Open if !self.in_public_space(rooms).await? => {
                 Some(self.take_naming(source_digest).await?)
             }
-            KnockEntry::Open => None,
+            KnockEntry::Open | KnockEntry::SubRoom => None,
             KnockEntry::Knock => {
                 self.take_knock(source_digest).await?;
                 None
@@ -1331,16 +1340,24 @@ impl NetworkAgentService {
     }
 
     /// 生效中的网络 Agent：按 Agent 找，不是网络 Agent 或已停用时回答未认证。
+    /// 先看是不是网络 Agent：子房间里管理者按名字放行的也可能是本机 Agent 成员，它自己进房间，
+    /// 总开关关着也不碍它。
     async fn active_by_agent(&self, agent_id: AgentId) -> NetworkAgentResult<NetworkAgentRecord> {
-        if !self.policy.enabled {
-            return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
-        }
-        self.store
+        let record = self
+            .store
             .find_by_agent(agent_id)
             .await
             .map_err(repository)?
-            .filter(|record| record.status == NetworkAgentStatus::Active)
-            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::NotNetworkAgent))?;
+        if !self.policy.enabled {
+            return Err(NetworkAgentFailure::new(NetworkAgentFailureKind::Disabled));
+        }
+        if record.status != NetworkAgentStatus::Active {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::Unauthorized,
+            ));
+        }
+        Ok(record)
     }
 
     /// 解开封存的 Matrix 会话与签名种子，连同所在的房间交给网关。
@@ -2276,6 +2293,9 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::ClosedToNetworkAgents => {
             NetworkAgentFailure::new(NetworkAgentFailureKind::RoomClosed)
         }
+        AgentAccessFailureKind::InviteOnly => {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::SubRoomInviteOnly)
+        }
         AgentAccessFailureKind::Forbidden
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::ParentOnly
@@ -2310,7 +2330,8 @@ fn code_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable
         | AgentAccessFailureKind::ParentOnly
-        | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
+        | AgentAccessFailureKind::ClosedToNetworkAgents
+        | AgentAccessFailureKind::InviteOnly => internal(),
     }
 }
 

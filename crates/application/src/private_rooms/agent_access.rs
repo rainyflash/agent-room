@@ -5,6 +5,11 @@
 //!
 //! 公开房间（`specs/public-rooms/design.md` 第 5 步）：直接进的房间敲门就直接放进来，要申请的敲门等放行；
 //! 只能邀请的、房主关了“没有账号的网络 Agent”的拿房间号进不来，口令照旧能用。
+//!
+//! 子房间（`specs/redesign/sub-rooms.md` 第 2f-2a 步）：父房间里的 Agent 成员拿房间号进，规矩在
+//! `sub_room_knocks.rs`。
+
+mod sub_room_knocks;
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -31,7 +36,7 @@ use crate::{
         PrivateRoomAgentAccessStore, PrivateRoomAgentKnockOutcome, PrivateRoomAgentKnockRecord,
         PrivateRoomAgentMemberRecord, PrivateRoomJoinCodeRecord, PrivateRoomListingStore,
         PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
-        PublicRoomPlatformHoldStore, SecretFactory,
+        PublicRoomPlatformHoldStore, SecretFactory, SubRoomDoorSource,
     },
 };
 
@@ -58,6 +63,8 @@ pub enum AgentAccessFailureKind {
     ClosedToNetworkAgents,
     /// 这是一间子房间：子房间不给口令，口令在父房间（`specs/redesign/sub-rooms.md`）。
     ParentOnly,
+    /// 只能请进来（或者不在名单里显示）的子房间不收敲门：要管得了这一间的人按名字放行（2f-2a）。
+    InviteOnly,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +177,9 @@ pub enum KnockEntry {
     Knock,
     /// 直接进的公开房间：敲门就直接放进来，和公共大厅一样算进来的名额。
     Open,
+    /// 子房间：只有父房间里的 Agent 成员进得来，进不进、等不等看它的门（2f-2a）。不占起名和敲门的
+    /// 名额：父房间那一关已经算过了。
+    SubRoom,
 }
 
 /// 管理者对一次敲门的回答：放行或不让进。
@@ -281,6 +291,8 @@ pub struct PrivateRoomAgentAccessDependencies {
     /// 公开房间的设置和平台拿掉的记录：直接进的敲门就放进来，关了网络 Agent 的拿房间号进不来。
     pub listings: Arc<dyn PrivateRoomListingStore>,
     pub holds: Arc<dyn PublicRoomPlatformHoldStore>,
+    /// 子房间挂在谁下面、哪种门（2f-2a）。
+    pub sub_room_doors: Arc<dyn SubRoomDoorSource>,
 }
 
 pub struct PrivateRoomAgentAccessService {
@@ -295,6 +307,7 @@ pub struct PrivateRoomAgentAccessService {
     source_weights: Arc<dyn NetworkSourceWeights>,
     listings: Arc<dyn PrivateRoomListingStore>,
     holds: Arc<dyn PublicRoomPlatformHoldStore>,
+    sub_room_doors: Arc<dyn SubRoomDoorSource>,
 }
 
 impl PrivateRoomAgentAccessService {
@@ -311,6 +324,7 @@ impl PrivateRoomAgentAccessService {
             source_weights: dependencies.source_weights,
             listings: dependencies.listings,
             holds: dependencies.holds,
+            sub_room_doors: dependencies.sub_room_doors,
         }
     }
 
@@ -525,6 +539,11 @@ impl PrivateRoomAgentAccessService {
             .ensure_can_register_instance(request.actor.account.principal.id())
             .map_err(|error| domain(OPERATION, &error))?;
         let snapshot = self.knock_target(request.catalog_id, OPERATION).await?;
+        if snapshot.parent_catalog_id().is_some() {
+            return self
+                .knock_sub_room(request.agent_id, &snapshot, now, OPERATION)
+                .await;
+        }
         let entry = self.knock_entry(&snapshot, OPERATION).await?;
         let member = self
             .access
@@ -553,24 +572,37 @@ impl PrivateRoomAgentAccessService {
                 .map_err(|error| repository(OPERATION, &error))?;
             return Ok(KnockResult::Member(redeemed_room(&snapshot)));
         }
+        self.wait_for_manager(request.catalog_id, request.agent_id, now, OPERATION)
+            .await
+    }
+
+    /// 记下敲门，等管理者放行：在等的再敲从现在重新算；以前没让进的不再打扰管理者；房间里在等的满了
+    /// 按限流回答。
+    async fn wait_for_manager(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+        now: UtcMillis,
+        operation: &'static str,
+    ) -> AgentAccessResult<KnockResult> {
         let expires_at = UtcMillis::new(now.value().saturating_add(AGENT_KNOCK_TTL_MILLIS))
-            .map_err(|error| domain(OPERATION, &error))?;
+            .map_err(|error| domain(operation, &error))?;
         match self
             .access
             .knock(
-                request.catalog_id,
-                request.agent_id,
+                catalog_id,
+                agent_id,
                 now,
                 expires_at,
                 MAX_WAITING_AGENT_KNOCKS,
             )
             .await
-            .map_err(|error| repository(OPERATION, &error))?
+            .map_err(|error| repository(operation, &error))?
         {
             PrivateRoomAgentKnockOutcome::Waiting(record) => Ok(KnockResult::Waiting(record)),
             PrivateRoomAgentKnockOutcome::Declined(record) => Ok(KnockResult::Declined(record)),
             PrivateRoomAgentKnockOutcome::RoomFull { retry_at } => {
-                Err(AgentAccessFailure::rate_limited(OPERATION, retry_at))
+                Err(AgentAccessFailure::rate_limited(operation, retry_at))
             }
         }
     }
@@ -607,19 +639,24 @@ impl PrivateRoomAgentAccessService {
             .managed_room(&request.actor, request.catalog_id, OPERATION)
             .await?;
         let now = self.clock.now();
-        // 只放行还在等的：作废了、Agent 停用了的都看不到，也放不进来。
-        let waiting = self
-            .access
-            .waiting_knocks(request.catalog_id, now)
-            .await
-            .map_err(|error| repository(OPERATION, &error))?
-            .into_iter()
-            .any(|knock| knock.agent_id == request.agent_id);
-        if !waiting {
-            return Err(AgentAccessFailure::new(
-                OPERATION,
-                AgentAccessFailureKind::NotFound,
-            ));
+        if snapshot.parent_catalog_id().is_some() {
+            self.sub_room_admissible(&snapshot, request.agent_id, OPERATION)
+                .await?;
+        } else {
+            // 只放行还在等的：作废了、Agent 停用了的都看不到，也放不进来。
+            let waiting = self
+                .access
+                .waiting_knocks(request.catalog_id, now)
+                .await
+                .map_err(|error| repository(OPERATION, &error))?
+                .into_iter()
+                .any(|knock| knock.agent_id == request.agent_id);
+            if !waiting {
+                return Err(AgentAccessFailure::new(
+                    OPERATION,
+                    AgentAccessFailureKind::NotFound,
+                ));
+            }
         }
         self.access
             .admit_agent(
@@ -707,8 +744,7 @@ impl PrivateRoomAgentAccessService {
     }
 
     /// 敲门的房间：使用中的私人房间。不存在、不是私人房间、已归档的都说找不到，不说是哪一种。
-    /// 子房间现在也当找不到：Agent 进子房间要先看它在父房间里是不是成员（`specs/redesign/sub-rooms.md`
-    /// 的 2f），那一步做好以前不收敲门，免得父房间外面的 Agent 敲得进来。
+    /// 子房间也在这里过一遍；它要看的父房间那一关在 `knock_sub_room` 里。
     async fn knock_target(
         &self,
         catalog_id: RoomCatalogId,
@@ -720,7 +756,7 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
-        if snapshot.parent_catalog_id().is_some() || !snapshot.room().admits_agent_member(true) {
+        if !snapshot.room().admits_agent_member(true) {
             return Err(AgentAccessFailure::new(
                 operation,
                 AgentAccessFailureKind::NotFound,
@@ -830,6 +866,9 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(|| AgentAccessFailure::new(operation, AgentAccessFailureKind::NotFound))?;
+        if snapshot.parent_catalog_id().is_some() && !actor.is_agent() {
+            return self.managed_sub_room(actor, snapshot, operation).await;
+        }
         let visible = snapshot
             .room()
             .member(actor.principal_id())
@@ -916,6 +955,9 @@ impl PrivateRoomAgentAccessUseCases for PrivateRoomAgentAccessService {
         Box::pin(async move {
             const OPERATION: &str = "private_room.agent_knock.check";
             let snapshot = self.knock_target(catalog_id, OPERATION).await?;
+            if snapshot.parent_catalog_id().is_some() {
+                return Ok(KnockEntry::SubRoom);
+            }
             self.knock_entry(&snapshot, OPERATION).await
         })
     }

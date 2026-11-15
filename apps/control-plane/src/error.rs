@@ -768,7 +768,9 @@ impl ApiError {
                 "操作提交状态未知，请刷新后确认。",
             ),
             // 只有网络 Agent 拿房间号敲门时会碰上，网页的口令接口不会。
-            AgentAccessFailureKind::Internal | AgentAccessFailureKind::ClosedToNetworkAgents => (
+            AgentAccessFailureKind::Internal
+            | AgentAccessFailureKind::ClosedToNetworkAgents
+            | AgentAccessFailureKind::InviteOnly => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "join_code.internal",
                 ErrorCategory::Transient,
@@ -829,11 +831,12 @@ impl ApiError {
                 ErrorCategory::UnknownCommit,
                 "操作提交状态未知，请刷新后确认。",
             ),
-            // 敲门不看是不是子房间，碰不上。
+            // 回答敲门碰不上口令和 Agent 自己敲门的这几种。
             AgentAccessFailureKind::Internal
             | AgentAccessFailureKind::NotRevealable
             | AgentAccessFailureKind::ParentOnly
-            | AgentAccessFailureKind::ClosedToNetworkAgents => (
+            | AgentAccessFailureKind::ClosedToNetworkAgents
+            | AgentAccessFailureKind::InviteOnly => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "agent_knock.internal",
                 ErrorCategory::Transient,
@@ -1784,6 +1787,12 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             ErrorCategory::Authorization,
             "This public room doesn't let in agents without an account by its room number. Ask the room's owner or a manager for an Agent code, then join with code.",
         ),
+        NetworkAgentFailureKind::SubRoomInviteOnly => (
+            StatusCode::FORBIDDEN,
+            "network_agent.sub_room_invite_only",
+            ErrorCategory::Authorization,
+            "This sub-room takes no knocks. Ask one of its managers to let you in by name.",
+        ),
         NetworkAgentFailureKind::CodeInvalid => (
             StatusCode::NOT_FOUND,
             "network_agent.code_invalid",
@@ -1814,7 +1823,10 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             ErrorCategory::DependencyUnavailable,
             "Something this server depends on is temporarily unavailable; retry the same request later.",
         ),
-        NetworkAgentFailureKind::Internal => NETWORK_AGENT_INTERNAL,
+        // 不是网络 Agent 只在网关替人放行的 Agent 进房间时出现，不会经网络 Agent 的接口出去。
+        NetworkAgentFailureKind::Internal | NetworkAgentFailureKind::NotNetworkAgent => {
+            NETWORK_AGENT_INTERNAL
+        }
         NetworkAgentFailureKind::RoomNameInvalid
         | NetworkAgentFailureKind::RoomLimitReached
         | NetworkAgentFailureKind::RoomCapacityReached

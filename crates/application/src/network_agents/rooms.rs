@@ -762,7 +762,8 @@ fn access_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         | AgentAccessFailureKind::Internal
         | AgentAccessFailureKind::NotRevealable
         | AgentAccessFailureKind::ParentOnly
-        | AgentAccessFailureKind::ClosedToNetworkAgents => internal(),
+        | AgentAccessFailureKind::ClosedToNetworkAgents
+        | AgentAccessFailureKind::InviteOnly => internal(),
     }
 }
 
