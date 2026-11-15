@@ -247,10 +247,16 @@ impl PrivateRoomService {
             .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?
             .ok_or_else(|| not_found(OPERATION))?;
         let status = if request.approve {
-            // 被封禁着的要先解封；不在父房间里了的和没有这个申请一样回（他离开父房间时申请就作废了）。
+            // 被封禁着的要先解封（说的是“他”）；不在父房间里了的和没有这个申请一样回（他离开父房间时
+            // 申请就作废了）。
             let permissions =
                 authorize_sub_room_admission(parent.room(), sub_room.room(), request.requester)
-                    .map_err(|refusal| entry_refused(OPERATION, refusal))?;
+                    .map_err(|refusal| match refusal {
+                        SubRoomEntryRefusal::Banned => {
+                            refused(OPERATION, SubRoomRefusal::TargetBanned)
+                        }
+                        other => entry_refused(OPERATION, other),
+                    })?;
             let matrix_user = self
                 .principal_matrix_user(request.requester, OPERATION)
                 .await?;

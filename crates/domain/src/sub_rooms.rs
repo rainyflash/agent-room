@@ -276,6 +276,55 @@ pub enum SubRoomEntryRefusal {
     InviteOnly,
 }
 
+/// 为什么在这间子房间里动不了这个人（移出、封禁、解封，`specs/redesign/room-roles.md`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomGovernanceRefusal {
+    /// 管不了这一间。
+    ManagersOnly,
+    /// 对自己：自己退出用“退出”。
+    Oneself,
+    /// 对象是房主：他在每一间子房间里。
+    Owner,
+    /// 对象是父房间的管理员：只有房主动得了，在子房间里也一样。
+    ParentAdmin,
+    /// 对象是这一间的另一位子房间管理员：子房间管理员之间谁也动不了谁，父房间的房主和管理员动得了。
+    PeerManager,
+}
+
+/// 管这间子房间的人能不能把这个人移出、封禁、解封。管得了这一间的才行（见
+/// [`manages_sub_room`]）；房主谁也动不了；父房间的管理员只有房主动得了；这一间的子房间管理员
+/// 只有父房间的房主和管理员动得了。
+///
+/// # Errors
+///
+/// 动不了时返回原因。
+pub fn authorize_sub_room_governance(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    actor: PrincipalId,
+    target: PrincipalId,
+) -> Result<(), SubRoomGovernanceRefusal> {
+    if !manages_sub_room(parent, sub_room, actor) {
+        return Err(SubRoomGovernanceRefusal::ManagersOnly);
+    }
+    if actor == target {
+        return Err(SubRoomGovernanceRefusal::Oneself);
+    }
+    if target == sub_room.owner_principal_id() || target == parent.owner_principal_id() {
+        return Err(SubRoomGovernanceRefusal::Owner);
+    }
+    if runs_parent_room(parent, target) && actor != parent.owner_principal_id() {
+        return Err(SubRoomGovernanceRefusal::ParentAdmin);
+    }
+    let manages_here = sub_room
+        .member(target)
+        .is_some_and(|member| member.has_joined() && member.permissions().manage());
+    if manages_here && !runs_parent_room(parent, actor) {
+        return Err(SubRoomGovernanceRefusal::PeerManager);
+    }
+    Ok(())
+}
+
 /// 父房间的房主和管理员：每一间子房间他们都看得到、进得去、管得了。
 #[must_use]
 pub fn runs_parent_room(parent: &PrivateRoom, principal: PrincipalId) -> bool {
@@ -826,6 +875,88 @@ mod tests {
         assert_eq!(
             admit(&archived, parent.viewer),
             Err(SubRoomEntryRefusal::Archived)
+        );
+    }
+
+    #[test]
+    fn 子房间里动得了谁_房主谁也动不了_父房间的管理员只有房主动得了() {
+        let parent = parent();
+        // 父房间里的成员建的，他是这一间的管理员；再进来一位普通成员。
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.member).expect("成员能建");
+        let mut with_plain = parent.room.clone();
+        let plain = principal();
+        with_plain
+            .invite(parent.owner, plain, permissions(&SPEAKER))
+            .expect("房主能邀请");
+        with_plain.accept_invitation(plain).expect("接受");
+        sub_room.admit(plain, permissions(&SPEAKER)).expect("进来");
+        let parent_room = with_plain;
+        let check =
+            |actor, target| authorize_sub_room_governance(&parent_room, &sub_room, actor, target);
+
+        // 成员：这一间的管理员、父房间的房主和管理员（没进来也行）都动得了。
+        for actor in [parent.member, parent.owner, parent.admin] {
+            assert_eq!(check(actor, plain), Ok(()));
+        }
+        assert_eq!(
+            check(parent.viewer, plain),
+            Err(SubRoomGovernanceRefusal::ManagersOnly),
+            "不是这一间的管理员、也不管父房间的，管不了"
+        );
+        assert_eq!(
+            check(plain, parent.member),
+            Err(SubRoomGovernanceRefusal::ManagersOnly)
+        );
+        assert_eq!(
+            check(parent.member, parent.member),
+            Err(SubRoomGovernanceRefusal::Oneself)
+        );
+        for actor in [parent.member, parent.admin] {
+            assert_eq!(
+                check(actor, parent.owner),
+                Err(SubRoomGovernanceRefusal::Owner)
+            );
+        }
+        // 父房间的管理员：只有房主动得了，他没进来也算。
+        assert_eq!(
+            check(parent.member, parent.admin),
+            Err(SubRoomGovernanceRefusal::ParentAdmin)
+        );
+        assert_eq!(check(parent.owner, parent.admin), Ok(()));
+        // 建的人是这一间的管理员：父房间的房主和管理员动得了，别的子房间管理员不行。
+        assert_eq!(check(parent.admin, parent.member), Ok(()));
+        assert_eq!(check(parent.owner, parent.member), Ok(()));
+        // 不在父房间里了的人当普通人看，谁管得了这一间谁就动得了。
+        assert_eq!(check(parent.member, parent.invited), Ok(()));
+    }
+
+    #[test]
+    fn 子房间管理员之间谁也动不了谁() {
+        let parent = parent();
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.member).expect("成员能建");
+        let mut room = parent.room.clone();
+        let other = principal();
+        room.invite(parent.owner, other, permissions(&SPEAKER))
+            .expect("房主能邀请");
+        room.accept_invitation(other).expect("接受");
+        let manager = permissions(&[
+            PrivateRoomCapability::View,
+            PrivateRoomCapability::Speak,
+            PrivateRoomCapability::Manage,
+        ]);
+        sub_room.admit(other, manager).expect("请进来当管理员");
+
+        assert_eq!(
+            authorize_sub_room_governance(&room, &sub_room, other, parent.member),
+            Err(SubRoomGovernanceRefusal::PeerManager)
+        );
+        assert_eq!(
+            authorize_sub_room_governance(&room, &sub_room, parent.member, other),
+            Err(SubRoomGovernanceRefusal::PeerManager)
+        );
+        assert_eq!(
+            authorize_sub_room_governance(&room, &sub_room, parent.admin, other),
+            Ok(())
         );
     }
 

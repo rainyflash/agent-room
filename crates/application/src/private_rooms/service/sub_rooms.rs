@@ -37,10 +37,11 @@ use crate::{
 
 use super::{
     super::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy,
-        ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
-        PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState, SubRoomList,
-        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, GovernSubRoomMember,
+        InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom,
+        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
+        SubRoomView,
         failure::{domain, failure, matrix, repository},
     },
     PrivateRoomService, active_room_actor_matrix_user, ensure_active_actor, private_room_alias,
@@ -114,6 +115,30 @@ pub trait SubRoomUseCases: Send + Sync {
         &self,
         request: AnswerSubRoomJoinRequest,
     ) -> PortFuture<'_, PrivateRoomResult<JoinRequestStatus>>;
+
+    /// 管得了这一间的人把父房间里的人直接请进来，哪种门都行。已经在里面的只补一遍邀请。
+    fn admit_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 管得了这一间的人把一个人移出这一间。不在里面的也算成功。
+    fn remove_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 在这一间里封禁一个人：之后他申请不了、也请不进来，先解封。
+    fn ban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 解封：回到“已移出”。没封着的也算成功。
+    fn unban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
 }
 
 impl SubRoomUseCases for PrivateRoomService {
@@ -192,6 +217,34 @@ impl SubRoomUseCases for PrivateRoomService {
         request: AnswerSubRoomJoinRequest,
     ) -> PortFuture<'_, PrivateRoomResult<JoinRequestStatus>> {
         Box::pin(self.answer_sub_room_join_request_internal(request))
+    }
+
+    fn admit_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.admit_sub_room_member_internal(request))
+    }
+
+    fn remove_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.remove_sub_room_member_internal(request))
+    }
+
+    fn ban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.ban_sub_room_member_internal(request))
+    }
+
+    fn unban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.unban_sub_room_member_internal(request))
     }
 }
 

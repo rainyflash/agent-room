@@ -335,7 +335,7 @@ async fn 批准不了的_封禁着的要先解封_不在父房间里的当没有
 
     assert_eq!(
         refusal(rooms.answer(OWNER, 20, MEMBER, true).await),
-        sub_room(SubRoomRefusal::Banned)
+        sub_room(SubRoomRefusal::TargetBanned)
     );
     assert_eq!(
         refusal(rooms.answer(OWNER, 20, VIEWER, true).await),
@@ -514,7 +514,32 @@ impl MemoryRooms {
         }
     }
 
-    fn requests_of(&self, catalog: u128) -> Vec<JoinRequestRecord> {
+    /// 存子房间时，在这一间里被封禁的人在等的申请作废（2d-3），和真实存储一样。
+    pub(super) fn void_banned_requests(&self, room: &PrivateRoom) {
+        let is_sub_room = self
+            .links
+            .lock()
+            .expect("关系锁正常")
+            .iter()
+            .any(|stored| stored.link.catalog_id == room.catalog_id());
+        if !is_sub_room {
+            return;
+        }
+        for request in self.requests.lock().expect("申请锁正常").iter_mut() {
+            let banned = room
+                .member(request.requester)
+                .is_some_and(|member| member.status() == PrivateRoomMembershipStatus::Banned);
+            if request.catalog_id == room.catalog_id()
+                && request.status == JoinRequestStatus::Pending
+                && banned
+            {
+                request.status = JoinRequestStatus::Voided;
+                request.decided_at = Some(request.requested_at);
+            }
+        }
+    }
+
+    pub(super) fn requests_of(&self, catalog: u128) -> Vec<JoinRequestRecord> {
         self.requests
             .lock()
             .expect("申请锁正常")

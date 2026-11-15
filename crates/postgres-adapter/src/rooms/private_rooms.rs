@@ -492,6 +492,32 @@ async fn write_members(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 在子房间里被封禁的人，在这一间在等的申请作废（`specs/redesign/sub-rooms.md` 的“申请”）。
+    // 不作废的话批准时回“先解封”，申请却一直挂在管理员那里。公开房间的不动。
+    sqlx::query(
+        r"UPDATE agent_room.private_room_join_request AS request
+             SET status = 'voided',
+                 decided_at = greatest(
+                     request.requested_at,
+                     to_timestamp($2::double precision / 1000.0)
+                 )
+            FROM agent_room.private_room_membership AS member
+           WHERE request.catalog_entry_id = $1
+             AND request.status = 'pending'
+             AND member.catalog_entry_id = request.catalog_entry_id
+             AND member.principal_id = request.requester_principal_id
+             AND member.membership_status = 'banned'
+             AND EXISTS (
+                 SELECT 1
+                   FROM agent_room.private_room_parent AS link
+                  WHERE link.catalog_entry_id = request.catalog_entry_id
+             )",
+    )
+    .bind(room.catalog_id().as_uuid())
+    .bind(changed_at.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 

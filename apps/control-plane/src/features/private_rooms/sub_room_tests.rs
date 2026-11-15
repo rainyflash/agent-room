@@ -1,13 +1,15 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
-//! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`）。
+//! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`），
+//! 请进来、移出和封禁（2d-3，在 `sub_room_member_tests.rs`）。
 //! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
     ports::{JoinRequestRecord, PendingJoinRequest, SubRoomEntry},
     private_rooms::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy,
-        ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState, SubRoomList,
-        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases, SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, GovernSubRoomMember,
+        InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
+        SubRoomView,
     },
 };
 use agent_room_domain::{
@@ -18,6 +20,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_member_tests.rs"]
+mod members;
 #[path = "sub_room_request_tests.rs"]
 mod requests;
 
@@ -43,6 +47,8 @@ pub(super) struct FakeSubRooms {
     withdrawn: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     pending_listed: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     answered: Mutex<Vec<AnswerSubRoomJoinRequest>>,
+    /// 请进来、移出、封禁、解封：哪一样，交过来的请求。
+    governed: Mutex<Vec<(&'static str, GovernSubRoomMember)>>,
     /// 设上时申请不用等，直接记成已加入（没有门了的、管这间房的）。
     joins_directly: Mutex<bool>,
     /// 设上时每个用例都回答它。
@@ -52,6 +58,16 @@ pub(super) struct FakeSubRooms {
 impl FakeSubRooms {
     fn refusal(&self) -> Option<PrivateRoomFailure> {
         *self.failure.lock().unwrap()
+    }
+
+    fn govern(
+        &self,
+        action: &'static str,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        let result = self.refusal().map_or(Ok(()), Err);
+        self.governed.lock().unwrap().push((action, request));
+        Box::pin(async move { result })
     }
 }
 
@@ -211,6 +227,34 @@ impl SubRoomUseCases for FakeSubRooms {
         let result = self.refusal().map_or(Ok(status), Err);
         self.answered.lock().unwrap().push(request);
         Box::pin(async move { result })
+    }
+
+    fn admit_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.govern("admit", request)
+    }
+
+    fn remove_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.govern("remove", request)
+    }
+
+    fn ban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.govern("ban", request)
+    }
+
+    fn unban_sub_room_member(
+        &self,
+        request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        self.govern("unban", request)
     }
 }
 
@@ -678,10 +722,9 @@ async fn 换门和隐藏_只带哪一项就只交哪一项_名字和用途不带
     );
 }
 
-#[tokio::test]
-async fn 子房间这边被拒各有各的码_网页好说清楚() {
-    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms");
-    for (refusal, status, code) in [
+/// 子房间这边每一种拒绝回的状态和码。
+fn refusal_codes() -> [(SubRoomRefusal, StatusCode, &'static str); 18] {
+    [
         (
             SubRoomRefusal::ParentOnly,
             StatusCode::CONFLICT,
@@ -757,7 +800,28 @@ async fn 子房间这边被拒各有各的码_网页好说清楚() {
             StatusCode::CONFLICT,
             "sub_room.recently_rejected",
         ),
-    ] {
+        (
+            SubRoomRefusal::NotInParent,
+            StatusCode::CONFLICT,
+            "sub_room.not_in_parent",
+        ),
+        (
+            SubRoomRefusal::TargetBanned,
+            StatusCode::CONFLICT,
+            "sub_room.target_banned",
+        ),
+        (
+            SubRoomRefusal::PeerManager,
+            StatusCode::FORBIDDEN,
+            "sub_room.peer_manager",
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn 子房间这边被拒各有各的码_网页好说清楚() {
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms");
+    for (refusal, status, code) in refusal_codes() {
         let sub_rooms = Arc::new(FakeSubRooms::default());
         *sub_rooms.failure.lock().unwrap() = Some(PrivateRoomFailure::new(
             "test",

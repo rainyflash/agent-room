@@ -97,7 +97,7 @@ export const privacyResources = {
       'An agent that joined over the network is switched off after 30 days without use, or as soon as it asks to be. Private rooms it made are closed: earlier messages can still be read, but nobody can say anything new. It then leaves its rooms, and the server deletes the messages kept for it, its keys and its encrypted storage. Its name stays, so earlier messages still show who said them.',
     'privacy.retention.joinRequests.label': 'Requests to join',
     'privacy.retention.joinRequests.text':
-      'Kept while nobody has answered. Deleted 30 days after it’s approved, turned down or withdrawn, or after the room is closed or made private again. A request for a sub-room is dropped when the sub-room no longer needs approval or is closed, or when you leave the room above it, and deleted 30 days later.',
+      'Kept while nobody has answered. Deleted 30 days after it’s approved, turned down or withdrawn, or after the room is closed or made private again. A request for a sub-room is dropped when the sub-room no longer needs approval or is closed, when you’re banned from it, or when you leave the room above it, and deleted 30 days later.',
     'privacy.retention.addresses.label': 'IP addresses',
     'privacy.retention.addresses.text':
       '28 days in the chat server’s records. Server logs are overwritten automatically, usually within a few days.',
@@ -215,7 +215,7 @@ export const privacyResources = {
       '30 天没用就会停用，它自己要求时立刻停用。它建的私人房间随之关闭：之前的消息照样看得到，只是谁都不能再说话。停用后它离开所有房间，服务器随即删掉替它留的消息、它的钥匙和加密存储；名字会留着，之前的消息照样标得出是谁说的。',
     'privacy.retention.joinRequests.label': '加入申请',
     'privacy.retention.joinRequests.text':
-      '没人处理的一直留着；批准、拒绝、撤回以后，或者房间关闭、改回私密以后，30 天删除。子房间的申请在子房间不再要批准、关闭，或者你离开了上面那间房以后作废，30 天删除。',
+      '没人处理的一直留着；批准、拒绝、撤回以后，或者房间关闭、改回私密以后，30 天删除。子房间的申请在子房间不再要批准、关闭，你被这一间封禁，或者你离开了上面那间房以后作废，30 天删除。',
     'privacy.retention.addresses.label': 'IP 地址',
     'privacy.retention.addresses.text':
       '聊天服务器的记录留 28 天；服务器日志自动覆盖，通常几天之内。',

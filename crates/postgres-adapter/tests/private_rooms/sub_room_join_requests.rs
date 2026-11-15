@@ -14,7 +14,11 @@ use agent_room_domain::{
 use super::{membership::revise, *};
 
 /// 一个在等的申请。
-fn record(catalog_id: RoomCatalogId, requester: PrincipalId, at: UtcMillis) -> JoinRequestRecord {
+pub(super) fn record(
+    catalog_id: RoomCatalogId,
+    requester: PrincipalId,
+    at: UtcMillis,
+) -> JoinRequestRecord {
     JoinRequestRecord {
         catalog_id,
         requester,
@@ -26,7 +30,7 @@ fn record(catalog_id: RoomCatalogId, requester: PrincipalId, at: UtcMillis) -> J
     }
 }
 
-async fn request(
+pub(super) async fn request(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     catalog_id: RoomCatalogId,
@@ -39,7 +43,11 @@ async fn request(
 }
 
 /// 他在这间房的申请，按记下的先后：每一个的状态。
-async fn statuses(pool: &PgPool, catalog: RoomCatalogId, requester: PrincipalId) -> Vec<String> {
+pub(super) async fn statuses(
+    pool: &PgPool,
+    catalog: RoomCatalogId,
+    requester: PrincipalId,
+) -> Vec<String> {
     sqlx::query_scalar(
         "SELECT status FROM agent_room.private_room_join_request
           WHERE catalog_entry_id = $1 AND requester_principal_id = $2
@@ -53,7 +61,7 @@ async fn statuses(pool: &PgPool, catalog: RoomCatalogId, requester: PrincipalId)
 }
 
 /// 一间带门的子房间（建的人是房主），回它的房间号。
-async fn guarded(
+pub(super) async fn guarded(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     owner: PrincipalId,

@@ -1564,6 +1564,26 @@ pub(crate) const SUB_ROOM_PARENT_ONLY: (StatusCode, &str, ErrorCategory, &str) =
     "这件事子房间没有，到它所在的房间去做。",
 );
 
+/// 2d-3 起管这一间的人请人、移出、封禁时的三种原因：说的是“他”，不是“你”。
+const SUB_ROOM_NOT_IN_PARENT: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.not_in_parent",
+    ErrorCategory::Conflict,
+    "他不在这间房里，先把他请进房间。",
+);
+const SUB_ROOM_TARGET_BANNED: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.target_banned",
+    ErrorCategory::Conflict,
+    "他在这间子房间里被封禁着，先解封再请他进来。",
+);
+const SUB_ROOM_PEER_MANAGER: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::FORBIDDEN,
+    "sub_room.peer_manager",
+    ErrorCategory::Authorization,
+    "子房间管理员动不了同一间的另一位管理员，请房主或管理员来。",
+);
+
 /// 子房间这边不让做的原因各有各的码（`specs/redesign/sub-rooms.md`）。
 const fn sub_room_refusal(
     refusal: SubRoomRefusal,
@@ -1640,7 +1660,7 @@ const fn sub_room_refusal(
             StatusCode::CONFLICT,
             "sub_room.owner_stays",
             ErrorCategory::Conflict,
-            "房主在每一间子房间里，退不出去。",
+            "房主在每一间子房间里，退不出去，也移不出去。",
         ),
         SubRoomRefusal::ManagersOnly => (
             StatusCode::FORBIDDEN,
@@ -1654,6 +1674,9 @@ const fn sub_room_refusal(
             ErrorCategory::Conflict,
             "申请被拒绝了，24 小时以后才能再申请。",
         ),
+        SubRoomRefusal::NotInParent => SUB_ROOM_NOT_IN_PARENT,
+        SubRoomRefusal::TargetBanned => SUB_ROOM_TARGET_BANNED,
+        SubRoomRefusal::PeerManager => SUB_ROOM_PEER_MANAGER,
     }
 }
 

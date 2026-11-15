@@ -68,6 +68,12 @@ pub enum SubRoomRefusal {
     ManagersOnly,
     /// 申请被拒还不到 24 小时，什么时候能再申请见 [`PrivateRoomFailure::retry_at`]。
     RecentlyRejected,
+    /// 要请进来、封禁的人不在这间房里（父房间）：先把他请进房间。
+    NotInParent,
+    /// 要请进来的人在这间子房间里被封禁着：先解封。
+    TargetBanned,
+    /// 子房间管理员动不了同一间的另一位管理员，要父房间的房主或管理员来。
+    PeerManager,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

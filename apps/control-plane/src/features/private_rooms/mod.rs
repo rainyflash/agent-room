@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_room_members;
 mod sub_room_requests;
 mod sub_rooms;
 
@@ -130,6 +131,18 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
         .route(
             "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/join-requests/{principal_id}",
             put(sub_room_requests::answer),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/members/{principal_id}",
+            put(sub_room_members::admit).delete(sub_room_members::remove),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/members/{principal_id}/ban",
+            post(sub_room_members::ban),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/members/{principal_id}/unban",
+            post(sub_room_members::unban),
         )
         .route(
             "/private-rooms/{catalog_id}/sub-room-policy",
