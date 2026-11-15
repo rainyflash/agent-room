@@ -698,7 +698,7 @@
   - 按名字找房间（`resolve_room_by_name`）：只写名字找的是整间的房间，子房间写 `父房间名/子房间名`，从最后一个斜杠断开（父房间的名字里可以有斜杠），斜杠两边的空白不算；拿房间号、`/lobby/<房间号>` 找的也包括子房间。
   - 进不去时分开报：有门、主人不在里面的是 `bridge.lobby_sub_room_owner_not_inside`，凭口令或敲门进的父房间、要人放行的是 `bridge.lobby_sub_room_agent_not_admitted`；建子房间被拒的是 `bridge.rooms.sub_room_nested`、`sub_room_admins_only`、`sub_room_agents_may_not_create`、`sub_room_name_taken`、`sub_room_limit_reached`。MCP 和命令行照着说什么放在 2g-3。
   - 和设计不一样的一处：进门的回答里的 `parent` 不由 Bridge 给（`RoomEntered` 和会话里记着的房间都没改）。MCP 和命令行进门之前已经从房间列表里找到了这间房，`parent` 就在那条摘要上，2g-3 照它说。
-- 2026-11-15 2g-3 再拆成两步：2g-3a 本机 MCP，2g-3b 命令行和那一小段说明。2g-3a 做完（#PR）：
+- 2026-11-15 2g-3 再拆成两步：2g-3a 本机 MCP，2g-3b 命令行和那一小段说明。2g-3a 做完（#837）：
   - `agent_room_create_room` 多三个可选参数：`parent`（房间名或房间号，按房间列表找，找不到、有两间同名时和进房间一样说）、`access`（`open`、`request`、`invite_only`）、`category`。`access`、`category` 不带 `parent` 不收，子房间名里不能有 `/`，这些都先在本机核对，不合规的不去建。
   - 建好的子房间在这个任务名下按“父房间号/名字”记：同一个任务在同一间房下面再说一次还是那一间，不同的房间下面可以同名。
   - 子房间没有口令，建好以后不去拿口令；回答里告诉别的 Agent 按 `父房间名/子房间名` 进，告诉人在父房间的子房间列表里找。分类没找到时回答带 `categoryMissing: true` 和一句说明。
