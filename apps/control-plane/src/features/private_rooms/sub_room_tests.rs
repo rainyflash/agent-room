@@ -1,17 +1,18 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
 //! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`），
 //! 请进来、移出和封禁（2d-3，在 `sub_room_member_tests.rs`），子房间管理员（2d-4，在
-//! `sub_room_manager_tests.rs`），分类（2e-1，在 `sub_room_category_tests.rs`）。
+//! `sub_room_manager_tests.rs`），分类（2e-1，在 `sub_room_category_tests.rs`），归档和恢复（2e-2，在
+//! `sub_room_archive_tests.rs`）。
 //! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
     ports::{JoinRequestRecord, PendingJoinRequest, SubRoomCategory, SubRoomEntry},
     private_rooms::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
-        CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy,
-        ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
-        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
-        SubRoomView,
+        AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager, ChangeSubRoomPolicy,
+        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember,
+        InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom,
+        ReviseSubRoomCategory, SubRoomJoinState, SubRoomList, SubRoomMembershipAction,
+        SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases, SubRoomView,
     },
 };
 use agent_room_domain::{
@@ -23,6 +24,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_archive_tests.rs"]
+mod archive;
 #[path = "sub_room_category_tests.rs"]
 mod categories;
 #[path = "sub_room_manager_tests.rs"]
@@ -51,6 +54,8 @@ pub(super) struct FakeSubRooms {
     joined: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     left: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
     revised: Mutex<Vec<ReviseSubRoom>>,
+    /// 归档、恢复：哪一样，父房间、子房间。
+    archival: Mutex<Vec<(&'static str, RoomCatalogId, RoomCatalogId)>>,
     /// 申请、撤回（父房间、子房间）、看申请（父房间、子房间）、处理申请。
     requested: Mutex<Vec<RequestSubRoomJoin>>,
     withdrawn: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
@@ -207,6 +212,32 @@ impl SubRoomUseCases for FakeSubRooms {
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
         self.revised.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+
+    fn archive_sub_room(
+        &self,
+        request: ArchiveSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
+        self.archival.lock().unwrap().push((
+            "archive",
+            request.parent_catalog_id,
+            request.catalog_id,
+        ));
+        Box::pin(async move { result })
+    }
+
+    fn restore_sub_room(
+        &self,
+        request: RestoreSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
+        self.archival.lock().unwrap().push((
+            "restore",
+            request.parent_catalog_id,
+            request.catalog_id,
+        ));
         Box::pin(async move { result })
     }
 

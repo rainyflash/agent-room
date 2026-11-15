@@ -1612,6 +1612,13 @@ impl PrivateRoomMatrixGateway for RecordingMatrix {
     fn archive<'a>(&'a self, _room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async { unreachable!() })
     }
+    fn reopen<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!() })
+    }
     fn set_name<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,

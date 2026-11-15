@@ -4,8 +4,10 @@
 //! 任务表里。这里把排着的事一件件领出来做：改父房间的那个请求结束前先做一遍它下面的（没做成不算
 //! 请求失败），后台每 30 秒一轮补上剩下的，顺带把照到的版本落后的子房间重算一遍。
 //!
-//! 每件事只说“这个人在这间子房间里变了”或者“这间子房间归档了”，不说变成了什么：做的时候读库里
-//! 现在的样子，照它把聊天服务器摆成一样，做几遍结果都一样。
+//! 每件事只说“这个人在这间子房间里变了”或者“这间子房间归档了、恢复了”，不说变成了什么：做的时候
+//! 读库里现在的样子，照它把聊天服务器摆成一样，做几遍结果都一样。
+//!
+//! 子房间自己归档、恢复（2e-2）也排这里：归档的锁住，恢复的把门槛和里面每个人的发言级别一次写回去。
 
 use agent_room_domain::{
     ids::PrincipalId,
@@ -18,7 +20,7 @@ use crate::{
     persistence::RepositoryError,
     ports::{
         MatrixFailure, MatrixRoomId, MatrixUserId, PortFuture, PrivateMatrixMembership,
-        PrivateRoomSnapshot, SubRoomSyncScope, SubRoomSyncTask,
+        PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot, SubRoomSyncScope, SubRoomSyncTask,
     },
 };
 
@@ -242,14 +244,91 @@ impl PrivateRoomService {
                 self.sync_sub_room_member(&task, &sub_room, &matrix_room, principal)
                     .await
             }
-            // 这间子房间自己的事只有一样：跟着父房间归档了，在聊天服务器上锁住。之后又恢复了的不动。
-            None if sub_room.room().status() == PrivateRoomLifecycleStatus::Archived => self
-                .matrix
-                .archive(&matrix_room)
-                .await
-                .map_err(Trouble::Matrix),
-            None => Ok(()),
+            None => {
+                self.sync_sub_room_lock(&task, &sub_room, &matrix_room)
+                    .await
+            }
         }
+    }
+
+    /// 这间子房间自己的事：照它现在归没归档，在聊天服务器上锁住或者解开。
+    async fn sync_sub_room_lock(
+        &self,
+        task: &SubRoomSyncTask,
+        sub_room: &PrivateRoomSnapshot,
+        matrix_room: &MatrixRoomId,
+    ) -> Result<(), Trouble> {
+        if sub_room.room().status() == PrivateRoomLifecycleStatus::Archived {
+            return self
+                .matrix
+                .archive(matrix_room)
+                .await
+                .map_err(Trouble::Matrix);
+        }
+        // 恢复了：门槛和每个人的发言级别同一次写回去，不会有一刻照归档以前的级别开着（归档这段时间
+        // 里被禁言的人，归档以前的级别还是能说）。
+        let assignments = self.reopening_assignments(sub_room, matrix_room).await?;
+        self.matrix
+            .reopen(matrix_room, &assignments)
+            .await
+            .map_err(Trouble::Matrix)?;
+        // 动完再看一眼：这当口又归档了的，再锁一次。
+        let archived_since = self
+            .sub_room_now(task)
+            .await?
+            .is_some_and(|after| after.room().status() == PrivateRoomLifecycleStatus::Archived);
+        if archived_since {
+            self.matrix
+                .archive(matrix_room)
+                .await
+                .map_err(Trouble::Matrix)?;
+        }
+        Ok(())
+    }
+
+    /// 解开时每个人该有的发言级别：在里面的人照 [`MemberCourse`]（被禁言着的、只能看的不给），他名下
+    /// 在这间房里（已加入、受邀）的 Agent 跟着他。
+    async fn reopening_assignments(
+        &self,
+        sub_room: &PrivateRoomSnapshot,
+        matrix_room: &MatrixRoomId,
+    ) -> Result<Vec<PrivateMatrixSpeakingAssignment>, Trouble> {
+        let mut assignments = Vec::new();
+        for member in sub_room.room().members() {
+            let principal = member.principal_id();
+            let MemberCourse::Inside { speaks } = self.member_course(sub_room, principal).await?
+            else {
+                continue;
+            };
+            // 替网络 Agent 记账的合成主体没有聊天账户：只给它名下的 Agent。
+            if let Some(user) = self
+                .principals
+                .matrix_user_id(principal)
+                .await
+                .map_err(|_| Trouble::Directory)?
+            {
+                assignments.push(PrivateMatrixSpeakingAssignment::new(user, speaks));
+            }
+            let agents = self
+                .agents
+                .agent_matrix_users(principal)
+                .await
+                .map_err(|_| Trouble::Directory)?;
+            for agent in agents {
+                let membership = self
+                    .matrix
+                    .membership(matrix_room, &agent)
+                    .await
+                    .map_err(Trouble::Matrix)?;
+                if matches!(
+                    membership,
+                    Some(PrivateMatrixMembership::Joined | PrivateMatrixMembership::Invited)
+                ) {
+                    assignments.push(PrivateMatrixSpeakingAssignment::new(agent, speaks));
+                }
+            }
+        }
+        Ok(assignments)
     }
 
     async fn sub_room_now(

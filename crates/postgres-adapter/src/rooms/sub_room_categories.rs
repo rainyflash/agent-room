@@ -268,7 +268,7 @@ async fn delete(
 }
 
 /// 锁父房间在目录里的那一行，看它还能不能管分类：是一间还在用的私人房间，自己不是子房间。
-async fn lock_parent(
+pub(super) async fn lock_parent(
     transaction: &mut Transaction<'_, Postgres>,
     parent: RoomCatalogId,
     operation: &'static str,

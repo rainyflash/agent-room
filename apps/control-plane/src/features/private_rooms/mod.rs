@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_room_archive;
 mod sub_room_categories;
 mod sub_room_managers;
 mod sub_room_members;
@@ -131,7 +132,11 @@ fn sub_room_routes() -> Router<PrivateRoomHttpState> {
         )
         .route(
             "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}",
-            put(sub_rooms::revise),
+            put(sub_rooms::revise).delete(sub_room_archive::archive),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/restore",
+            post(sub_room_archive::restore),
         )
         .route(
             "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/membership",

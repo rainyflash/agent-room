@@ -544,6 +544,17 @@ async fn archive_with_parent(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
+    queue_room_sync(transaction, sub_room, at, operation).await
+}
+
+/// 这间子房间自己的事（归档了要锁住，恢复了要解开）排上：事务外面照它那时候的状态去做。已经排着的
+/// 换成新的一版、从头再试。
+pub(super) async fn queue_room_sync(
+    transaction: &mut Transaction<'_, Postgres>,
+    sub_room: RoomCatalogId,
+    at: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<()> {
     sqlx::query(
         r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
                catalog_entry_id, principal_id, queued_at

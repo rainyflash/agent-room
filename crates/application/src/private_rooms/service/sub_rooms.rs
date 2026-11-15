@@ -37,12 +37,12 @@ use crate::{
 
 use super::{
     super::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
-        CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy,
-        ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
-        PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory,
-        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
-        SubRoomView,
+        AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager, ChangeSubRoomPolicy,
+        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember,
+        InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin, RestoreSubRoom,
+        ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState, SubRoomList,
+        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
         sub_room_privacy::{SubRoomPrivacyFailure, encrypt_sub_rooms, mark_open_sub_rooms_listed},
     },
@@ -91,6 +91,20 @@ pub trait SubRoomUseCases: Send + Sync {
     fn revise_sub_room(
         &self,
         request: ReviseSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 把一间子房间归档（2e-2）：只能看、不能说，名字和名额让出来，成员、门、分类、管理员原样
+    /// 留着。管得了这一间的人能做。已经归档的原样回。
+    fn archive_sub_room(
+        &self,
+        request: ArchiveSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 把归档了的一间子房间恢复（2e-2）：原来的人接着说，被禁言着的照旧说不了。能归档的人能恢复，
+    /// 自动归档的原来在里面的人也能；跟着父房间归档的回不来。没归档的原样回。
+    fn restore_sub_room(
+        &self,
+        request: RestoreSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
 
     /// 申请进一间要批准的子房间，可以留一句话。不用批准的（没有门了、父房间的房主和管理员、本来
@@ -215,6 +229,20 @@ impl SubRoomUseCases for PrivateRoomService {
         request: ReviseSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.revise_sub_room_internal(request))
+    }
+
+    fn archive_sub_room(
+        &self,
+        request: ArchiveSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.archive_sub_room_internal(request))
+    }
+
+    fn restore_sub_room(
+        &self,
+        request: RestoreSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
+        Box::pin(self.restore_sub_room_internal(request))
     }
 
     fn request_sub_room_join(

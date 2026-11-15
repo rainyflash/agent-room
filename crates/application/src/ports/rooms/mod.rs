@@ -29,6 +29,7 @@ mod provisioning;
 mod public_room_directory;
 mod role_changes;
 mod room_moderation_grants;
+mod sub_room_archive;
 mod sub_room_categories;
 mod sub_rooms;
 
@@ -84,6 +85,10 @@ pub use role_changes::{
 };
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
+};
+pub use sub_room_archive::{
+    SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord, SubRoomArchiveStore,
+    SubRoomRestoration,
 };
 pub use sub_room_categories::{
     NewSubRoomCategory, SubRoomCategory, SubRoomCategoryName, SubRoomCategoryOutcome,

@@ -26,6 +26,7 @@ pub mod room_moderation_grants;
 pub mod room_notices;
 pub mod room_role_changes;
 pub mod rooms;
+pub mod sub_room_archive;
 pub mod sub_room_categories;
 pub mod sub_rooms;
 pub mod time;

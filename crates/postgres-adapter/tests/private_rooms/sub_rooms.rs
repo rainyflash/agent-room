@@ -20,6 +20,8 @@ use super::{
     *,
 };
 
+#[path = "sub_room_archive.rs"]
+mod archive;
 #[path = "sub_room_categories.rs"]
 mod categories;
 #[path = "sub_room_doors.rs"]
@@ -88,6 +90,7 @@ async fn 子房间连同父子关系和管理员一起存_房间列表里没有�
             created_by: member,
             created_by_agent: None,
             created_at: time(10),
+            archived: None,
         })
     );
     assert_eq!(link(&repositories, parent).await, None);

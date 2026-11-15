@@ -1800,6 +1800,36 @@ impl PrivateRoomMatrixGateway for TestMatrix {
         })
     }
 
+    fn reopen<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            let what = std::iter::once("reopen".to_owned())
+                .chain(assignments.iter().map(|assignment| {
+                    let level = if assignment.allowed() {
+                        "speak"
+                    } else {
+                        "view"
+                    };
+                    format!("{}={level}", assignment.user_id().as_str())
+                }))
+                .collect::<Vec<_>>()
+                .join(" ");
+            self.change(room_id, MatrixOperation::UpdatePowerLevels, what)?;
+            self.record("matrix.reopen");
+            let mut speaking = self.speaking.lock().expect("发言锁正常");
+            for assignment in assignments {
+                speaking.insert(
+                    assignment.user_id().as_str().to_owned(),
+                    assignment.allowed(),
+                );
+            }
+            Ok(())
+        })
+    }
+
     fn set_name<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,

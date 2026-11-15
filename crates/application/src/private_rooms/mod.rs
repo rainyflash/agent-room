@@ -39,14 +39,14 @@ pub use listing::{
     PrivateRoomListingUseCases, UpdateListing,
 };
 pub use models::{
-    AnswerSubRoomJoinRequest, ArchivePrivateRoom, ChangePrivateRoomPermissions,
+    AnswerSubRoomJoinRequest, ArchivePrivateRoom, ArchiveSubRoom, ChangePrivateRoomPermissions,
     ChangeSubRoomManager, ChangeSubRoomPolicy, CreatePrivateRoom, CreateSubRoom,
     CreateSubRoomCategory, DeleteSubRoomCategory, GovernPrivateRoomMember, GovernSubRoomMember,
     InspectPrivateRoom, InspectSubRoomPolicy, InviteByLink, InvitePrivateRoomMember,
     ListPrivateRooms, ListPrivateRoomsForAccount, ListSubRooms, PrivateRoomActor,
     PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomOrigin,
-    RenamePrivateRoom, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
-    SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomView,
+    RenamePrivateRoom, RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom, ReviseSubRoomCategory,
+    SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomView,
     TransferPrivateRoomOwnership,
 };
 pub use moderation_grants::{

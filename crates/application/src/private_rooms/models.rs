@@ -281,6 +281,22 @@ pub struct ReviseSubRoom {
     pub category: Option<Option<SubRoomCategoryId>>,
 }
 
+/// 把一间子房间归档（`specs/redesign/sub-rooms.md` 第 2e-2 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveSubRoom {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 把归档了的一间子房间恢复（第 2e-2 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreSubRoom {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+}
+
 /// 申请进一间要批准的子房间（`specs/redesign/sub-rooms.md` 第 2d-2 步）。`message` 是留的那
 /// 句话，可以是空的。
 #[derive(Debug, Clone, PartialEq, Eq)]
