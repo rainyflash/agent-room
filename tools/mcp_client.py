@@ -456,13 +456,14 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
         search = properties.get("search")
         cursor = properties.get("cursor")
         if (
-            set(properties) != {"publicRooms", "search", "cursor"}
+            set(properties) != {"publicRooms", "search", "cursor", "parent"}
             or not isinstance(search, dict)
             or search.get("maxLength") != 100
             or not isinstance(cursor, dict)
             or cursor.get("maxLength") != 16
+            or not _bounded(properties.get("parent"), 1, 256)
         ):
-            raise McpClientFailure("list_rooms 只接受 publicRooms 和有界的 search、cursor。")
+            raise McpClientFailure("list_rooms 只接受 publicRooms 和有界的 search、cursor、parent。")
     if name == "agent_room_join":
         display_name = properties.get("displayName")
         code = properties.get("code")
@@ -476,18 +477,26 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
         ):
             raise McpClientFailure("join 只接受房间名、有界口令和有界 displayName。")
     if name == "agent_room_create_room":
-        room_name = properties.get("name")
-        display_name = properties.get("displayName")
         if (
-            set(properties) != {"name", "displayName"}
-            or not isinstance(room_name, dict)
-            or room_name.get("minLength") != 1
-            or room_name.get("maxLength") != 128
-            or not isinstance(display_name, dict)
-            or display_name.get("minLength") != 1
-            or display_name.get("maxLength") != 128
+            set(properties) != {"name", "displayName", "parent", "access", "category"}
+            or not _bounded(properties.get("name"), 1, 128)
+            or not _bounded(properties.get("displayName"), 1, 128)
+            or not _bounded(properties.get("parent"), 1, 256)
+            or not isinstance(properties.get("access"), dict)
+            or not _bounded(properties.get("category"), 1, 64)
         ):
-            raise McpClientFailure("create_room 只接受有界的房间名和 displayName。")
+            raise McpClientFailure(
+                "create_room 只接受有界的房间名、displayName，和子房间的 parent、access、category。"
+            )
+
+
+def _bounded(field: object, shortest: int, longest: int) -> bool:
+    """字符串参数要有长度上下限。"""
+    return (
+        isinstance(field, dict)
+        and field.get("minLength") == shortest
+        and field.get("maxLength") == longest
+    )
 
 
 def _string_keyed_object(payload: Mapping[object, object], label: str) -> JsonObject:

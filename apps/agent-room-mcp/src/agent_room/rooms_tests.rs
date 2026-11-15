@@ -1,8 +1,9 @@
 //! 建房间、管房间的工具（`specs/agent-rooms/design.md` 第 3 步），走真实的 MCP 传输。
 
 use agent_room_bridge_ipc::{
-    IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
-    IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
+    IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcParentRoom,
+    IpcPublicRoomJoinMode, IpcRemoveAgentRequest, IpcRoomAccess, IpcRoomAccessAction,
+    IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,
 };
 
 use super::*;
@@ -12,6 +13,9 @@ const OTHER_TASK: &str = "01990d9e-8400-7000-8000-0000000000a2";
 const CREATED_ROOM: &str = "!created:test.invalid";
 const GUIDE: &str = "https://api.agent-room.test/agents.txt";
 const KNOCKER: &str = "01990d9e-8400-7000-8000-0000000000b1";
+/// 账号在的整间房“Project”，下面已经有一间子房间“Ship log”。
+const PROJECT: &str = "01990d9e-8400-7000-8000-0000000000e1";
+const SHIP_LOG: &str = "01990d9e-8400-7000-8000-0000000000e2";
 
 /// 建房、开会话、看口令都记下来；口令总是 [`JOIN_CODE`]。
 #[derive(Default)]
@@ -33,12 +37,22 @@ impl RoomsBridge {
             .expect("建过房")
     }
 
+    /// 建过房就在最后建的那间；没建过、按名单进的就在会话开的那间。
+    fn current_room(&self) -> Option<(String, String)> {
+        if let Some(created) = self.created.lock().unwrap().last() {
+            return Some((created.catalog_id.clone(), CREATED_ROOM.into()));
+        }
+        let opened = self.opened.lock().unwrap();
+        let room = opened.last()?.room.as_ref()?;
+        Some((room.catalog_id.clone(), room.room_id.clone()?))
+    }
+
     fn in_session(&self, method: IpcMethod) -> Result<IpcResponse, BridgeToolFailure> {
         match method {
             IpcMethod::GetSelf => Ok(IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
                     owner: None,
-                    room_catalog_id: Some(self.last_created().catalog_id),
+                    room_catalog_id: self.current_room().map(|(catalog_id, _)| catalog_id),
                     agent: IpcAgentSummary {
                         agent_id: uuid::Uuid::now_v7().to_string(),
                         display_name: "Scout".into(),
@@ -47,7 +61,9 @@ impl RoomsBridge {
                     },
                     instance_id: uuid::Uuid::now_v7().to_string(),
                     matrix_device_id: "TEST".into(),
-                    room_id: CREATED_ROOM.into(),
+                    room_id: self
+                        .current_room()
+                        .map_or_else(|| CREATED_ROOM.into(), |(_, room_id)| room_id),
                     connection_state: IpcBridgeState::Ready,
                     granted_capabilities: vec![],
                 },
@@ -80,6 +96,28 @@ impl RoomsBridge {
     }
 }
 
+/// 名单：整间的“Project”和它下面的“Ship log”。
+fn project_rooms() -> Vec<IpcRoomSummary> {
+    vec![
+        IpcRoomSummary {
+            catalog_id: PROJECT.into(),
+            matrix_room_id: Some("!project:test.invalid".into()),
+            ..room(IpcRoomKind::PrivateRoom, "Project", None)
+        },
+        IpcRoomSummary {
+            catalog_id: SHIP_LOG.into(),
+            matrix_room_id: Some("!ship-log:test.invalid".into()),
+            parent: Some(IpcParentRoom {
+                catalog_id: PROJECT.into(),
+                name: "Project".into(),
+            }),
+            category: Some("Ship".into()),
+            access: Some(IpcPublicRoomJoinMode::Open),
+            ..room(IpcRoomKind::PrivateRoom, "Ship log", None)
+        },
+    ]
+}
+
 fn unexpected(method: &IpcMethod) -> BridgeToolFailure {
     BridgeToolFailure::new(
         "test.unexpected_call",
@@ -96,6 +134,11 @@ impl BridgeToolClient for RoomsBridge {
                 let refused = self.refuse_create.lock().unwrap().clone();
                 refused.map_or_else(
                     || {
+                        // 分类只认得“Ship”，别的都放进“未分类”。
+                        let known = request
+                            .category
+                            .clone()
+                            .filter(|category| category == "Ship");
                         let room = IpcRoomSummary {
                             kind: IpcRoomKind::PrivateRoom,
                             catalog_id: request.catalog_id.clone(),
@@ -103,19 +146,31 @@ impl BridgeToolClient for RoomsBridge {
                             name: request.name.clone(),
                             slug: None,
                             membership: None,
-                            parent: None,
-                            category: None,
-                            access: None,
+                            parent: request.parent_catalog_id.clone().map(|catalog_id| {
+                                IpcParentRoom {
+                                    catalog_id,
+                                    name: "Project".into(),
+                                }
+                            }),
+                            category: known.clone(),
+                            access: request
+                                .parent_catalog_id
+                                .as_ref()
+                                .map(|_| request.access.unwrap_or(IpcPublicRoomJoinMode::Open)),
                         };
+                        let category_missing = request.category.is_some() && known.is_none();
                         self.created.lock().unwrap().push(request);
                         Ok(IpcResponse::CreatedRoom {
                             room,
-                            category_missing: false,
+                            category_missing,
                         })
                     },
                     Err,
                 )
             }
+            IpcMethod::ListRooms => Ok(IpcResponse::Rooms {
+                rooms: project_rooms(),
+            }),
             IpcMethod::OpenHostSession(request) => {
                 self.opened.lock().unwrap().push(request);
                 Ok(IpcResponse::HostSession {
@@ -418,5 +473,178 @@ async fn 放行_邀请和移出都在会话里_账户_id_统一成小写() {
         assert_eq!(result["structuredContent"]["catalogId"], catalog_id);
     }
     bridge.assert_finished();
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 建子房间先找到父房间_带上门和分类_回答说在哪间房下面_不去拿口令() {
+    let bridge = Arc::new(RoomsBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+
+    let result = create(
+        &mut harness,
+        json!({"name": "Release", "parent": "Project", "access": "request", "category": "Design"}),
+        TASK,
+    )
+    .await;
+
+    assert_ne!(result["isError"], true, "{result}");
+    let created = bridge.last_created();
+    assert_eq!(created.parent_catalog_id.as_deref(), Some(PROJECT));
+    assert_eq!(created.access, Some(IpcPublicRoomJoinMode::Request));
+    assert_eq!(created.category.as_deref(), Some("Design"));
+    assert!(bridge.access.lock().unwrap().is_empty(), "子房间没有口令");
+    let content = &result["structuredContent"];
+    assert_eq!(content["room"]["parent"]["name"], "Project");
+    assert_eq!(content["room"]["access"], "request");
+    assert_eq!(content["categoryMissing"], true);
+    assert!(
+        content["categoryNote"]
+            .as_str()
+            .unwrap()
+            .contains("Uncategorized")
+    );
+    assert!(content.get("access").is_none(), "{content}");
+    assert!(
+        content["localAgents"]
+            .as_str()
+            .unwrap()
+            .contains("\"Project/Release\""),
+        "{content}"
+    );
+    assert!(content["people"].as_str().unwrap().contains("sub-room"));
+
+    // 同一个任务在同一间房下面再说一次是同一间；没带父房间的同名房间是另一间。
+    create(
+        &mut harness,
+        json!({"name": "Release", "parent": PROJECT}),
+        TASK,
+    )
+    .await;
+    assert_eq!(bridge.last_created().catalog_id, created.catalog_id);
+    create(&mut harness, json!({"name": "Release"}), TASK).await;
+    assert_ne!(bridge.last_created().catalog_id, created.catalog_id);
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 子房间的选项不合规_或者父房间找不到_都不去建() {
+    let bridge = Arc::new(RoomsBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+    for (arguments, code) in [
+        (
+            json!({"name": "Release", "access": "open"}),
+            "bridge.ipc.sub_room_options_invalid",
+        ),
+        (
+            json!({"name": "Release", "category": "Ship"}),
+            "bridge.ipc.sub_room_options_invalid",
+        ),
+        (
+            json!({"name": "Re/lease", "parent": "Project"}),
+            "bridge.ipc.room_name_invalid",
+        ),
+        (
+            json!({"name": "Release", "parent": "Project", "category": " Ship"}),
+            "bridge.ipc.sub_room_category_invalid",
+        ),
+        (
+            json!({"name": "Release", "parent": "Nowhere"}),
+            "agent.join.room_not_found",
+        ),
+    ] {
+        let refused = create(&mut harness, arguments.clone(), TASK).await;
+        assert_eq!(refused["isError"], true, "{arguments}");
+        assert_eq!(refused["structuredContent"]["code"], code, "{arguments}");
+    }
+    assert!(bridge.created.lock().unwrap().is_empty());
+
+    *bridge.refuse_create.lock().unwrap() = Some(failure(
+        "bridge.rooms.sub_room_agents_may_not_create",
+        false,
+    ));
+    let refused = create(
+        &mut harness,
+        json!({"name": "Release", "parent": "Project"}),
+        TASK,
+    )
+    .await;
+    assert_eq!(
+        refused["structuredContent"]["code"],
+        "bridge.rooms.sub_room_agents_may_not_create"
+    );
+    assert!(
+        refused.to_string().contains("doesn't let agents"),
+        "{refused}"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 列房间默认不列子房间_带上父房间才列_和公开房间一起要不行() {
+    let bridge = Arc::new(RoomsBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+
+    let all = harness.call("agent_room_list_rooms", json!({})).await;
+    let names: Vec<_> = all["structuredContent"]["rooms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|room| room["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(names, ["Project"], "{all}");
+
+    for parent in ["Project", PROJECT] {
+        let listed = harness
+            .call("agent_room_list_rooms", json!({ "parent": parent }))
+            .await;
+        let rooms = listed["structuredContent"]["rooms"].as_array().unwrap();
+        assert_eq!(rooms.len(), 1, "{listed}");
+        assert_eq!(rooms[0]["name"], "Ship log");
+        assert_eq!(rooms[0]["category"], "Ship");
+        assert_eq!(rooms[0]["access"], "open");
+    }
+
+    let mixed = harness
+        .call(
+            "agent_room_list_rooms",
+            json!({ "parent": "Project", "publicRooms": true }),
+        )
+        .await;
+    assert_eq!(mixed["isError"], true);
+    assert_eq!(
+        mixed["structuredContent"]["code"],
+        "agent.rooms.parent_with_public"
+    );
+    let missing = harness
+        .call("agent_room_list_rooms", json!({ "parent": "Nowhere" }))
+        .await;
+    assert_eq!(
+        missing["structuredContent"]["code"],
+        "agent.join.room_not_found"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn 进子房间写父房间名斜杠子房间名_只写子房间名找不到() {
+    let bridge = Arc::new(RoomsBridge::default());
+    let mut harness = McpHarness::start(bridge.clone()).await;
+
+    let alone = harness
+        .call("agent_room_join", json!({ "room": "Ship log" }))
+        .await;
+    assert_eq!(
+        alone["structuredContent"]["code"], "agent.join.room_not_found",
+        "{alone}"
+    );
+    assert!(bridge.opened.lock().unwrap().is_empty());
+
+    let joined = harness
+        .call("agent_room_join", json!({ "room": "Project / Ship log" }))
+        .await;
+    assert_ne!(joined["isError"], true, "{joined}");
+    let opened = bridge.opened.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(opened.room.unwrap().catalog_id, SHIP_LOG);
     harness.stop().await;
 }
