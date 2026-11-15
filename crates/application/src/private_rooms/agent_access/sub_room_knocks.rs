@@ -5,9 +5,11 @@
 //!
 //! 管得了这一间的人和人的申请那边一样（[`manages_sub_room`]）：父房间的房主和管理员，进没进来都算，
 //! 加上这一间的子房间管理员。替人操作的 Agent 管子房间放到 2h。
+//!
+//! 父房间里移出 Agent 成员时，它在的子房间里先踢出去（2f-2b，`kick_from_sub_rooms`）。
 
 use agent_room_domain::{
-    ids::AgentId,
+    ids::{AgentId, RoomCatalogId},
     join_codes::{PrivateRoomAgentJoinedVia, PrivateRoomAgentMemberStatus},
     private_rooms::{
         PrivateRoomLifecycleStatus, PrivateRoomMembershipStatus, PrivateRoomPermissions,
@@ -18,9 +20,13 @@ use agent_room_domain::{
 
 use super::{
     AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult, KnockResult,
-    PrivateRoomAgentAccessService, PrivateRoomSnapshot, domain, redeemed_room, repository,
+    PrivateRoomAgentAccessService, PrivateRoomSnapshot, domain, matrix, matrix_room_id,
+    redeemed_room, repository,
 };
-use crate::private_rooms::PrivateRoomActor;
+use crate::{
+    ports::{PrivateMatrixMembership, PrivateRoomAgentMemberRecord},
+    private_rooms::PrivateRoomActor,
+};
 
 /// 一间子房间进门要看的：它的父房间、它的门。
 struct SubRoomGate {
@@ -174,5 +180,47 @@ impl PrivateRoomAgentAccessService {
                 AgentAccessFailureKind::NotFound,
             ))
         }
+    }
+
+    /// 父房间里要移出这个 Agent 成员：先把它从它在的子房间里踢出去（2f-2b），归档了的也踢。只踢，不设
+    /// 发言级别：设一次就把归档的房间解开了。没在聊天服务器上那间房里的不踢（只记了账、还没进去）。
+    /// 记账时存储连这几间的记录一起改成已移出。
+    pub(super) async fn kick_from_sub_rooms(
+        &self,
+        parent: RoomCatalogId,
+        member: &PrivateRoomAgentMemberRecord,
+        operation: &'static str,
+    ) -> AgentAccessResult<()> {
+        let sub_rooms = self
+            .sub_room_doors
+            .agent_sub_rooms(parent, member.agent_id)
+            .await
+            .map_err(|error| repository(operation, &error))?;
+        for catalog_id in sub_rooms {
+            let Some(sub_room) = self
+                .rooms
+                .find_by_catalog(catalog_id)
+                .await
+                .map_err(|error| repository(operation, &error))?
+            else {
+                continue;
+            };
+            let matrix_room = matrix_room_id(&sub_room, operation)?;
+            let membership = self
+                .matrix
+                .membership(&matrix_room, &member.matrix_user_id)
+                .await
+                .map_err(|error| matrix(operation, &error))?;
+            if matches!(
+                membership,
+                Some(PrivateMatrixMembership::Joined | PrivateMatrixMembership::Invited)
+            ) {
+                self.matrix
+                    .kick(&matrix_room, &member.matrix_user_id)
+                    .await
+                    .map_err(|error| matrix(operation, &error))?;
+            }
+        }
+        Ok(())
     }
 }

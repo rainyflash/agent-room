@@ -279,6 +279,44 @@ async fn 没有门的_被这一间的管理员移出过的要敲门等放行() {
 }
 
 #[tokio::test]
+async fn 父房间里移出_agent_成员时_先从它在的子房间里踢出去_子房间的记录跟着移出() {
+    let fixture = family(RoomJoinMode::Open, false);
+    fixture.in_parent().await;
+    admitted(fixture.knock().await);
+
+    fixture
+        .service
+        .remove_agent(RemoveAgentMember {
+            actor: principal_actor(owner()).into(),
+            catalog_id: parent_id(),
+            agent_id: agent_id(),
+        })
+        .await
+        .expect("父房间的房主能移出");
+    assert_eq!(
+        fixture.matrix.events(),
+        ["membership", "kick", "speaking:false", "kick"],
+        "先踢子房间里的，再踢父房间里的"
+    );
+    for room in [parent_id(), catalog_id()] {
+        assert_eq!(
+            fixture.store.status_in(room, agent_id()),
+            Some(PrivateRoomAgentMemberStatus::Removed)
+        );
+    }
+    assert_eq!(
+        *fixture.store.queued_kicks.lock().unwrap(),
+        [(catalog_id(), agent_id())],
+        "存储照旧排上，后台那一遍看到它已经出去了就不再踢"
+    );
+    assert_eq!(
+        fixture.knock().await.unwrap_err(),
+        AgentAccessFailureKind::NotFound,
+        "不是父房间里的 Agent 成员了"
+    );
+}
+
+#[tokio::test]
 async fn 这一间归档了_敲门当找不到_管理者也放行不了() {
     use PrivateRoomCapability::{Manage, Speak, View};
     let mut parent = with_speaker(PrivateRoom::create(parent_id(), owner()));

@@ -11,7 +11,7 @@ use agent_room_application::{
     ports::{SubRoomSyncScope, SubRoomSyncTask},
 };
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
     time::UtcMillis,
 };
 use sqlx::{PgPool, postgres::PgRow};
@@ -57,8 +57,8 @@ pub(super) async fn claim(
                  next_attempt_at = to_timestamp($2::double precision / 1000.0)
             FROM due
            WHERE task.id = due.id
-          RETURNING task.id, task.catalog_entry_id, task.principal_id, task.generation,
-                    task.attempts",
+          RETURNING task.id, task.catalog_entry_id, task.principal_id, task.agent_id,
+                    task.generation, task.attempts",
     )
     .bind(now.value())
     .bind(lease_until.value())
@@ -126,39 +126,61 @@ async fn queue_again(
     task: SubRoomSyncTask,
     operation: &'static str,
 ) -> RepositoryResult<()> {
-    // 一个人一条和一间房一条是两个唯一索引，撞上时各认各的。
-    let statement = if task.principal.is_some() {
-        r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
-               catalog_entry_id, principal_id, queued_at
-           )
-           SELECT link.catalog_entry_id, $2::uuid, now()
-             FROM agent_room.private_room_parent AS link
-            WHERE link.catalog_entry_id = $1
-           ON CONFLICT (catalog_entry_id, principal_id) WHERE principal_id IS NOT NULL
-           DO UPDATE
-           SET generation = queued.generation + 1,
-               queued_at = EXCLUDED.queued_at,
-               attempts = 0,
-               next_attempt_at = NULL,
-               failure_code = NULL"
-    } else {
-        r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
-               catalog_entry_id, principal_id, queued_at
-           )
-           SELECT link.catalog_entry_id, $2::uuid, now()
-             FROM agent_room.private_room_parent AS link
-            WHERE link.catalog_entry_id = $1
-           ON CONFLICT (catalog_entry_id) WHERE principal_id IS NULL
-           DO UPDATE
-           SET generation = queued.generation + 1,
-               queued_at = EXCLUDED.queued_at,
-               attempts = 0,
-               next_attempt_at = NULL,
-               failure_code = NULL"
+    // 一个人一条、一个 Agent 一条和一间房一条是三个唯一索引，撞上时各认各的。`$2` 是人或者 Agent，
+    // 这间房自己的事是空的。
+    let (statement, subject) = match (task.principal, task.agent) {
+        (Some(principal), _) => (
+            r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
+                   catalog_entry_id, principal_id, queued_at
+               )
+               SELECT link.catalog_entry_id, $2::uuid, now()
+                 FROM agent_room.private_room_parent AS link
+                WHERE link.catalog_entry_id = $1
+               ON CONFLICT (catalog_entry_id, principal_id) WHERE principal_id IS NOT NULL
+               DO UPDATE
+               SET generation = queued.generation + 1,
+                   queued_at = EXCLUDED.queued_at,
+                   attempts = 0,
+                   next_attempt_at = NULL,
+                   failure_code = NULL",
+            Some(principal.as_uuid()),
+        ),
+        (None, Some(agent)) => (
+            r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
+                   catalog_entry_id, agent_id, queued_at
+               )
+               SELECT link.catalog_entry_id, $2::uuid, now()
+                 FROM agent_room.private_room_parent AS link
+                WHERE link.catalog_entry_id = $1
+               ON CONFLICT (catalog_entry_id, agent_id) WHERE agent_id IS NOT NULL
+               DO UPDATE
+               SET generation = queued.generation + 1,
+                   queued_at = EXCLUDED.queued_at,
+                   attempts = 0,
+                   next_attempt_at = NULL,
+                   failure_code = NULL",
+            Some(agent.as_uuid()),
+        ),
+        (None, None) => (
+            r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
+                   catalog_entry_id, principal_id, queued_at
+               )
+               SELECT link.catalog_entry_id, $2::uuid, now()
+                 FROM agent_room.private_room_parent AS link
+                WHERE link.catalog_entry_id = $1
+               ON CONFLICT (catalog_entry_id) WHERE principal_id IS NULL AND agent_id IS NULL
+               DO UPDATE
+               SET generation = queued.generation + 1,
+                   queued_at = EXCLUDED.queued_at,
+                   attempts = 0,
+                   next_attempt_at = NULL,
+                   failure_code = NULL",
+            None,
+        ),
     };
     sqlx::query(statement)
         .bind(task.catalog_id.as_uuid())
-        .bind(task.principal.map(PrincipalId::as_uuid))
+        .bind(subject)
         .execute(pool)
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -168,11 +190,13 @@ async fn queue_again(
 fn decode_task(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoomSyncTask> {
     let catalog_id: uuid::Uuid = decode_column(row, "catalog_entry_id", operation)?;
     let principal: Option<uuid::Uuid> = decode_column(row, "principal_id", operation)?;
+    let agent: Option<uuid::Uuid> = decode_column(row, "agent_id", operation)?;
     let attempts: i32 = decode_column(row, "attempts", operation)?;
     Ok(SubRoomSyncTask {
         id: decode_column(row, "id", operation)?,
         catalog_id: RoomCatalogId::from_uuid(catalog_id),
         principal: principal.map(PrincipalId::from_uuid),
+        agent: agent.map(AgentId::from_uuid),
         generation: decode_column(row, "generation", operation)?,
         attempt: u32::try_from(attempts).map_err(|_| corrupt_data(operation))?,
     })

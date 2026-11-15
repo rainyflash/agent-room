@@ -59,6 +59,21 @@ impl PrivateRoomAgentEviction for TestAgentMembers {
         Box::pin(async move { Ok(joined) })
     }
 
+    fn agent_member_in(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>> {
+        let found = self
+            .members
+            .lock()
+            .expect("Agent 成员锁正常")
+            .iter()
+            .find(|member| member.catalog_id == catalog_id && member.agent_id == agent_id)
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
     fn mark_agent_removed(
         &self,
         catalog_id: RoomCatalogId,

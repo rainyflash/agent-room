@@ -154,7 +154,8 @@ pub trait PrivateRoomAgentAccessStore: Send + Sync {
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>>;
 
-    /// 记为已移出；原本不是已加入时返回 `false`。
+    /// 记为已移出；原本不是已加入时返回 `false`。这间房下面的子房间里它也一起记成已移出，在同一个
+    /// 事务里排上把它从聊天服务器上的那几间里踢出去（2f-2b），不管父房间这一条原本是不是已加入。
     fn remove_agent(
         &self,
         catalog_id: RoomCatalogId,
@@ -225,13 +226,20 @@ pub trait PrivateRoomAgentEviction: Send + Sync {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>>;
 
-    /// 记为已移出；原本不是已加入时返回 `false`。
+    /// 记为已移出；原本不是已加入时返回 `false`。这间房下面的子房间里它也一起记成已移出（2f-2b）。
     fn mark_agent_removed(
         &self,
         catalog_id: RoomCatalogId,
         agent_id: AgentId,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<bool>>;
+
+    /// 这个 Agent 在这个房间里的 Agent 成员记录，已移出的也在：子房间的对账照它踢出去（2f-2b）。
+    fn agent_member_in(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>>;
 }
 
 impl<T: PrivateRoomAgentAccessStore + ?Sized> PrivateRoomAgentEviction for T {
@@ -256,6 +264,14 @@ impl<T: PrivateRoomAgentAccessStore + ?Sized> PrivateRoomAgentEviction for T {
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<bool>> {
         self.remove_agent(catalog_id, agent_id, now)
+    }
+
+    fn agent_member_in(
+        &self,
+        catalog_id: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>> {
+        PrivateRoomAgentAccessStore::agent_member(self, catalog_id, agent_id)
     }
 }
 

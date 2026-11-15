@@ -559,7 +559,7 @@ pub(super) async fn queue_room_sync(
         r"INSERT INTO agent_room.private_room_sub_room_sync AS queued (
                catalog_entry_id, principal_id, queued_at
            ) VALUES ($1, NULL, to_timestamp($2::double precision / 1000.0))
-           ON CONFLICT (catalog_entry_id) WHERE principal_id IS NULL
+           ON CONFLICT (catalog_entry_id) WHERE principal_id IS NULL AND agent_id IS NULL
            DO UPDATE
            SET generation = queued.generation + 1,
                queued_at = EXCLUDED.queued_at,

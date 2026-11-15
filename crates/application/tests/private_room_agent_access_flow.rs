@@ -1117,8 +1117,15 @@ impl Fixture {
             source_weights: Arc::new(SharedNine),
             listings: listing.clone(),
             holds: holds.clone(),
-            sub_room_doors: Arc::new(FixedDoors(door)),
+            sub_room_doors: Arc::new(FixedDoors(door.clone(), store.clone())),
         });
+        if let Some(link) = door {
+            store
+                .children
+                .lock()
+                .unwrap()
+                .push((link.parent_catalog_id, link.catalog_id));
+        }
         Self {
             service,
             store,
@@ -1503,7 +1510,7 @@ impl JoinCodeSealer for FakeSealer {
 struct FixedRooms(Vec<PrivateRoomSnapshot>);
 
 /// 子房间的父子关系：只有这一间。
-struct FixedDoors(Option<SubRoomLink>);
+struct FixedDoors(Option<SubRoomLink>, Arc<MemoryAccessStore>);
 
 impl SubRoomDoorSource for FixedDoors {
     fn sub_room_door(
@@ -1511,6 +1518,25 @@ impl SubRoomDoorSource for FixedDoors {
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>> {
         let found = self.0.clone().filter(|link| link.catalog_id == catalog_id);
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn agent_sub_rooms(
+        &self,
+        parent: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
+        let found = self
+            .0
+            .clone()
+            .filter(|link| {
+                link.parent_catalog_id == parent
+                    && self.1.status_in(link.catalog_id, agent_id)
+                        == Some(PrivateRoomAgentMemberStatus::Joined)
+            })
+            .map(|link| link.catalog_id)
+            .into_iter()
+            .collect();
         Box::pin(async move { Ok(found) })
     }
 }
@@ -1593,7 +1619,9 @@ impl PrivateRoomMatrixGateway for RecordingMatrix {
         _room_id: &'a MatrixRoomId,
         _user_id: &'a MatrixUserId,
     ) -> PortFuture<'a, MatrixResult<Option<PrivateMatrixMembership>>> {
-        Box::pin(async { unreachable!("移出不查成员状态") })
+        // 只有从子房间里踢之前问（2f-2b）：父房间里照旧不问就踢。
+        self.0.lock().unwrap().push("membership");
+        Box::pin(async { Ok(Some(PrivateMatrixMembership::Joined)) })
     }
     fn invite<'a>(
         &'a self,
@@ -1675,6 +1703,10 @@ struct MemoryAccessStore {
     joined_via: Mutex<BTreeMap<(RoomCatalogId, AgentId), PrivateRoomAgentJoinedVia>>,
     attempts: Mutex<BTreeMap<String, (UtcMillis, u32)>>,
     knocks: Mutex<BTreeMap<(RoomCatalogId, AgentId), PrivateRoomAgentKnockRecord>>,
+    /// 父房间和它的子房间：移出时和真实存储一样，子房间里的跟着移出（2f-2b）。
+    children: Mutex<Vec<(RoomCatalogId, RoomCatalogId)>>,
+    /// 跟着移出时排上的“从聊天服务器上的子房间里踢出去”。
+    queued_kicks: Mutex<Vec<(RoomCatalogId, AgentId)>>,
 }
 
 impl MemoryAccessStore {
@@ -1916,17 +1948,31 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
         agent_id: AgentId,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<bool>> {
-        let removed = self
-            .members
+        let mut members = self.members.lock().unwrap();
+        let mut remove = |catalog: RoomCatalogId| {
+            members
+                .get_mut(&(catalog, agent_id))
+                .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
+                .map(|member| {
+                    member.status = PrivateRoomAgentMemberStatus::Removed;
+                    member.status_changed_at = now;
+                })
+                .is_some()
+        };
+        let removed = remove(catalog_id);
+        let children: Vec<RoomCatalogId> = self
+            .children
             .lock()
             .unwrap()
-            .get_mut(&(catalog_id, agent_id))
-            .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
-            .map(|member| {
-                member.status = PrivateRoomAgentMemberStatus::Removed;
-                member.status_changed_at = now;
-            })
-            .is_some();
+            .iter()
+            .filter(|(parent, _)| *parent == catalog_id)
+            .map(|(_, child)| *child)
+            .collect();
+        for child in children {
+            if remove(child) {
+                self.queued_kicks.lock().unwrap().push((child, agent_id));
+            }
+        }
         Box::pin(async move { Ok(removed) })
     }
     fn join_code_retry_at<'a>(
