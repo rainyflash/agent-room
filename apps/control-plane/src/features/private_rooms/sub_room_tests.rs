@@ -8,11 +8,12 @@
 use agent_room_application::{
     ports::{JoinRequestRecord, PendingJoinRequest, SubRoomCategory, SubRoomEntry},
     private_rooms::{
-        AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager, ChangeSubRoomPolicy,
-        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember,
-        InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom,
-        ReviseSubRoomCategory, SubRoomJoinState, SubRoomList, SubRoomMembershipAction,
-        SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases, SubRoomView,
+        AgentSubRoomCreated, AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager,
+        ChangeSubRoomPolicy, CreateAgentSubRoom, CreateSubRoom, CreateSubRoomCategory,
+        DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms,
+        RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
+        SubRoomView,
     },
 };
 use agent_room_domain::{
@@ -28,6 +29,8 @@ use super::*;
 mod archive;
 #[path = "sub_room_category_tests.rs"]
 mod categories;
+#[path = "sub_room_device_tests.rs"]
+mod device;
 #[path = "sub_room_manager_tests.rs"]
 mod managers;
 #[path = "sub_room_member_tests.rs"]
@@ -47,6 +50,8 @@ const REQUESTED_AT: i64 = 1_700_000_200_000;
 #[derive(Default)]
 pub(super) struct FakeSubRooms {
     created: Mutex<Vec<CreateSubRoom>>,
+    /// 本机 Agent 替主人建的（2g-1）。
+    agent_created: Mutex<Vec<CreateAgentSubRoom>>,
     /// 问名单的房间号，和要不要“已归档”的那份。
     listed: Mutex<Vec<(RoomCatalogId, bool)>>,
     inspected: Mutex<Vec<RoomCatalogId>>,
@@ -131,6 +136,26 @@ impl SubRoomUseCases for FakeSubRooms {
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         let result = self.refusal().map_or_else(|| Ok(snapshot()), Err);
         self.created.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+
+    /// 分类只认得“release”（不分大小写），回的是这间房里的写法“Release”。
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>> {
+        let known = request
+            .category
+            .as_deref()
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("release"));
+        let created = AgentSubRoomCreated {
+            room: snapshot().under(request.parent_catalog_id),
+            parent_name: "Weekly".to_owned(),
+            category: known.then(|| "Release".to_owned()),
+            category_missing: request.category.is_some() && !known,
+        };
+        let result = self.refusal().map_or(Ok(created), Err);
+        self.agent_created.lock().unwrap().push(request);
         Box::pin(async move { result })
     }
 

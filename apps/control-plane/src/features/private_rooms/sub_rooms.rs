@@ -49,7 +49,7 @@ use crate::{
 /// 门（“谁能进”），和公开房间的加入方式是同一套词：`open` 是没有门。
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum AccessValue {
+pub(super) enum AccessValue {
     Open,
     Request,
     InviteOnly,

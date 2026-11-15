@@ -40,12 +40,12 @@ use crate::{
 
 use super::{
     super::{
-        AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager, ChangeSubRoomPolicy,
-        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember,
-        InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind,
-        PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin, RestoreSubRoom,
-        ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState, SubRoomList,
-        SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
+        AgentSubRoomCreated, AnswerSubRoomJoinRequest, ArchiveSubRoom, ChangeSubRoomManager,
+        ChangeSubRoomPolicy, CreateAgentSubRoom, CreateSubRoom, CreateSubRoomCategory,
+        DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms,
+        PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult,
+        RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
         sub_room_privacy::{SubRoomPrivacyFailure, encrypt_sub_rooms, mark_open_sub_rooms_listed},
     },
@@ -58,6 +58,12 @@ pub trait SubRoomUseCases: Send + Sync {
         &self,
         request: CreateSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>>;
+
+    /// 本机 Agent 替它的主人建子房间（2g-1）：分类按名字找，没有就放进“未分类”。
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>>;
 
     /// 一间房下面看的人看得到的子房间。父房间里已加入的人才能读。
     fn list_sub_rooms(
@@ -190,6 +196,13 @@ impl SubRoomUseCases for PrivateRoomService {
         request: CreateSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<PrivateRoomSnapshot>> {
         Box::pin(self.create_sub_room_internal(request))
+    }
+
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>> {
+        Box::pin(self.create_agent_sub_room_internal(request))
     }
 
     fn list_sub_rooms(
@@ -342,7 +355,7 @@ struct PreparedSubRoom {
 }
 
 impl PrivateRoomService {
-    async fn create_sub_room_internal(
+    pub(super) async fn create_sub_room_internal(
         &self,
         request: CreateSubRoom,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {

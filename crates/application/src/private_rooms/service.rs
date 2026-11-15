@@ -42,6 +42,7 @@ mod public_creation;
 mod public_transfer;
 mod role_changes;
 mod sub_room_accessible;
+mod sub_room_agent_creation;
 mod sub_room_agent_owner;
 mod sub_room_archive;
 mod sub_room_categories;
