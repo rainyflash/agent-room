@@ -69,6 +69,16 @@ struct RoleChangeResponse {
     previous: Option<StandingResponse>,
     next: StandingResponse,
     changed_at_unix_ms: i64,
+    /// 是它下面哪一间子房间里的（R5）；这间房自己的不写。网页不严格校验这份回答，加字段旧版读得过去。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sub_room: Option<SubRoomResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubRoomResponse {
+    catalog_id: String,
+    name: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -98,6 +108,10 @@ impl From<RoomRoleChangeRecord> for RoleChangeResponse {
             previous: record.previous.map(StandingResponse::from),
             next: StandingResponse::from(record.next),
             changed_at_unix_ms: record.changed_at.value(),
+            sub_room: record.sub_room.map(|sub_room| SubRoomResponse {
+                catalog_id: sub_room.catalog_id.to_string(),
+                name: sub_room.name,
+            }),
         }
     }
 }

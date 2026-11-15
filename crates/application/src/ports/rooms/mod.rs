@@ -78,14 +78,17 @@ pub use public_room_directory::{
     PublicRoomPresenceMatrix, PublicRoomRecord, PublicRoomSearch, PublicRoomSort,
     PublicRoomViewerState,
 };
-pub use role_changes::{RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord};
+pub use role_changes::{
+    RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
+};
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
 };
 pub use sub_rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
-    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord,
-    SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
+    SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope,
+    SubRoomSyncTask,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1583,6 +1583,19 @@ const SUB_ROOM_PEER_MANAGER: (StatusCode, &str, ErrorCategory, &str) = (
     ErrorCategory::Authorization,
     "子房间管理员动不了同一间的另一位管理员，请房主或管理员来。",
 );
+/// 2d-4 起设、撤子房间管理员时的两种原因。
+const SUB_ROOM_TARGET_NOT_INSIDE: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.target_not_inside",
+    ErrorCategory::Conflict,
+    "他得先进这间子房间，才能当它的管理员。",
+);
+const SUB_ROOM_MANAGED_BY_PARENT: (StatusCode, &str, ErrorCategory, &str) = (
+    StatusCode::CONFLICT,
+    "sub_room.managed_by_parent",
+    ErrorCategory::Conflict,
+    "房主和管理员本来就管每一间子房间，不用再设。",
+);
 
 /// 子房间这边不让做的原因各有各的码（`specs/redesign/sub-rooms.md`）。
 const fn sub_room_refusal(
@@ -1677,6 +1690,8 @@ const fn sub_room_refusal(
         SubRoomRefusal::NotInParent => SUB_ROOM_NOT_IN_PARENT,
         SubRoomRefusal::TargetBanned => SUB_ROOM_TARGET_BANNED,
         SubRoomRefusal::PeerManager => SUB_ROOM_PEER_MANAGER,
+        SubRoomRefusal::TargetNotInside => SUB_ROOM_TARGET_NOT_INSIDE,
+        SubRoomRefusal::ManagedByParent => SUB_ROOM_MANAGED_BY_PARENT,
     }
 }
 

@@ -170,12 +170,13 @@ pub use rooms::{
     RoomProvisioningFailureCode, RoomProvisioningGateway, RoomProvisioningJob,
     RoomProvisioningKind, RoomProvisioningStore, RoomProvisioningTarget, RoomReservationClaim,
     RoomReservationOutcome, RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord,
-    SealedInviteLink, SealedJoinCode,
+    RoomRoleChangeSubRoom, SealedInviteLink, SealedJoinCode,
 };
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
-    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomParentFacts, SubRoomPolicyRecord,
-    SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
+    SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope,
+    SubRoomSyncTask,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

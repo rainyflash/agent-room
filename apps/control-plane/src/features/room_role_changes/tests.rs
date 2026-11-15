@@ -5,7 +5,7 @@ use agent_room_application::{
         AuthenticatedPrincipal, AuthenticationRequirement, AuthenticationResult,
         AuthenticationUseCases, BeginLogin, CompleteLogin, LoginCompletion, LoginRedirect,
     },
-    ports::{PortFuture, RoomRoleChangeRecord, SecretValue},
+    ports::{PortFuture, RoomRoleChangeRecord, RoomRoleChangeSubRoom, SecretValue},
     room_role_changes::{
         ListRoomRoleChanges, RoomRoleChangeFailure, RoomRoleChangeResult, RoomRoleChangeUseCases,
     },
@@ -32,6 +32,7 @@ const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
 const MEMBER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e47";
 const INVITED_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e48";
+const SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e49";
 
 #[derive(Default)]
 struct FakeRoleChanges {
@@ -51,7 +52,7 @@ impl RoomRoleChangeUseCases for FakeRoleChanges {
 }
 
 #[tokio::test]
-async fn 记录按房间回答_两头给状态房主和权限_空的不写() {
+async fn 记录按房间回答_两头给状态房主和权限_空的不写_子房间里的写着是哪一间() {
     let role_changes = Arc::new(FakeRoleChanges::default());
     let response = test_router(role_changes.clone())
         .oneshot(signed_in(&path()))
@@ -94,6 +95,23 @@ async fn 记录按房间回答_两头给状态房主和权限_空的不写() {
                         }
                     },
                     "changedAtUnixMs": 1_700_000_200_000_i64
+                },
+                {
+                    "id": 10,
+                    "actorPrincipalId": PRINCIPAL_UUID,
+                    "targetPrincipalId": MEMBER_UUID,
+                    "previous": {
+                        "status": "joined",
+                        "owner": false,
+                        "permissions": { "capabilities": ["view", "speak"] }
+                    },
+                    "next": {
+                        "status": "joined",
+                        "owner": false,
+                        "permissions": { "capabilities": ["view", "speak", "manage"] }
+                    },
+                    "changedAtUnixMs": 1_700_000_100_000_i64,
+                    "subRoom": { "catalogId": SUB_ROOM_UUID, "name": "release" }
                 }
             ]
         })
@@ -157,7 +175,7 @@ async fn 成员回_403_不在房间里回_404_没登录回_401_房间号不对�
 }
 
 /// 新的在前：一位管理员被请进来（之前名单里没有他，这一条也没有动手的人：两个可以为空的字段都空着），
-/// 再往前是转让房主。
+/// 再往前是转让房主，最早的是子房间里设了一位管理员。
 fn records() -> Vec<RoomRoleChangeRecord> {
     let member = permissions(&[PrivateRoomCapability::View, PrivateRoomCapability::Speak]);
     let admin = permissions(&[
@@ -178,6 +196,7 @@ fn records() -> Vec<RoomRoleChangeRecord> {
                 permissions: admin,
             },
             changed_at: time(1_700_000_300_000),
+            sub_room: None,
         },
         RoomRoleChangeRecord {
             id: 11,
@@ -194,6 +213,31 @@ fn records() -> Vec<RoomRoleChangeRecord> {
                 permissions: PrivateRoomPermissions::ALL,
             },
             changed_at: time(1_700_000_200_000),
+            sub_room: None,
+        },
+        RoomRoleChangeRecord {
+            id: 10,
+            actor: Some(principal(PRINCIPAL_UUID)),
+            target: principal(MEMBER_UUID),
+            previous: Some(RoomStanding {
+                status: PrivateRoomMembershipStatus::Joined,
+                owner: false,
+                permissions: member,
+            }),
+            next: RoomStanding {
+                status: PrivateRoomMembershipStatus::Joined,
+                owner: false,
+                permissions: permissions(&[
+                    PrivateRoomCapability::View,
+                    PrivateRoomCapability::Speak,
+                    PrivateRoomCapability::Manage,
+                ]),
+            },
+            changed_at: time(1_700_000_100_000),
+            sub_room: Some(RoomRoleChangeSubRoom {
+                catalog_id: RoomCatalogId::from_uuid(Uuid::parse_str(SUB_ROOM_UUID).unwrap()),
+                name: "release".to_owned(),
+            }),
         },
     ]
 }

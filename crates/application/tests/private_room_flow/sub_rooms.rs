@@ -11,8 +11,8 @@ use agent_room_application::{
     ports::{
         JoinRequestRecord, NewSubRoom, SubRoomAdmission, SubRoomCreationBlock,
         SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
-        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
-        SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
+        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
     private_rooms::{
         ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
@@ -39,6 +39,8 @@ use super::*;
 mod doors;
 #[path = "sub_room_join_requests.rs"]
 mod join_requests;
+#[path = "sub_room_managers.rs"]
+mod managers;
 #[path = "sub_room_members.rs"]
 mod members;
 #[path = "sub_room_membership.rs"]
@@ -1014,6 +1016,8 @@ pub(super) struct MemoryRooms {
     requests: Mutex<Vec<JoinRequestRecord>>,
     /// 设上以后，下一次记申请之前那间子房间的门先被换成这样：摆出“申请的当口别人换了门”。
     door_moves_before_request: Mutex<Option<RoomJoinMode>>,
+    /// 设、撤子房间管理员时一起记下的身份变动。
+    manager_role_changes: Mutex<Vec<RoomRoleChange>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -1029,6 +1033,7 @@ impl MemoryRooms {
             policy_writes: Mutex::new(0),
             race_same_request: AtomicBool::new(false),
             leaves_parent_before_admission: Mutex::new(None),
+            manager_role_changes: Mutex::new(Vec::new()),
             sync: Mutex::new(Vec::new()),
             sync_ids: Mutex::new(0),
             interrupts_read: Mutex::new(None),
@@ -1531,6 +1536,50 @@ impl SubRoomStore for MemoryRooms {
                 return Ok(false);
             }
             self.replace(admission.room);
+            Ok(true)
+        })
+    }
+
+    fn change_sub_room_manager<'a>(
+        &'a self,
+        change: &'a SubRoomManagerChange<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            self.record("sub_rooms.manager");
+            let leaver = self
+                .leaves_parent_before_admission
+                .lock()
+                .expect("移出锁正常")
+                .take();
+            if let Some(leaver) = leaver {
+                self.change(PARENT, |parent| {
+                    parent
+                        .remove_member(principal_id(OWNER), leaver)
+                        .expect("房主能移出");
+                });
+            }
+            let in_parent = self.rooms.lock().expect("房间锁正常")[&change.parent_catalog_id]
+                .room()
+                .member(change.principal)
+                .is_some_and(PrivateRoomMember::has_joined);
+            if !in_parent {
+                return Ok(false);
+            }
+            self.replace(change.room);
+            for stored in self.links.lock().expect("关系锁正常").iter_mut() {
+                if stored.link.catalog_id == change.room.catalog_id() {
+                    stored
+                        .managers
+                        .retain(|manager| *manager != change.principal);
+                    if change.grant {
+                        stored.managers.push(change.principal);
+                    }
+                }
+            }
+            self.manager_role_changes
+                .lock()
+                .expect("身份变动锁正常")
+                .extend_from_slice(change.role_changes);
             Ok(true)
         })
     }

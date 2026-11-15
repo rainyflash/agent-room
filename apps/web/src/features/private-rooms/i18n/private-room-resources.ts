@@ -94,6 +94,8 @@ const en = {
   'privateRooms.roleChanges.latest':
     'These are the latest {{count}}. Older ones aren’t shown here.',
   'privateRooms.roleChanges.by': 'By {{actor}} · {{time}}',
+  'privateRooms.roleChanges.inSubRoom': 'in the sub-room {{name}}',
+  'privateRooms.roleChanges.subRoomAdmin': 'Sub-room admin',
   'privateRooms.roleChanges.role': '{{name}} went from {{from}} to {{to}}',
   'privateRooms.roleChanges.entered': '{{name}} was invited as {{role}}',
   'privateRooms.roleChanges.exited.left': '{{name}} ({{role}}) left the room',
@@ -325,6 +327,8 @@ const zhCN: Record<keyof typeof en, string> = {
   'privateRooms.roleChanges.retry': '再试一次',
   'privateRooms.roleChanges.latest': '这里是最近的 {{count}} 条，更早的不在这里显示。',
   'privateRooms.roleChanges.by': '{{actor}} 操作 · {{time}}',
+  'privateRooms.roleChanges.inSubRoom': '在子房间“{{name}}”里',
+  'privateRooms.roleChanges.subRoomAdmin': '子房间管理员',
   'privateRooms.roleChanges.role': '{{name}} 从“{{from}}”改成了“{{to}}”',
   'privateRooms.roleChanges.entered': '{{name}} 被请进来当“{{role}}”',
   'privateRooms.roleChanges.exited.left': '{{name}}（{{role}}）退出了房间',

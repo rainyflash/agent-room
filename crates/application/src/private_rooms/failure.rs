@@ -74,6 +74,10 @@ pub enum SubRoomRefusal {
     TargetBanned,
     /// 子房间管理员动不了同一间的另一位管理员，要父房间的房主或管理员来。
     PeerManager,
+    /// 要设成子房间管理员的人不在这一间里：他得先进来。
+    TargetNotInside,
+    /// 房主和父房间的管理员本来就管每一间子房间，不用设，也撤不掉。
+    ManagedByParent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

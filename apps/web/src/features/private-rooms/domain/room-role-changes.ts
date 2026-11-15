@@ -20,7 +20,9 @@ const standingSchema = z.object({
  * 身份变动记录（`specs/redesign/room-roles.md` 的“记录”）：谁、什么时候、把谁、从什么改成了什么，新的在前。
  * 只有房主和管理员问得到。
  *
- * 这里故意不 `.strict()`：以后每一条还要写明是哪一间子房间，多出来的字段已经装着的应用得读得过去。
+ * 读父房间的时候连它下面子房间里有人动手的一起给，写着是哪一间（`subRoom`，R5）。
+ *
+ * 这里故意不 `.strict()`：服务器以后再加字段，已经装着的应用得读得过去。
  */
 export const roomRoleChangesSchema = z.object({
   changes: z.array(
@@ -33,6 +35,8 @@ export const roomRoleChangesSchema = z.object({
       /** 之前名单里没有这个人时没有。 */
       previous: standingSchema.optional(),
       targetPrincipalId: privateRoomPrincipalIdSchema,
+      /** 是这间房下面哪一间子房间里的；这间房自己的没有。名字是此刻的。 */
+      subRoom: z.object({ catalogId: z.string().min(1), name: z.string() }).optional(),
     }),
   ),
 });

@@ -248,6 +248,7 @@ fn record() -> RoomRoleChangeRecord {
         previous: Some(standing(member())),
         next: standing(admin()),
         changed_at: time(NOW - 5_000),
+        sub_room: None,
     }
 }
 

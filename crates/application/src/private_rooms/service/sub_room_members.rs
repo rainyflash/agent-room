@@ -8,6 +8,7 @@
 //! 里、权限全有）的名义改；记身份变动时写的还是真正动手的人。
 
 use agent_room_domain::{
+    ids::{PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoomLifecycleStatus, PrivateRoomMember, PrivateRoomMembershipStatus},
     room_join_requests::JoinRequestStatus,
     sub_rooms::{
@@ -59,7 +60,14 @@ impl PrivateRoomService {
         let actor = request.actor.principal_id;
         let LoadedSubRoom {
             parent, sub_room, ..
-        } = self.load_managed_sub_room(&request, OPERATION).await?;
+        } = self
+            .load_managed_sub_room(
+                request.parent_catalog_id,
+                request.catalog_id,
+                actor,
+                OPERATION,
+            )
+            .await?;
         if !manages_sub_room(parent.room(), sub_room.room(), actor) {
             return Err(refused(OPERATION, SubRoomRefusal::ManagersOnly));
         }
@@ -135,7 +143,14 @@ impl PrivateRoomService {
         let target = request.target;
         let LoadedSubRoom {
             parent, sub_room, ..
-        } = self.load_managed_sub_room(&request, operation).await?;
+        } = self
+            .load_managed_sub_room(
+                request.parent_catalog_id,
+                request.catalog_id,
+                actor,
+                operation,
+            )
+            .await?;
         authorize_sub_room_governance(parent.room(), sub_room.room(), actor, target)
             .map_err(|refusal| governance_refused(operation, refusal))?;
         let record = sub_room.room().member(target);
@@ -188,18 +203,15 @@ impl PrivateRoomService {
 
     /// 读这一间，查房间都还在用。管不管得了由调的人判断：请进来只看管不管得了，移出、封禁还要看
     /// 对象是谁。
-    async fn load_managed_sub_room(
+    pub(super) async fn load_managed_sub_room(
         &self,
-        request: &GovernSubRoomMember,
+        parent_catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
+        actor: PrincipalId,
         operation: &'static str,
     ) -> PrivateRoomResult<LoadedSubRoom> {
         let loaded = self
-            .load_sub_room(
-                request.parent_catalog_id,
-                request.catalog_id,
-                request.actor.principal_id,
-                operation,
-            )
+            .load_sub_room(parent_catalog_id, catalog_id, actor, operation)
             .await?;
         let active = PrivateRoomLifecycleStatus::Active;
         let both_active =
