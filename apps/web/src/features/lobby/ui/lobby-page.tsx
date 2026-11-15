@@ -84,10 +84,11 @@ import { DirectSessionNavigation } from '@/features/direct-sessions/ui/direct-se
 import { WorkspaceViewTabs } from '@/features/lobby/ui/workspace-view-tabs';
 import { MessageLayer } from '@/features/messages/ui/message-layer';
 import {
-  usePrivateRoomList,
+  usePrivateRoomListWith,
   usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
+import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import type { ShareableRoom } from '@/features/room-share/domain/room-share';
@@ -220,6 +221,7 @@ function ReadyLobby({
     privateRoomListings,
     privateRooms,
     roomNotices,
+    subRooms,
   } = useAppServices();
   const reception = useReceptionEvidence();
   const { url: downloadUrl } = usePublishedDownload(config);
@@ -253,9 +255,11 @@ function ReadyLobby({
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
   // 归档了的私人房间照样打得开、看得到之前的消息，只是谁都不能再说话、也不能再接入 Agent。
-  const privateRoomList = usePrivateRoomList(
+  // 子房间不在房间列表里：列表里找不到这一间时单独问一次，接在列表后面一起用。
+  const privateRoomList = usePrivateRoomListWith(
     privateRooms,
     principal?.principalId,
+    catalogId,
     principal !== null,
   );
   // 有房间号的房间（私人房间、公开房间）和公共大厅分开：加密的都是；不加密的公开房间在你的房间里，
@@ -281,14 +285,19 @@ function ReadyLobby({
     catalogId,
     principal?.principalId ?? null,
   );
-  const invitable = invitableRoom(
-    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
-    catalogId,
-    privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
-  );
+  // 子房间：邀请链接、往外请人、公开和分享都是整间房才有的（子房间里请人进来在子房间设置里）。
+  const family = useSubRooms(subRooms, catalogId, { enabled: principal !== null && catalogRoom });
+  const subRoom = family.data?.ok === true && family.data.value.parent.catalogId !== catalogId;
+  const invitable = subRoom
+    ? null
+    : invitableRoom(
+        privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+        catalogId,
+        privateRoomInvites === undefined ? null : (principal?.principalId ?? null),
+      );
   // 公开房间（不是只能邀请的、没被平台拿掉）给“分享”：链接打开了别人进得来才给。
   const shareRoom: ShareableRoom | null =
-    !archived && listing.data?.ok === true && shareable(listing.data.value)
+    !archived && !subRoom && listing.data?.ok === true && shareable(listing.data.value)
       ? {
           description:
             (privateRoomList.data?.ok === true
