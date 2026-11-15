@@ -18,8 +18,8 @@ use agent_room_bridge_core::{
 };
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcHostSessionState, IpcHostSessionSummary, IpcListPublicRoomsRequest,
-    IpcMethod, IpcOpenHostSessionRequest, IpcPublicRoom, IpcPublicRoomJoinMode, IpcResponse,
-    IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
+    IpcMethod, IpcOpenHostSessionRequest, IpcParentRoom, IpcPublicRoom, IpcPublicRoomJoinMode,
+    IpcResponse, IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, RoomCatalogId},
@@ -709,6 +709,20 @@ fn room_summary(room: AccessibleRoom) -> IpcRoomSummary {
             AccessibleRoomMembership::Invited => IpcRoomMembership::Invited,
             AccessibleRoomMembership::Joined => IpcRoomMembership::Joined,
         }),
+        parent: room.parent.map(|parent| IpcParentRoom {
+            catalog_id: parent.catalog_id.to_string(),
+            name: parent.name,
+        }),
+        category: room.category,
+        access: room.access.map(ipc_join_mode),
+    }
+}
+
+pub(super) const fn ipc_join_mode(mode: RoomJoinMode) -> IpcPublicRoomJoinMode {
+    match mode {
+        RoomJoinMode::Open => IpcPublicRoomJoinMode::Open,
+        RoomJoinMode::Request => IpcPublicRoomJoinMode::Request,
+        RoomJoinMode::InviteOnly => IpcPublicRoomJoinMode::InviteOnly,
     }
 }
 
@@ -746,11 +760,7 @@ fn public_room(room: PublicRoomListing, joined: &[RoomCatalogId]) -> IpcPublicRo
         name: room.name,
         description: room.description,
         owner_name: room.owner_name,
-        join_mode: match room.join_mode {
-            RoomJoinMode::Open => IpcPublicRoomJoinMode::Open,
-            RoomJoinMode::Request => IpcPublicRoomJoinMode::Request,
-            RoomJoinMode::InviteOnly => IpcPublicRoomJoinMode::InviteOnly,
-        },
+        join_mode: ipc_join_mode(room.join_mode),
         end_to_end_encrypted: room.end_to_end_encrypted,
         member_count: room.member_count,
         agent_count: room.agent_count,

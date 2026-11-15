@@ -96,6 +96,9 @@ fn check_creation(room: &str, name: Option<&str>) -> Result<()> {
         name: room.to_owned(),
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: name.map_or_else(default_display_name, str::to_owned),
+        parent_catalog_id: None,
+        access: None,
+        category: None,
     };
     IpcMethod::CreateRoom(probe)
         .validate()
@@ -182,8 +185,11 @@ async fn enter_created(
         name: room.to_owned(),
         session_key: profile.invitation.session_key.clone(),
         display_name: profile.invitation.display_name.clone(),
+        parent_catalog_id: None,
+        access: None,
+        category: None,
     };
-    let IpcResponse::CreatedRoom { room } =
+    let IpcResponse::CreatedRoom { room, .. } =
         room_call(backend, IpcMethod::CreateRoom(request)).await?
     else {
         return Err(Failure::local("cli.response_invalid"));

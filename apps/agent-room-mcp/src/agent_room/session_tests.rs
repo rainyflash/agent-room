@@ -1127,6 +1127,9 @@ fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
         name: name.to_owned(),
         slug: slug.map(str::to_owned),
         membership: matches!(kind, IpcRoomKind::PrivateRoom).then_some(IpcRoomMembership::Joined),
+        parent: None,
+        category: None,
+        access: None,
     }
 }
 
@@ -1538,6 +1541,9 @@ async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑
         name: "项目室".to_owned(),
         slug: None,
         membership: None,
+        parent: None,
+        category: None,
+        access: None,
     };
     *bridge.code_room.lock().unwrap() = Some(project.clone());
     let mut harness = McpHarness::start(bridge.clone()).await;
@@ -1629,6 +1635,9 @@ async fn 接入时带上这次进的房间现在的公告() {
         name: "周报".to_owned(),
         slug: None,
         membership: Some(IpcRoomMembership::Joined),
+        parent: None,
+        category: None,
+        access: None,
     };
     let game = room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev"));
     let bridge = Arc::new(JoinBridge::new(vec![game, weekly]));
@@ -1670,6 +1679,9 @@ async fn 同一任务再进一个房间还是同一个_agent_离开以后回到�
         name: "周报".to_owned(),
         slug: None,
         membership: Some(IpcRoomMembership::Joined),
+        parent: None,
+        category: None,
+        access: None,
     };
     let game = room(IpcRoomKind::PrivateRoom, "game dev", Some("game-dev"));
     let bridge = Arc::new(JoinBridge::new(vec![game.clone(), weekly.clone()]));

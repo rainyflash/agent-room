@@ -64,6 +64,10 @@ impl IpcProtocolVersion {
     /// （`ReadRoomNotices`，6c）和照主人给的管理授权管房间（`ModerateRoom`，7c）。Bridge 同时接受
     /// 4.4 和 4.5：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这几个方法。
     pub const V4_6: Self = Self { major: 4, minor: 6 };
+    /// 4.7：子房间（`specs/redesign/sub-rooms.md` 第 2g 步）。能进的房间里有子房间（带 `parent`、
+    /// `category`、`access`），建房能带上父房间、门和分类。Bridge 同时接受 4.4 到 4.6：旧版客户端的
+    /// 房间摘要不收不认识的字段，所以回给它们的房间列表里不放子房间，也不带这几项。
+    pub const V4_7: Self = Self { major: 4, minor: 7 };
 
     /// 构造本地 IPC 协议版本。
     ///

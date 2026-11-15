@@ -1,9 +1,12 @@
 //! Agent 建房间、管会话所在的房间（`specs/agent-rooms/design.md` 第 3 步）。
 
-use agent_room_bridge_core::room_management::{
-    ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomJoinCode, RoomKnock,
-    RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult, RoomModerationGrant,
-    RoomModerationOutcome, RoomModerationRequest,
+use agent_room_bridge_core::{
+    room_directory::ParentRoom,
+    room_management::{
+        ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomJoinCode, RoomKnock,
+        RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult,
+        RoomModerationGrant, RoomModerationOutcome, RoomModerationRequest, SubRoomPlacement,
+    },
 };
 use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcHostRoomTarget, IpcInvitePersonRequest,
@@ -46,20 +49,39 @@ impl RoomsFake {
 }
 
 impl ControlPlaneRoomManagementGateway for RoomsFake {
+    /// 子房间放进父房间“Project”下面；分类只认得“Ship”，别的都说没找到。
     fn create<'a>(
         &'a self,
         catalog_id: RoomCatalogId,
         name: &'a str,
         agent_id: AgentId,
+        sub_room: Option<&'a SubRoomPlacement>,
     ) -> PortFuture<'a, RoomManagementResult<CreatedRoom>> {
-        let created = self
-            .record(format!("create {catalog_id} {name} {agent_id}"))
-            .map(|()| CreatedRoom {
-                catalog_id,
-                matrix_room_id: MatrixRoomReference::new("!created:matrix.test".to_owned())
-                    .expect("Matrix 房间标识有效"),
-                name: name.to_owned(),
-            });
+        let call = sub_room.map_or_else(
+            || format!("create {catalog_id} {name} {agent_id}"),
+            |placement| {
+                format!(
+                    "create {catalog_id} {name} {agent_id} under {} {:?} {:?}",
+                    placement.parent, placement.access, placement.category
+                )
+            },
+        );
+        let known = sub_room
+            .and_then(|placement| placement.category.as_deref())
+            .filter(|category| *category == "Ship");
+        let created = self.record(call).map(|()| CreatedRoom {
+            catalog_id,
+            matrix_room_id: MatrixRoomReference::new("!created:matrix.test".to_owned())
+                .expect("Matrix 房间标识有效"),
+            name: name.to_owned(),
+            parent: sub_room.map(|placement| ParentRoom {
+                catalog_id: placement.parent,
+                name: "Project".to_owned(),
+            }),
+            category: known.map(str::to_owned),
+            category_missing: sub_room.is_some_and(|placement| placement.category.is_some())
+                && known.is_none(),
+        });
         Box::pin(async move { created })
     }
 
@@ -256,13 +278,21 @@ async fn 建房不需要会话_先按会话键建好人物_再拿它建房() {
             name: "周报".to_owned(),
             session_key: session_key.to_string(),
             display_name: "Scout".to_owned(),
+            parent_catalog_id: None,
+            access: None,
+            category: None,
         }))
         .await
         .expect("建房");
 
-    let IpcResponse::CreatedRoom { room } = response else {
+    let IpcResponse::CreatedRoom {
+        room,
+        category_missing: false,
+    } = response
+    else {
         panic!("应返回建好的房间");
     };
+    assert!(room.parent.is_none() && room.access.is_none() && room.category.is_none());
     assert_eq!(room.kind, IpcRoomKind::PrivateRoom);
     assert_eq!(room.catalog_id, catalog.to_string());
     assert_eq!(room.matrix_room_id.as_deref(), Some("!created:matrix.test"));
@@ -281,6 +311,62 @@ async fn 建房不需要会话_先按会话键建好人物_再拿它建房() {
             "create {catalog} 周报 {}",
             AgentId::from_uuid(session_key)
         )]
+    );
+}
+
+#[tokio::test]
+async fn 建子房间带上父房间_门和分类_回答里说放进了哪儿_分类没找到也说() {
+    let rooms = Arc::new(RoomsFake::default());
+    let handler = handler(rooms.clone(), Arc::new(HostAgentsFake::default()));
+    let session_key = Uuid::now_v7();
+    let parent = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let create = |category: &str| {
+        IpcMethod::CreateRoom(IpcCreateRoomRequest {
+            catalog_id: RoomCatalogId::from_uuid(Uuid::now_v7()).to_string(),
+            name: "Release".to_owned(),
+            session_key: session_key.to_string(),
+            display_name: "Scout".to_owned(),
+            parent_catalog_id: Some(parent.to_string()),
+            access: Some(IpcPublicRoomJoinMode::Request),
+            category: Some(category.to_owned()),
+        })
+    };
+
+    let Ok(IpcResponse::CreatedRoom {
+        room,
+        category_missing: false,
+    }) = handler.dispatch(create("Ship")).await
+    else {
+        panic!("应返回建好的子房间");
+    };
+    let placed = room.parent.as_ref().expect("在父房间下面");
+    assert_eq!(placed.catalog_id, parent.to_string());
+    assert_eq!(placed.name, "Project");
+    assert_eq!(room.category.as_deref(), Some("Ship"));
+    assert_eq!(room.access, Some(IpcPublicRoomJoinMode::Request));
+    let calls = rooms.take_calls();
+    assert!(
+        calls[0].ends_with(&format!("under {parent} Request Some(\"Ship\")")),
+        "{calls:?}"
+    );
+
+    let Ok(IpcResponse::CreatedRoom {
+        room,
+        category_missing: true,
+    }) = handler.dispatch(create("Design")).await
+    else {
+        panic!("分类没找到也建好，回答里说一声");
+    };
+    assert_eq!(room.category, None);
+
+    *rooms.failure.lock().unwrap() = Some(RoomManagementFailureKind::SubRoomAgentsMayNotCreate);
+    let refused = handler
+        .dispatch(create("Ship"))
+        .await
+        .expect_err("房主不让 Agent 建");
+    assert_eq!(
+        refused.code(),
+        "bridge.rooms.sub_room_agents_may_not_create"
     );
 }
 

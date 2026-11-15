@@ -294,6 +294,9 @@ fn room(kind: IpcRoomKind, name: &str, slug: Option<&str>) -> IpcRoomSummary {
         name: name.to_owned(),
         slug: slug.map(str::to_owned),
         membership: matches!(kind, IpcRoomKind::PrivateRoom).then_some(IpcRoomMembership::Joined),
+        parent: None,
+        category: None,
+        access: None,
     }
 }
 
@@ -549,6 +552,9 @@ async fn 凭口令接入先查看房间_存好身份后兑换再开会话_同一
         name: "项目室".to_owned(),
         slug: None,
         membership: None,
+        parent: None,
+        category: None,
+        access: None,
     };
     *bridge.code_room.lock().unwrap() = Some(project.clone());
     run(
@@ -611,6 +617,9 @@ async fn 口令不对时什么都不留_兑换被拒时身份已存好_重试回
         name: "项目室".to_owned(),
         slug: None,
         membership: None,
+        parent: None,
+        category: None,
+        access: None,
     });
     let wrong = run(
         &bridge,

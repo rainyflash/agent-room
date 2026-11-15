@@ -730,7 +730,7 @@ where
                     &mut *stream,
                     &IpcFrame::Response {
                         correlation_id,
-                        result,
+                        result: fit_to_version(result, agreement.selected_version()),
                     },
                 )
                 .await
@@ -792,12 +792,40 @@ fn log_request_failure(
     }
 }
 
-/// 4.4、4.5 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
-const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 3] = [
+/// 4.4 到 4.6 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
+/// 回给它们的房间摘要由 [`fit_to_version`] 去掉它们不认识的几项。
+const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 4] = [
     IpcProtocolVersion::V4_4,
     IpcProtocolVersion::V4_5,
     IpcProtocolVersion::V4_6,
+    IpcProtocolVersion::V4_7,
 ];
+
+/// 4.7 以前的客户端不收房间摘要里不认识的字段：回给它们的房间列表里不放子房间（它们按名字找房间时
+/// 认不出 `父房间名/子房间名`，同名的子房间只会让它们找错），别的房间摘要去掉子房间那几项。它们本来
+/// 也建不了子房间。
+fn fit_to_version(result: IpcResponse, version: IpcProtocolVersion) -> IpcResponse {
+    if version >= IpcProtocolVersion::V4_7 {
+        return result;
+    }
+    match result {
+        IpcResponse::Rooms { rooms } => IpcResponse::Rooms {
+            rooms: rooms
+                .into_iter()
+                .filter(|room| room.parent.is_none())
+                .map(agent_room_bridge_ipc::IpcRoomSummary::without_sub_room_fields)
+                .collect(),
+        },
+        IpcResponse::CreatedRoom { room, .. } => IpcResponse::CreatedRoom {
+            room: room.without_sub_room_fields(),
+            category_missing: false,
+        },
+        IpcResponse::JoinCodeRoom { room } => IpcResponse::JoinCodeRoom {
+            room: room.without_sub_room_fields(),
+        },
+        other => other,
+    }
+}
 
 fn authorize_method(
     method: &IpcMethod,
@@ -2892,7 +2920,7 @@ mod tests {
     }
 
     #[test]
-    fn 旧版客户端报的四点四_四点五照样谈得拢_新版报四点六用新版() {
+    fn 旧版客户端报的四点四到四点六照样谈得拢_新版报四点七用新版() {
         let negotiator =
             IpcHandshakeNegotiator::new(super::SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
                 .expect("Bridge 的协商器有效");
@@ -2900,6 +2928,7 @@ mod tests {
             (IpcProtocolVersion::V4_4, IpcProtocolVersion::V4_4),
             (IpcProtocolVersion::V4_5, IpcProtocolVersion::V4_5),
             (IpcProtocolVersion::V4_6, IpcProtocolVersion::V4_6),
+            (IpcProtocolVersion::V4_7, IpcProtocolVersion::V4_7),
         ] {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::McpServer,
@@ -2922,6 +2951,69 @@ mod tests {
         )
         .expect("测试提议有效");
         assert!(negotiator.negotiate(&old).is_err(), "更旧的谈不拢");
+    }
+
+    #[test]
+    fn 四点七以前的客户端拿到的房间列表里没有子房间_也不带子房间那几项() {
+        use agent_room_bridge_ipc::{IpcParentRoom, IpcPublicRoomJoinMode, IpcRoomSummary};
+
+        let whole = IpcRoomSummary {
+            kind: agent_room_bridge_ipc::IpcRoomKind::PrivateRoom,
+            catalog_id: Uuid::now_v7().to_string(),
+            matrix_room_id: Some("!project:matrix.test".to_owned()),
+            name: "Project".to_owned(),
+            slug: None,
+            membership: None,
+            parent: None,
+            category: None,
+            access: None,
+        };
+        let sub_room = IpcRoomSummary {
+            catalog_id: Uuid::now_v7().to_string(),
+            matrix_room_id: Some("!release:matrix.test".to_owned()),
+            name: "Release".to_owned(),
+            parent: Some(IpcParentRoom {
+                catalog_id: whole.catalog_id.clone(),
+                name: "Project".to_owned(),
+            }),
+            category: Some("Ship".to_owned()),
+            access: Some(IpcPublicRoomJoinMode::Request),
+            ..whole.clone()
+        };
+        let rooms = || IpcResponse::Rooms {
+            rooms: vec![whole.clone(), sub_room.clone()],
+        };
+
+        assert_eq!(
+            super::fit_to_version(rooms(), IpcProtocolVersion::V4_7),
+            rooms(),
+            "新版客户端照原样拿到"
+        );
+        for old in [
+            IpcProtocolVersion::V4_4,
+            IpcProtocolVersion::V4_5,
+            IpcProtocolVersion::V4_6,
+        ] {
+            assert_eq!(
+                super::fit_to_version(rooms(), old),
+                IpcResponse::Rooms {
+                    rooms: vec![whole.clone()]
+                }
+            );
+            assert_eq!(
+                super::fit_to_version(
+                    IpcResponse::CreatedRoom {
+                        room: sub_room.clone(),
+                        category_missing: true,
+                    },
+                    old
+                ),
+                IpcResponse::CreatedRoom {
+                    room: sub_room.clone().without_sub_room_fields(),
+                    category_missing: false,
+                }
+            );
+        }
     }
 
     #[tokio::test]
@@ -3241,6 +3333,9 @@ mod tests {
             name: "周报".into(),
             session_key: Uuid::now_v7().to_string(),
             display_name: "Scout".into(),
+            parent_catalog_id: None,
+            access: None,
+            category: None,
         });
         let access = IpcMethod::RoomAccess(agent_room_bridge_ipc::IpcRoomAccessRequest::default());
         let agreement = |caller, scope| {

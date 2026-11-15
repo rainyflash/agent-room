@@ -93,6 +93,9 @@ impl Bridge {
                     name: "Private".into(),
                     slug: None,
                     membership: None,
+                    parent: None,
+                    category: None,
+                    access: None,
                 }]
             } else {
                 vec![]

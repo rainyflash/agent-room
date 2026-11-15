@@ -49,6 +49,9 @@ impl RoomsBridge {
             name: request.name.clone(),
             slug: None,
             membership: Some(IpcRoomMembership::Joined),
+            parent: None,
+            category: None,
+            access: None,
         }
     }
 
@@ -70,7 +73,10 @@ impl RoomsBridge {
         }
         let room = Self::summary(&request);
         self.created.lock().unwrap().push(request);
-        Ok(IpcResponse::CreatedRoom { room })
+        Ok(IpcResponse::CreatedRoom {
+            room,
+            category_missing: false,
+        })
     }
 
     fn in_session(&self, method: IpcMethod) -> std::result::Result<IpcResponse, BridgeToolFailure> {
@@ -525,6 +531,9 @@ async fn 看口令时有人敲门先说敲门_换口令和停用要明说() {
         name: "Research".into(),
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: "Scout".into(),
+        parent_catalog_id: None,
+        access: None,
+        category: None,
     });
     bridge.knocks.lock().unwrap().push(IpcRoomKnock {
         agent_id: "0199d0a8-6d8f-7b3e-9a41-5f2c8e7d1b41".into(),

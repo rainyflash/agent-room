@@ -103,9 +103,15 @@ impl BridgeToolClient for RoomsBridge {
                             name: request.name.clone(),
                             slug: None,
                             membership: None,
+                            parent: None,
+                            category: None,
+                            access: None,
                         };
                         self.created.lock().unwrap().push(request);
-                        Ok(IpcResponse::CreatedRoom { room })
+                        Ok(IpcResponse::CreatedRoom {
+                            room,
+                            category_missing: false,
+                        })
                     },
                     Err,
                 )

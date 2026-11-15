@@ -1,5 +1,8 @@
 //! 向控制面询问这台设备的账号能进哪些房间（`GET /lobbies/accessible`，设备签名），也翻发现页的公开
 //! 房间（`GET /public-rooms`，不要登录，不签名）。
+//!
+//! 能进的房间带上子房间问（`subRooms=1`，`specs/redesign/sub-rooms.md` 第 2g 步）：每间私人房间后面
+//! 跟着它下面账号看得到的子房间。设备签名签的是带查询的整个地址。
 
 use std::sync::Arc;
 
@@ -7,7 +10,7 @@ use agent_room_application::ports::PortFuture;
 use agent_room_bridge_core::{
     room_directory::{
         AccessibleRoom, AccessibleRoomKind, AccessibleRoomMembership,
-        ControlPlaneRoomDirectoryGateway, PublicRoomListing, PublicRoomListingPage,
+        ControlPlaneRoomDirectoryGateway, ParentRoom, PublicRoomListing, PublicRoomListingPage,
         RoomDirectoryFailure, RoomDirectoryFailureKind, RoomDirectoryResult,
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
@@ -26,7 +29,7 @@ use super::{
     read_limited_response_body, signed_request_headers,
 };
 
-const ACCESSIBLE_ROOMS_TARGET: &str = "/lobbies/accessible";
+const ACCESSIBLE_ROOMS_TARGET: &str = "/lobbies/accessible?subRooms=1";
 const PUBLIC_ROOMS_TARGET: &str = "/public-rooms";
 
 pub struct ReqwestControlPlaneRoomDirectoryGateway {
@@ -236,6 +239,27 @@ struct AccessibleRoomResponse {
     slug: Option<String>,
     #[serde(default)]
     membership: Option<String>,
+    /// 下面三项只有子房间才有。
+    #[serde(default)]
+    parent: Option<AccessibleParentResponse>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    access: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibleParentResponse {
+    catalog_id: String,
+    name: String,
+}
+
+fn catalog_id_v7(value: &str) -> Option<RoomCatalogId> {
+    uuid::Uuid::parse_str(value)
+        .ok()
+        .filter(|id| id.get_version() == Some(uuid::Version::SortRand))
+        .map(RoomCatalogId::from_uuid)
 }
 
 impl TryFrom<AccessibleRoomResponse> for AccessibleRoom {
@@ -248,11 +272,28 @@ impl TryFrom<AccessibleRoomResponse> for AccessibleRoom {
             "private_room" => AccessibleRoomKind::PrivateRoom,
             _ => return Err(invalid()),
         };
-        let catalog_id = uuid::Uuid::parse_str(&value.catalog_id)
-            .ok()
-            .filter(|id| id.get_version() == Some(uuid::Version::SortRand))
-            .map(RoomCatalogId::from_uuid)
-            .ok_or_else(invalid)?;
+        let catalog_id = catalog_id_v7(&value.catalog_id).ok_or_else(invalid)?;
+        let parent = value
+            .parent
+            .map(|parent| {
+                let catalog_id = catalog_id_v7(&parent.catalog_id).ok_or_else(invalid)?;
+                if parent.name.trim().is_empty() || kind != AccessibleRoomKind::PrivateRoom {
+                    return Err(invalid());
+                }
+                Ok(ParentRoom {
+                    catalog_id,
+                    name: parent.name,
+                })
+            })
+            .transpose()?;
+        let access = value
+            .access
+            .map(|access| RoomJoinMode::try_from(access.as_str()).map_err(|_| invalid()))
+            .transpose()?;
+        // 门和分类只跟着子房间来；子房间一定说了是哪种门。
+        if parent.is_some() != access.is_some() || (parent.is_none() && value.category.is_some()) {
+            return Err(invalid());
+        }
         let matrix_room_id = value
             .matrix_room_id
             .map(MatrixRoomReference::new)
@@ -274,6 +315,9 @@ impl TryFrom<AccessibleRoomResponse> for AccessibleRoom {
             name: value.name,
             slug: value.slug,
             membership,
+            parent,
+            category: value.category,
+            access,
         })
     }
 }
@@ -327,6 +371,95 @@ mod tests {
             name: "game dev".to_owned(),
             slug: None,
             membership: membership.map(str::to_owned),
+            parent: None,
+            category: None,
+            access: None,
+        }
+    }
+
+    #[test]
+    fn 子房间带着父房间_分类和门_门和分类不跟着整间的房间来() {
+        let body = serde_json::json!({
+            "rooms": [
+                {
+                    "kind": "private_room",
+                    "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e46",
+                    "matrixRoomId": "!project:matrix.agent-room.test",
+                    "name": "Project",
+                    "membership": "joined"
+                },
+                {
+                    "kind": "private_room",
+                    "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e47",
+                    "matrixRoomId": "!release:matrix.agent-room.test",
+                    "name": "Release",
+                    "parent": {
+                        "catalogId": "0198b601-77a1-7bb8-83eb-a8fe68c97e46",
+                        "name": "Project"
+                    },
+                    "category": "Ship",
+                    "access": "request"
+                }
+            ]
+        });
+        let decoded: super::AccessibleRoomsResponse = serde_json::from_value(body).unwrap();
+        let rooms = decoded
+            .rooms
+            .into_iter()
+            .map(AccessibleRoom::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("认得");
+        assert!(rooms[0].parent.is_none());
+        let parent = rooms[1].parent.as_ref().expect("子房间带父房间");
+        assert_eq!(parent.catalog_id, rooms[0].catalog_id);
+        assert_eq!(parent.name, "Project");
+        assert_eq!(rooms[1].category.as_deref(), Some("Ship"));
+        assert_eq!(rooms[1].access, Some(RoomJoinMode::Request));
+        assert_eq!(rooms[1].membership, None, "有门、账号又不在里面的也列出来");
+
+        let parent = || {
+            Some(super::AccessibleParentResponse {
+                catalog_id: "0198b601-77a1-7bb8-83eb-a8fe68c97e46".to_owned(),
+                name: "Project".to_owned(),
+            })
+        };
+        let broken = [
+            AccessibleRoomResponse {
+                access: Some("open".to_owned()),
+                ..response("private_room", None)
+            },
+            AccessibleRoomResponse {
+                category: Some("Ship".to_owned()),
+                ..response("private_room", None)
+            },
+            AccessibleRoomResponse {
+                parent: parent(),
+                ..response("private_room", None)
+            },
+            AccessibleRoomResponse {
+                parent: parent(),
+                access: Some("everyone".to_owned()),
+                ..response("private_room", None)
+            },
+            AccessibleRoomResponse {
+                parent: parent(),
+                access: Some("open".to_owned()),
+                ..response("public_lobby", None)
+            },
+            AccessibleRoomResponse {
+                parent: Some(super::AccessibleParentResponse {
+                    catalog_id: "not-a-room".to_owned(),
+                    name: "Project".to_owned(),
+                }),
+                access: Some("open".to_owned()),
+                ..response("private_room", None)
+            },
+        ];
+        for room in broken {
+            assert_eq!(
+                AccessibleRoom::try_from(room).unwrap_err().kind(),
+                RoomDirectoryFailureKind::InvalidControlPlaneResponse
+            );
         }
     }
 

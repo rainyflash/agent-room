@@ -3,6 +3,9 @@
 //!
 //! 也能翻发现页的公开房间（[`ControlPlaneRoomDirectoryGateway::list_public`]）：本机 Agent 跟着主人
 //! 进，账号还没加入的那几间要请主人先打开分享链接加入。
+//!
+//! 名单里也有子房间（`specs/redesign/sub-rooms.md` 第 2g 步），排在父房间后面。按名字找子房间要写成
+//! `父房间名/子房间名`：子房间常和别处的房间同名，只写名字找的是整间的房间。
 
 use agent_room_application::ports::PortFuture;
 use agent_room_domain::{
@@ -34,6 +37,18 @@ pub struct AccessibleRoom {
     pub name: String,
     pub slug: Option<String>,
     pub membership: Option<AccessibleRoomMembership>,
+    /// 下面三项只有子房间才有：它在哪间房下面、分类的名字（“未分类”的没有）、哪种门（`Open` 是
+    /// 没有门）。有门、账号又不在里面的也列出来，Agent 照着进会被告知要主人先申请。
+    pub parent: Option<ParentRoom>,
+    pub category: Option<String>,
+    pub access: Option<RoomJoinMode>,
+}
+
+/// 子房间在哪间房下面。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentRoom {
+    pub catalog_id: RoomCatalogId,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +117,8 @@ pub trait NamedRoom {
     fn room_catalog_id(&self) -> Option<RoomCatalogId>;
     /// 公开房间的分享码：私人房间的 `slug`（公共大厅的 `slug` 是大厅的名字，不算）。
     fn room_share_code(&self) -> Option<&str>;
+    /// 子房间的父房间的名字；整间的房间没有。
+    fn room_parent_name(&self) -> Option<&str>;
 }
 
 impl NamedRoom for AccessibleRoom {
@@ -122,6 +139,10 @@ impl NamedRoom for AccessibleRoom {
             AccessibleRoomKind::PrivateRoom => self.slug.as_deref(),
             AccessibleRoomKind::PublicLobby => None,
         }
+    }
+
+    fn room_parent_name(&self) -> Option<&str> {
+        self.parent.as_ref().map(|parent| parent.name.as_str())
     }
 }
 
@@ -145,7 +166,8 @@ pub fn resolve_room_link<'a, R: NamedRoom>(rooms: &'a [R], input: &str) -> Optio
     )
 }
 
-/// 按名字找房间：先精确匹配，再忽略大小写匹配；同名多间视为歧义，交给调用方列出候选。
+/// 按名字找房间：先精确匹配，再忽略大小写匹配；同名多间视为歧义，交给调用方列出候选。子房间要写成
+/// `父房间名/子房间名`（斜杠两边的空白不算）；只写名字找的是整间的房间。
 ///
 /// # Errors
 ///
@@ -160,17 +182,12 @@ pub fn resolve_room_by_name<'a, R: NamedRoom>(
     }
     let exact: Vec<&R> = rooms
         .iter()
-        .filter(|room| room.room_name() == wanted || room.room_slug() == Some(wanted))
+        .filter(|room| named(*room, wanted, |left, right| left == right))
         .collect();
     let candidates = if exact.is_empty() {
         rooms
             .iter()
-            .filter(|room| {
-                room.room_name().eq_ignore_ascii_case(wanted)
-                    || room
-                        .room_slug()
-                        .is_some_and(|slug| slug.eq_ignore_ascii_case(wanted))
-            })
+            .filter(|room| named(*room, wanted, str::eq_ignore_ascii_case))
             .collect::<Vec<_>>()
     } else {
         exact
@@ -182,12 +199,28 @@ pub fn resolve_room_by_name<'a, R: NamedRoom>(
     }
 }
 
+/// 整间的房间比名字和别名；子房间比 `父房间名/子房间名`。子房间的名字里不能有斜杠，父房间的可以，
+/// 所以从最后一个斜杠断开。
+fn named<R: NamedRoom>(room: &R, wanted: &str, same: fn(&str, &str) -> bool) -> bool {
+    match room.room_parent_name() {
+        None => {
+            same(room.room_name(), wanted)
+                || room.room_slug().is_some_and(|slug| same(slug, wanted))
+        }
+        Some(parent) => wanted.rsplit_once('/').is_some_and(|(left, right)| {
+            same(parent, left.trim()) && same(room.room_name(), right.trim())
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use uuid::Uuid;
 
-    use super::{AccessibleRoom, AccessibleRoomKind, resolve_room_by_name, resolve_room_link};
-    use agent_room_domain::ids::RoomCatalogId;
+    use super::{
+        AccessibleRoom, AccessibleRoomKind, ParentRoom, resolve_room_by_name, resolve_room_link,
+    };
+    use agent_room_domain::{ids::RoomCatalogId, room_listing::RoomJoinMode};
 
     fn room(name: &str, slug: Option<&str>) -> AccessibleRoom {
         AccessibleRoom {
@@ -197,7 +230,76 @@ mod tests {
             name: name.to_owned(),
             slug: slug.map(str::to_owned),
             membership: None,
+            parent: None,
+            category: None,
+            access: None,
         }
+    }
+
+    fn sub_room(parent: &AccessibleRoom, name: &str) -> AccessibleRoom {
+        AccessibleRoom {
+            kind: AccessibleRoomKind::PrivateRoom,
+            parent: Some(ParentRoom {
+                catalog_id: parent.catalog_id,
+                name: parent.name.clone(),
+            }),
+            access: Some(RoomJoinMode::Open),
+            ..room(name, None)
+        }
+    }
+
+    #[test]
+    fn 子房间写成父房间名斜杠子房间名_只写名字找的是整间的房间() {
+        let project = room("Project", None);
+        let weekly = room("Weekly", None);
+        let general = room("General", None);
+        let plans = room("Q3/Q4 plans", None);
+        let rooms = vec![
+            project.clone(),
+            sub_room(&project, "General"),
+            plans.clone(),
+            sub_room(&plans, "Budget"),
+            weekly.clone(),
+            sub_room(&weekly, "General"),
+            general,
+        ];
+
+        let found = resolve_room_by_name(&rooms, "General")
+            .expect("只有一间整的叫这个")
+            .expect("找得到");
+        assert!(found.parent.is_none(), "只写名字不找子房间");
+        let found = resolve_room_by_name(&rooms, "Project/General")
+            .expect("唯一")
+            .expect("找得到");
+        assert_eq!(
+            found.parent.as_ref().map(|parent| parent.catalog_id),
+            Some(project.catalog_id)
+        );
+        let found = resolve_room_by_name(&rooms, " weekly / general ")
+            .expect("忽略大小写和斜杠两边的空白")
+            .expect("找得到");
+        assert_eq!(
+            found.parent.as_ref().map(|parent| parent.catalog_id),
+            Some(weekly.catalog_id)
+        );
+        let found = resolve_room_by_name(&rooms, "Q3/Q4 plans/Budget")
+            .expect("父房间名字里的斜杠也认")
+            .expect("找得到");
+        assert_eq!(found.name, "Budget");
+        let found = resolve_room_by_name(&rooms, "Q3/Q4 plans")
+            .expect("整间的房间名字里有斜杠")
+            .expect("找得到");
+        assert!(found.parent.is_none());
+        assert!(
+            resolve_room_by_name(&rooms, "Budget")
+                .expect("只写子房间的名字")
+                .is_none()
+        );
+        let by_number = resolve_room_link(&rooms, &rooms[1].catalog_id.to_string())
+            .expect("是房间号")
+            .expect("子房间也能拿房间号进");
+        assert_eq!(by_number.name, "General");
+        assert!(by_number.parent.is_some());
     }
 
     #[test]

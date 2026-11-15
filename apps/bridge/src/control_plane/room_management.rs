@@ -1,20 +1,25 @@
 //! Agent 自己建房间、管房间（`specs/agent-rooms/design.md`）：经控制面 `/devices/current/private-rooms`
 //! 下的设备签名路由建房、管口令和敲门、邀请人、移出 Agent。签名对着请求原样的方法、路径和正文，
 //! 没有正文的签空串。
+//!
+//! 建子房间也走建房的地址，正文多带父房间、门和分类的名字（`specs/redesign/sub-rooms.md` 第 2g 步）；
+//! 建整间的房间时正文和以前一样。
 
 use std::sync::Arc;
 
 use agent_room_application::ports::PortFuture;
 use agent_room_bridge_core::{
+    room_directory::ParentRoom,
     room_management::{
         ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomJoinCode, RoomKnock,
         RoomManagementFailure, RoomManagementFailureKind, RoomManagementResult,
-        RoomModerationGrant, RoomModerationOutcome, RoomModerationRequest,
+        RoomModerationGrant, RoomModerationOutcome, RoomModerationRequest, SubRoomPlacement,
     },
     session::{BridgeSessionFailure, BridgeSessionFailureKind, ControlPlaneRequestAuthorizer},
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId},
+    room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -135,10 +140,14 @@ impl ReqwestControlPlaneRoomManagementGateway {
         catalog_id: RoomCatalogId,
         name: &str,
         agent_id: AgentId,
+        sub_room: Option<&SubRoomPlacement>,
     ) -> RoomManagementResult<CreatedRoom> {
         let body = serde_json::to_string(&CreateRoomBody {
             name,
             agent_id: agent_id.to_string(),
+            parent_room_id: sub_room.map(|placement| placement.parent.to_string()),
+            access: sub_room.map(|placement| join_mode_value(placement.access)),
+            category: sub_room.and_then(|placement| placement.category.as_deref()),
         })
         .map_err(|_| failure(RoomManagementFailureKind::Internal))?;
         // 房间 ID 当幂等键：结果没回来时带同一个 ID 重试，拿回的是同一个房间。
@@ -146,7 +155,18 @@ impl ReqwestControlPlaneRoomManagementGateway {
             .send(Method::POST, ROOMS, body, Some(catalog_id.to_string()))
             .await
             .map_err(Refused::into_failure)?;
-        decode::<CreatedRoomResponse>(&bytes)?.try_into()
+        let created: CreatedRoom = decode::<CreatedRoomResponse>(&bytes)?.try_into()?;
+        // 要的是子房间，回来的却不在那间房下面：控制面没认出父房间，别当成建好了。
+        let placed = sub_room.is_none_or(|placement| {
+            created
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.catalog_id == placement.parent)
+        });
+        if !placed || (sub_room.is_none() && created.parent.is_some()) {
+            return Err(invalid_response());
+        }
+        Ok(created)
     }
 
     async fn current_code(&self, catalog_id: RoomCatalogId) -> RoomManagementResult<RoomCodeState> {
@@ -208,8 +228,9 @@ impl ControlPlaneRoomManagementGateway for ReqwestControlPlaneRoomManagementGate
         catalog_id: RoomCatalogId,
         name: &'a str,
         agent_id: AgentId,
+        sub_room: Option<&'a SubRoomPlacement>,
     ) -> PortFuture<'a, RoomManagementResult<CreatedRoom>> {
-        Box::pin(self.create_room(catalog_id, name, agent_id))
+        Box::pin(self.create_room(catalog_id, name, agent_id, sub_room))
     }
 
     fn code(
@@ -302,6 +323,21 @@ impl ControlPlaneRoomManagementGateway for ReqwestControlPlaneRoomManagementGate
 struct CreateRoomBody<'a> {
     name: &'a str,
     agent_id: String,
+    /// 下面三项只有建子房间时才写：控制面建整间的房间时不收它们。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_room_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    access: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<&'a str>,
+}
+
+const fn join_mode_value(mode: RoomJoinMode) -> &'static str {
+    match mode {
+        RoomJoinMode::Open => "open",
+        RoomJoinMode::Request => "request",
+        RoomJoinMode::InviteOnly => "invite_only",
+    }
 }
 
 #[derive(Serialize)]
@@ -315,6 +351,20 @@ struct InvitePersonBody {
 struct CreatedRoomResponse {
     catalog_id: String,
     matrix_room_id: String,
+    name: String,
+    /// 下面三项只有子房间才有。
+    #[serde(default)]
+    parent: Option<CreatedParentResponse>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    category_missing: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatedParentResponse {
+    catalog_id: String,
     name: String,
 }
 
@@ -358,10 +408,28 @@ impl TryFrom<CreatedRoomResponse> for CreatedRoom {
         if value.name.trim().is_empty() {
             return Err(invalid_response());
         }
+        let parent = value
+            .parent
+            .map(|parent| {
+                if parent.name.trim().is_empty() {
+                    return Err(invalid_response());
+                }
+                Ok(ParentRoom {
+                    catalog_id: uuid_v7(&parent.catalog_id).map(RoomCatalogId::from_uuid)?,
+                    name: parent.name,
+                })
+            })
+            .transpose()?;
+        if parent.is_none() && (value.category.is_some() || value.category_missing) {
+            return Err(invalid_response());
+        }
         Ok(Self {
             catalog_id,
             matrix_room_id,
             name: value.name,
+            parent,
+            category: value.category,
+            category_missing: value.category_missing,
         })
     }
 }
@@ -415,6 +483,9 @@ fn status_failure(status: StatusCode, code: Option<&str>) -> RoomManagementFailu
     if code.is_some_and(|code| code.starts_with("device.")) {
         return failure(RoomManagementFailureKind::NotAuthorized);
     }
+    if let Some(kind) = code.and_then(sub_room_refusal) {
+        return failure(kind);
+    }
     let reason = code
         .and_then(|code| code.split_once('.'))
         .map(|(_, reason)| reason);
@@ -450,6 +521,20 @@ fn status_failure(status: StatusCode, code: Option<&str>) -> RoomManagementFailu
         },
     };
     failure(kind)
+}
+
+/// 建子房间被拒的几种：分开报，Agent 好照着跟主人说。别的 `sub_room.*` 照点号后面那段认。
+fn sub_room_refusal(code: &str) -> Option<RoomManagementFailureKind> {
+    Some(match code.strip_prefix("sub_room.")? {
+        "nested" => RoomManagementFailureKind::SubRoomNested,
+        "admins_only" => RoomManagementFailureKind::SubRoomAdminsOnly,
+        "agents_may_not_create" => RoomManagementFailureKind::SubRoomAgentsMayNotCreate,
+        "name_taken" => RoomManagementFailureKind::SubRoomNameTaken,
+        "limit_reached" => RoomManagementFailureKind::SubRoomLimitReached,
+        "not_in_parent" | "banned" => RoomManagementFailureKind::Forbidden,
+        "archived" => RoomManagementFailureKind::Conflict,
+        _ => return None,
+    })
 }
 
 fn map_session_failure(session_failure: BridgeSessionFailure) -> RoomManagementFailure {
