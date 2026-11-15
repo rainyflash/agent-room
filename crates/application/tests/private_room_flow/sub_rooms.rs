@@ -37,6 +37,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_agent_owner.rs"]
+mod agent_owner;
 #[path = "sub_room_archive.rs"]
 mod archive;
 #[path = "sub_room_archived_list.rs"]

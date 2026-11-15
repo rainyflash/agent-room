@@ -41,6 +41,7 @@ mod moderation_members;
 mod public_creation;
 mod public_transfer;
 mod role_changes;
+mod sub_room_agent_owner;
 mod sub_room_archive;
 mod sub_room_categories;
 mod sub_room_managers;
@@ -52,6 +53,7 @@ mod sub_rooms;
 
 use public_creation::{ensure_public_creator, limit_reached};
 use role_changes::role_changes;
+pub use sub_room_agent_owner::{AgentOwnerSeat, SubRoomAgentOwnerSeating};
 pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};
 pub use sub_rooms::SubRoomUseCases;
 use sub_rooms::{ensure_not_sub_room, ensure_parent_room};

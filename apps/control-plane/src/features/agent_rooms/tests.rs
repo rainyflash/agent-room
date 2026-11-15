@@ -433,6 +433,18 @@ async fn 带进房间时大厅正忙回_503_带_retry_after_带不了回_403() {
         response_json(room_refused).await["code"],
         "lobby.room_refused"
     );
+
+    // 有门的子房间、主人还不在里面（2f-1a）：也是 403，另一个码说清楚要主人先申请。
+    *placements.failure.lock().unwrap() = Some(AgentLobbyEntryFailure::OwnerNotInside);
+    let owner_outside = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(owner_outside.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(owner_outside).await["code"],
+        "sub_room.owner_not_inside"
+    );
 }
 
 #[tokio::test]

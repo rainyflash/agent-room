@@ -1057,6 +1057,7 @@ fn build_agent_room_placements(
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
         provisioning,
+        build_private_room_service(config, dependencies)?,
     )?;
     Ok(Arc::new(AgentRoomPlacementService::new(
         AgentRoomPlacementDependencies {
@@ -1847,6 +1848,7 @@ fn build_lobby_entry_with_provisioning(
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
         provisioning.clone(),
+        build_private_room_service(config, dependencies)?,
     )?;
     Ok((entries, provisioning))
 }
@@ -1857,6 +1859,7 @@ fn build_agent_lobby_entry(
     system_runtime: Arc<SystemRuntime>,
     matrix: Arc<MatrixApplicationServiceProvisioner>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
+    sub_room_owners: Arc<PrivateRoomService>,
 ) -> Result<Arc<AgentLobbyEntryService>, StartupError> {
     let reservation_lifetime = domain_duration(config.reservation_lifetime)?;
     let join_policy = LobbyJoinPolicy::new(reservation_lifetime)
@@ -1869,6 +1872,8 @@ fn build_agent_lobby_entry(
             private_rooms: repositories.clone(),
             // 凭口令进来的 Agent 成员不随任何成员入场，按它自己的成员记录裁决。
             private_agents: repositories.clone(),
+            // 没有门的子房间里主人还不在时，照人自己点“加入”的那一段先把主人加进去。
+            sub_room_owners,
             private_matrix: matrix.clone(),
             memberships: matrix.clone(),
             provisioning,
