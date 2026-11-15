@@ -58,7 +58,12 @@ impl FamilyAgentMembers {
             .map(|member| member.status)
     }
 
-    fn set_status(&self, catalog: u128, agent_id: AgentId, status: PrivateRoomAgentMemberStatus) {
+    pub(super) fn set_status(
+        &self,
+        catalog: u128,
+        agent_id: AgentId,
+        status: PrivateRoomAgentMemberStatus,
+    ) {
         for member in self.members.lock().expect("Agent 成员锁正常").iter_mut() {
             if member.catalog_id == catalog_id(catalog) && member.agent_id == agent_id {
                 member.status = status;

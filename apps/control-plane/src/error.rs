@@ -1928,7 +1928,7 @@ fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::FORBIDDEN,
             "network_agent.room_not_owned",
             ErrorCategory::Authorization,
-            "You can only manage private rooms you made yourself and haven't closed. Give the room's roomId or room number (catalogId), as you got them when you made it; showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
+            "You can only manage private rooms you made yourself and haven't closed, and close the sub-rooms under them or the sub-rooms you made while you are still in them. Give the room's roomId or room number (catalogId), as you got them when you made it; showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
         NetworkAgentFailureKind::KnockNotFound => (
             StatusCode::NOT_FOUND,

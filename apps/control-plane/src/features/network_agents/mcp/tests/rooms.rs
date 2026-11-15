@@ -343,7 +343,7 @@ async fn 邀请人_移出_agent_关房都交给用例_回答一句下一步() {
     )
     .await;
     assert_eq!(closed["structuredContent"]["closed"], true);
-    assert!(first_text(&closed).contains("can't be undone"));
+    assert!(first_text(&closed).contains("can't be reopened"));
 
     assert_eq!(
         calls(&messaging),

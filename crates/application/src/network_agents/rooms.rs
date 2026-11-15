@@ -30,10 +30,11 @@ use super::{
 use crate::{
     ports::{NetworkAgentRecord, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
     private_rooms::{
-        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock, ArchivePrivateRoom,
-        CreateAgentSubRoom, CreatePrivateRoom, InspectAgentAccess, InvitePrivateRoomMember,
-        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor, PrivateRoomFailure,
-        PrivateRoomFailureKind, PrivateRoomFailureStage, RemoveAgentMember, SubRoomRefusal,
+        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock,
+        ArchiveAgentSubRoom, ArchivePrivateRoom, CreateAgentSubRoom, CreatePrivateRoom,
+        InspectAgentAccess, InvitePrivateRoomMember, ListPrivateRoomsForAccount, ManageJoinCode,
+        PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
+        RemoveAgentMember, SubRoomRefusal,
     },
 };
 
@@ -440,12 +441,23 @@ impl NetworkAgentService {
             .await
             .map_err(repository)?;
         let catalog_id = self.room_of(record.id, room).await?;
-        // 只有房主关得了，已经关了的再关一次照样成功，都由领域规则把关。
-        self.rooms
-            .archive(ArchivePrivateRoom {
-                actor: PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?),
+        let actor = PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?);
+        // 子房间（2h-3a）：它管的就归档，人还能恢复。不是子房间的照整间房关。
+        let archived = self
+            .sub_room_archival
+            .archive_agent_sub_room(ArchiveAgentSubRoom {
+                actor: actor.clone(),
+                agent_id: record.agent_id.ok_or_else(internal)?,
                 catalog_id,
             })
+            .await
+            .map_err(sub_room_archive_failure)?;
+        if archived.is_some() {
+            return Ok(());
+        }
+        // 只有房主关得了，已经关了的再关一次照样成功，都由领域规则把关。
+        self.rooms
+            .archive(ArchivePrivateRoom { actor, catalog_id })
             .await
             .map(|_| ())
             .map_err(room_failure)
@@ -979,6 +991,14 @@ fn creation_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
 }
 
 /// 房间不存在和不是它的都只说不是它的房间，不透露别人的房间在不在。
+/// 归档子房间没成：管不了、看不到的和整间房一样说不是它能管的。
+fn sub_room_archive_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
+    match failure.kind() {
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly) => not_owned(),
+        _ => room_failure(failure),
+    }
+}
+
 pub(super) fn room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
     match failure.kind() {
         PrivateRoomFailureKind::NotFound

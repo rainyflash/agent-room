@@ -70,9 +70,9 @@ pub use public_join::{
     PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomJoinUseCases, RequestToJoin,
 };
 pub use service::{
-    AccessibleSubRoom, AccountSubRoomListing, AgentOwnerSeat, AgentSubRoomCreation,
-    AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms, ListAgentSubRooms,
-    PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,
-    PrivateRoomUseCases, SubRoomAgentOwnerSeating, SubRoomSyncOutcome, SubRoomSyncRetry,
-    SubRoomSyncUseCases, SubRoomUseCases,
+    AccessibleSubRoom, AccountSubRoomListing, AgentOwnerSeat, AgentSubRoomArchival,
+    AgentSubRoomCreation, AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms,
+    ArchiveAgentSubRoom, ListAgentSubRooms, PrivateRoomDependencies, PrivateRoomLinkInvitations,
+    PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases, SubRoomAgentOwnerSeating,
+    SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases, SubRoomUseCases,
 };

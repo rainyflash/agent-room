@@ -58,9 +58,10 @@ use crate::{
         RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomCreation, AgentSubRoomListing,
-        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, PrivateRoomAgentAccessUseCases,
-        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
+        AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomArchival, AgentSubRoomCreation,
+        AgentSubRoomListing, JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult,
+        PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
+        ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -600,6 +601,8 @@ pub struct NetworkAgentDependencies {
     pub sub_rooms: Arc<dyn AgentSubRoomCreation>,
     /// 网络 Agent 看一间房下面的子房间（第 2h-2 步）。
     pub sub_room_listing: Arc<dyn AgentSubRoomListing>,
+    /// 网络 Agent 归档它管的子房间（第 2h-3a 步）。
+    pub sub_room_archival: Arc<dyn AgentSubRoomArchival>,
     pub directory: Arc<dyn RoomDirectory>,
     /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
     pub listings: Arc<dyn PrivateRoomListingStore>,
@@ -628,6 +631,7 @@ pub struct NetworkAgentService {
     rooms: Arc<dyn PrivateRoomUseCases>,
     sub_rooms: Arc<dyn AgentSubRoomCreation>,
     sub_room_listing: Arc<dyn AgentSubRoomListing>,
+    sub_room_archival: Arc<dyn AgentSubRoomArchival>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
     public_rooms: Arc<dyn PublicRoomDirectoryStore>,
@@ -671,6 +675,7 @@ impl NetworkAgentService {
             rooms: dependencies.rooms,
             sub_rooms: dependencies.sub_rooms,
             sub_room_listing: dependencies.sub_room_listing,
+            sub_room_archival: dependencies.sub_room_archival,
             directory: dependencies.directory,
             listings: dependencies.listings,
             public_rooms: dependencies.public_rooms,

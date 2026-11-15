@@ -3,26 +3,62 @@
 //! 库里那一半（房间的状态，谁、什么时候、为什么归档的，在等的申请作废）由存储在一个事务里做完；聊天
 //! 服务器上锁住、解开排进子房间的任务表（这间子房间自己的那一件），这个请求结束前先做一遍。没做成不算
 //! 请求失败：事还排着，后台接着做（`sub_room_sync`）。
+//!
+//! 网络 Agent 用 `agent_room_close_room` 归档它管的子房间（2h-3a，[`AgentSubRoomArchival`]）：它自己
+//! 当房主的房间下面每一间照房主归档；凭口令、敲门进了别人的房间、在下面建的，照“它建的”认它
+//! （[`authorize_creator_agent_sub_room_archive`]）。恢复只给人做。
 
-use agent_room_domain::sub_room_archive::{
-    SubRoomArchiveReason, SubRoomArchiveRefusal, archived_sub_room, authorize_sub_room_archive,
-    authorize_sub_room_restore, restored_sub_room,
+use agent_room_domain::{
+    ids::{AgentId, PrincipalId, RoomCatalogId},
+    sub_room_archive::{
+        SubRoomArchiveReason, SubRoomArchiveRefusal, archived_sub_room,
+        authorize_creator_agent_sub_room_archive, authorize_sub_room_archive,
+        authorize_sub_room_restore, restored_sub_room,
+    },
+    time::UtcMillis,
 };
 
 use crate::ports::{
-    PrivateRoomSnapshot, SubRoomArchival, SubRoomArchiveOutcome, SubRoomRestoration,
+    PortFuture, PrivateRoomSnapshot, SubRoomArchival, SubRoomArchiveOutcome, SubRoomRestoration,
 };
 
 use super::{
     super::{
-        ArchiveSubRoom, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
-        PrivateRoomResult, RestoreSubRoom, SubRoomRefusal,
+        ArchiveSubRoom, PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, PrivateRoomResult, RestoreSubRoom, SubRoomRefusal,
         failure::{domain, failure, repository},
     },
-    PrivateRoomService, ensure_active_actor, replace_room,
+    PrivateRoomService, ensure_active_actor, ensure_active_room_actor, replace_room,
     sub_room_membership::LoadedSubRoom,
-    sub_rooms::refused,
+    sub_rooms::{has_joined, not_found, refused},
 };
+
+/// 网络 Agent 要归档的一间（2h-3a）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveAgentSubRoom {
+    /// 只认网络 Agent：本机 Agent 建的子房间由主人在网页上归档。
+    pub actor: PrivateRoomActor,
+    pub agent_id: AgentId,
+    pub catalog_id: RoomCatalogId,
+}
+
+/// 网络 Agent 归档子房间这一样。网络 Agent 的用例只拿这个。
+pub trait AgentSubRoomArchival: Send + Sync {
+    /// 归档好的（或者本来就归档了的）子房间；这间房不是子房间时回 `None`，照整间房关。
+    fn archive_agent_sub_room(
+        &self,
+        request: ArchiveAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>>;
+}
+
+impl AgentSubRoomArchival for PrivateRoomService {
+    fn archive_agent_sub_room(
+        &self,
+        request: ArchiveAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>> {
+        Box::pin(self.archive_agent_sub_room_internal(request))
+    }
+}
 
 impl PrivateRoomService {
     pub(super) async fn archive_sub_room_internal(
@@ -45,9 +81,22 @@ impl PrivateRoomService {
             .await?;
         authorize_sub_room_archive(parent.room(), sub_room.room(), actor)
             .map_err(|refusal| archive_refused(OPERATION, refusal))?;
-        // 已经归档了：上一次聊天服务器上没锁成的还排着，后台接着做。
+        self.archive_loaded(&parent, sub_room, actor, now, OPERATION)
+            .await
+    }
+
+    /// 谁能归档已经看过了：存成归档、锁住聊天服务器上的房间。已经归档了的原样回：上一次聊天服务器上
+    /// 没锁成的还排着，后台接着做。
+    async fn archive_loaded(
+        &self,
+        parent: &PrivateRoomSnapshot,
+        sub_room: PrivateRoomSnapshot,
+        by: PrincipalId,
+        now: UtcMillis,
+        operation: &'static str,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         let Some(archived) =
-            archived_sub_room(sub_room.room()).map_err(|error| domain(OPERATION, &error))?
+            archived_sub_room(sub_room.room()).map_err(|error| domain(operation, &error))?
         else {
             return Ok(sub_room);
         };
@@ -56,16 +105,79 @@ impl PrivateRoomService {
             .archive_sub_room(&SubRoomArchival {
                 room: &archived,
                 expected_version: sub_room.room().version(),
-                parent_catalog_id: request.parent_catalog_id,
-                by: Some(actor),
+                parent_catalog_id: parent.catalog().id(),
+                by: Some(by),
                 reason: SubRoomArchiveReason::Manual,
                 at: now,
             })
             .await
-            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
-        stored(outcome, OPERATION)?;
-        self.sync_sub_rooms_under(&parent).await;
-        replace_room(sub_room, archived, OPERATION)
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))?;
+        stored(outcome, operation)?;
+        self.sync_sub_rooms_under(parent).await;
+        replace_room(sub_room, archived, operation)
+    }
+
+    async fn archive_agent_sub_room_internal(
+        &self,
+        request: ArchiveAgentSubRoom,
+    ) -> PrivateRoomResult<Option<PrivateRoomSnapshot>> {
+        const OPERATION: &str = "sub_room.archive_by_agent";
+        let now = self.clock.now();
+        ensure_active_room_actor(&request.actor, now, OPERATION)?;
+        if !matches!(request.actor, PrivateRoomActor::NetworkAgent(_)) {
+            return Err(failure(
+                OPERATION,
+                PrivateRoomFailureStage::Validation,
+                PrivateRoomFailureKind::Forbidden,
+            ));
+        }
+        let viewer = request.actor.principal_id();
+        let sub_room = self
+            .find(request.catalog_id, OPERATION)
+            .await?
+            .ok_or_else(|| not_found(OPERATION))?;
+        let Some(parent_id) = sub_room.parent_catalog_id() else {
+            return Ok(None);
+        };
+        let parent = self.load(parent_id, OPERATION).await?;
+        let link = self
+            .sub_rooms
+            .sub_room_link(request.catalog_id)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?
+            .ok_or_else(|| not_found(OPERATION))?;
+        let authorized = if has_joined(parent.room(), viewer) {
+            // 它自己的房间：合成主体是房主，照房主归档。
+            authorize_sub_room_archive(parent.room(), sub_room.room(), viewer)
+        } else {
+            let inside = self
+                .agent_inside(request.catalog_id, request.agent_id, OPERATION)
+                .await?;
+            let created = link.created_by_agent == Some(request.agent_id);
+            // 不在父房间里的、藏起来又不是它建的也不在里面的，和没有这间房一样。
+            if !self
+                .agent_inside(parent_id, request.agent_id, OPERATION)
+                .await?
+                || (link.hidden && !created && !inside)
+            {
+                return Err(not_found(OPERATION));
+            }
+            authorize_creator_agent_sub_room_archive(
+                parent.room(),
+                link.created_by_agent,
+                request.agent_id,
+                inside,
+            )
+        };
+        match authorized {
+            Ok(()) => {}
+            // 父房间关了：这一间跟着归档（后台在做），当它关上了。
+            Err(SubRoomArchiveRefusal::ParentArchived) => return Ok(Some(sub_room)),
+            Err(refusal) => return Err(archive_refused(OPERATION, refusal)),
+        }
+        self.archive_loaded(&parent, sub_room, viewer, now, OPERATION)
+            .await
+            .map(Some)
     }
 
     pub(super) async fn restore_sub_room_internal(

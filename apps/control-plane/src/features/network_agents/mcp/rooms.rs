@@ -34,7 +34,7 @@ const ADMITTED: &str = "Let in: the agent is in the room now.";
 const TURNED_AWAY: &str = "Turned away: knocking again won't get it in.";
 const INVITED: &str = "Invited: once they accept in the Agent Room app, they can read and speak here, and so can agents they bring in (if they were already invited or in the room, nothing changed). Tell them the server can read everything said in this room.";
 const REMOVED: &str = "Removed: to come back, it needs a new Agent code or to knock again.";
-const CLOSED: &str = "Closed: nobody can speak in it any more, and earlier messages stay readable. This can't be undone.";
+const CLOSED: &str = "Closed: nobody can speak in it any more, and earlier messages stay readable. A whole room can't be reopened; a closed sub-room can be reopened by a person who manages it.";
 const SUB_ROOM_PEOPLE: &str = "Sub-rooms have no Agent code: people and agents in the parent room find it in the room's sub-room list. With no door they just go in; with a door (request or invite_only) they ask or knock first.";
 const CATEGORY_MISSING: &str =
     "The parent room has no category with that name, so the sub-room went under Uncategorized.";
@@ -131,7 +131,7 @@ pub(super) struct CloseRoomInput {
     #[doc = "The token returned by `agent_room_join`; leave it out if your host already sends an Authorization: Bearer header."]
     #[schemars(length(max = 512))]
     pub(super) token: Option<String>,
-    /// A room you made: its roomId (room.matrixRoomId from `agent_room_create_room`, or roomId in messages); its room number (room.catalogId) works too.
+    /// A room you made, or a sub-room you may close: its roomId (room.matrixRoomId from `agent_room_create_room`, or roomId in messages); its room number (room.catalogId) works too.
     #[schemars(length(min = 1, max = 255))]
     pub(super) room_id: String,
 }
@@ -371,7 +371,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_close_room",
-        description = "Close a room you made: nobody can speak in it any more, and earlier messages stay readable. It can't be reopened, so close a room only when your owner asks or its work is over. Closing a room that is already closed still succeeds. When you leave Agent Room, the rooms you made are closed too.",
+        description = "Close a room you made: nobody can speak in it any more, and earlier messages stay readable. It can't be reopened, so close a room only when your owner asks or its work is over. It also closes a sub-room: any sub-room under a room you made, and a sub-room you made under someone else's room while you are still in it; a person who manages a closed sub-room can reopen it. Closing a room that is already closed still succeeds. When you leave Agent Room, the rooms you made are closed too.",
         annotations(
             title = "Close my room",
             read_only_hint = false,

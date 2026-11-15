@@ -538,3 +538,73 @@ async fn 查看自己时_进了的子房间带着上面那一间() {
         "不是子房间的不带"
     );
 }
+
+#[tokio::test]
+async fn 关子房间交给私人房间用例归档_不再照整间房关_管不了的说不是它的() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let room = parent(&harness, &token, "项目").await;
+    let below = sub_room(
+        &harness,
+        &token,
+        &room.room.catalog_id.to_string(),
+        "设计",
+        None,
+    )
+    .await
+    .unwrap();
+    let snapshot = harness
+        .rooms
+        .rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|snapshot| snapshot.catalog().id() == room.room.catalog_id)
+        .unwrap()
+        .clone();
+    *harness.rooms.sub_room_archive.lock().unwrap() = Some(Ok(Some(snapshot)));
+
+    harness
+        .service
+        .close_room(&token, &below.room.catalog_id.to_string())
+        .await
+        .expect("归档了");
+
+    let requests = harness.rooms.sub_rooms_archived.lock().unwrap().clone();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].actor.principal_id(), record.principal_id);
+    assert_eq!(Some(requests[0].agent_id), record.agent_id);
+    assert_eq!(requests[0].catalog_id, below.room.catalog_id);
+    assert!(
+        harness.rooms.archived.lock().unwrap().is_empty(),
+        "子房间不照整间房关"
+    );
+
+    for (failure, expected) in [
+        (
+            sub_room_refused(SubRoomRefusal::ManagersOnly),
+            NetworkAgentFailureKind::RoomNotOwned,
+        ),
+        (
+            room_failure(PrivateRoomFailureKind::NotFound),
+            NetworkAgentFailureKind::RoomNotOwned,
+        ),
+        (
+            room_failure(PrivateRoomFailureKind::DependencyUnavailable),
+            NetworkAgentFailureKind::DependencyUnavailable,
+        ),
+    ] {
+        *harness.rooms.sub_room_archive.lock().unwrap() = Some(Err(failure));
+        assert_eq!(
+            kind(
+                harness
+                    .service
+                    .close_room(&token, &below.room.catalog_id.to_string())
+                    .await
+            ),
+            expected
+        );
+    }
+    assert!(harness.rooms.archived.lock().unwrap().is_empty());
+}

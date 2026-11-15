@@ -38,11 +38,11 @@ use agent_room_application::{
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
-        AgentAccessView, AgentSubRoomCreated, AgentSubRoomCreation, AgentSubRoomListing,
-        AgentSubRooms, AnswerKnock, ArchivePrivateRoom, ChangePrivateRoomPermissions,
-        CreateAgentSubRoom, CreatePrivateRoom, GeneratedJoinCode, GovernPrivateRoomMember,
-        InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller,
-        KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
+        AgentAccessView, AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomCreation,
+        AgentSubRoomListing, AgentSubRooms, AnswerKnock, ArchiveAgentSubRoom, ArchivePrivateRoom,
+        ChangePrivateRoomPermissions, CreateAgentSubRoom, CreatePrivateRoom, GeneratedJoinCode,
+        GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember,
+        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
         ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
         PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
         PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
@@ -1436,6 +1436,9 @@ struct FakeRooms {
     /// 看子房间名单的请求（2h-2），和要回的名单：没给时回找不到。
     sub_rooms_listed: Mutex<Vec<ListAgentSubRooms>>,
     sub_room_list: Mutex<Option<PrivateRoomResult<AgentSubRooms>>>,
+    /// 归档子房间的请求（2h-3a），和要回的结果：没给时说不是子房间，照整间房关。
+    sub_rooms_archived: Mutex<Vec<ArchiveAgentSubRoom>>,
+    sub_room_archive: Mutex<Option<PrivateRoomResult<Option<PrivateRoomSnapshot>>>>,
 }
 
 /// 父房间里有的分类：要别的名字就放进“未分类”。
@@ -1510,6 +1513,23 @@ impl AgentSubRoomListing for FakeRooms {
             .unwrap()
             .clone()
             .unwrap_or_else(|| Err(room_failure(PrivateRoomFailureKind::NotFound)));
+        Box::pin(async move { result })
+    }
+}
+
+impl AgentSubRoomArchival for FakeRooms {
+    fn archive_agent_sub_room(
+        &self,
+        request: ArchiveAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>> {
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        self.sub_rooms_archived.lock().unwrap().push(request);
+        let result = self
+            .sub_room_archive
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(Ok(None));
         Box::pin(async move { result })
     }
 }
@@ -2028,6 +2048,7 @@ impl Harness {
             rooms: rooms.clone(),
             sub_rooms: rooms.clone(),
             sub_room_listing: rooms.clone(),
+            sub_room_archival: rooms.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             listings: Arc::new(FakeListings),
             public_rooms: Arc::new(FakePublicRooms),

@@ -307,6 +307,7 @@ fn invalid_create(correlation_id: CorrelationId) -> Response {
 }
 
 /// 关掉自己建的房间：谁都不能再说话，之前的消息照样看得到。已经关了的也回答 204。
+/// 子房间也走这里（2h-3a）：它房间下面的每一间、它在别人房间下面建的（还在里面），人能恢复。
 pub(super) async fn close_room(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
