@@ -92,6 +92,32 @@ const en = {
   'subRooms.door.foot':
     'Your agents can come in once you’re in. Who’s inside and what’s been said shows up after you join.',
 
+  'subRooms.settings.title': 'Sub-room settings',
+  'subRooms.settings.hidden': 'Don’t show it in the sub-room list',
+  'subRooms.settings.hiddenDetail': 'People who aren’t inside can’t see it exists.',
+  'subRooms.settings.hiddenNeedsDoor': 'Only a sub-room with a door can be hidden.',
+  'subRooms.settings.addsDoor':
+    'With a door, this sub-room is encrypted. Encryption stays on even if the door comes off later.',
+  'subRooms.settings.removesDoor':
+    'Without a door, anyone in the room can walk in. People who come in after that can’t read what was said before.',
+  'subRooms.settings.voidsRequests': 'The {{count}} request waiting to join will be dropped.',
+  'subRooms.settings.voidsRequests_one': 'The {{count}} request waiting to join will be dropped.',
+  'subRooms.settings.voidsRequests_other':
+    'The {{count}} requests waiting to join will be dropped.',
+  'subRooms.settings.save': 'Save',
+  'subRooms.settings.saving': 'Saving…',
+  'subRooms.settings.saved': 'Saved',
+  'subRooms.settings.failed': 'That didn’t save. Try again in a moment.',
+  'subRooms.settings.startOver': 'Start from what’s there now',
+  'subRooms.settings.failure.conflict':
+    'Someone just changed who can get in. Check it again before saving.',
+  'subRooms.settings.failure.managers_only':
+    'Only the people who run this sub-room, and the room’s owner and admins, can change it.',
+  'subRooms.settings.archive': 'Archive this sub-room',
+  'subRooms.settings.archiveNote': 'It can be read but not written in, and it can be restored.',
+  'subRooms.settings.archiveDetail':
+    'People inside can still read it, but nobody can post. Anyone who runs it can restore it later.',
+
   'subRooms.create.open': 'New sub-room',
   'subRooms.create.title': 'New sub-room',
   'subRooms.create.under': 'Under {{room}}',
@@ -222,6 +248,28 @@ export const subRoomResources = {
     'subRooms.door.archived': '这间子房间已经归档：之前的消息还能看，谁都不能再说话。',
     'subRooms.door.foot':
       '你进去以后，你的 Agent 才能跟着进。里面有谁、说了什么，进去以后才看得到。',
+
+    'subRooms.settings.title': '子房间设置',
+    'subRooms.settings.hidden': '不在子房间名单里显示',
+    'subRooms.settings.hiddenDetail': '不在里面的人看不到有这一间。',
+    'subRooms.settings.hiddenNeedsDoor': '有门的子房间才能藏起来。',
+    'subRooms.settings.addsDoor': '装上门以后这一间是加密的，以后拆了门也不关。',
+    'subRooms.settings.removesDoor':
+      '拆了门，这间房里的人都能直接进来；之后进来的人看不到拆门以前的话。',
+    'subRooms.settings.voidsRequests': '在等的 {{count}} 个申请会作废。',
+    'subRooms.settings.voidsRequests_one': '在等的 {{count}} 个申请会作废。',
+    'subRooms.settings.voidsRequests_other': '在等的 {{count}} 个申请会作废。',
+    'subRooms.settings.save': '保存',
+    'subRooms.settings.saving': '正在保存…',
+    'subRooms.settings.saved': '已保存',
+    'subRooms.settings.failed': '没存上，过一会儿再试。',
+    'subRooms.settings.startOver': '从现在的样子重来',
+    'subRooms.settings.failure.conflict': '有人刚改过谁能进。看过现在的样子再存。',
+    'subRooms.settings.failure.managers_only': '只有管这一间的人和房间的房主、管理员改得了。',
+    'subRooms.settings.archive': '归档这间子房间',
+    'subRooms.settings.archiveNote': '只能看、不能说，可以恢复。',
+    'subRooms.settings.archiveDetail':
+      '里面的人还能看以前的话，谁都不能再说话。管它的人以后能恢复。',
 
     'subRooms.create.open': '新建子房间',
     'subRooms.create.title': '新建子房间',

@@ -1,0 +1,143 @@
+/* 子房间设置（画布第 8 张）：房间设置对话框里的一节。名字和分类一行，窄了叠起来；保存在表单下面，
+   归档在最下面隔开的一行。 */
+.sub-room-settings {
+  display: grid;
+  gap: 20px;
+}
+
+.sub-room-settings__form {
+  display: grid;
+  gap: 16px;
+}
+
+.sub-room-settings__row {
+  display: grid;
+  gap: 12px;
+}
+
+.sub-room-settings__row[data-categories='true'] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 180px);
+}
+
+.sub-room-settings__hidden {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.6rem;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+}
+
+.sub-room-settings__hidden:has(input:disabled) {
+  cursor: default;
+}
+
+.sub-room-settings__hidden input {
+  width: 16px;
+  height: 16px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--ar-accent);
+}
+
+.sub-room-settings__hidden > span {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.sub-room-settings__hidden small {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-settings__effects {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  list-style: none;
+  background: var(--ar-surface);
+  color: var(--ar-ink-72);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.sub-room-settings__save {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.sub-room-settings__saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-settings__saved > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sub-room-settings__archive {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ar-line);
+}
+
+.sub-room-settings__archive-note {
+  flex: 1 1 12rem;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-settings__archive > .archive-room-confirm {
+  flex: 1 1 100%;
+}
+
+.sub-room-settings__failure {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+}
+
+.sub-room-settings__failure > code {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
+
+.sub-room-settings__spin {
+  animation: sub-room-settings-spin 900ms linear infinite;
+}
+
+@keyframes sub-room-settings-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sub-room-settings__spin {
+    animation: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .sub-room-settings__row[data-categories='true'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

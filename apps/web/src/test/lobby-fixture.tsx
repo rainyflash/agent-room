@@ -137,6 +137,7 @@ import type {
 } from '@/features/private-rooms/domain/room-role-changes';
 import type {
   CreateSubRoomInput,
+  ReviseSubRoomInput,
   SubRoom,
   SubRoomGateway,
   SubRoomList,
@@ -1128,6 +1129,11 @@ function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = 
     ...extra,
   };
 }
+// `?private&subRoom`：眼前这一间。你管得了它（名单上带着在等的申请有几个），子房间设置改的就是它。
+let fixtureCurrentSubRoom: Partial<SubRoom> = {
+  categoryId: FIXTURE_WORK_CATEGORY,
+  pendingRequestCount: 0,
+};
 function fixtureSubRoomList(): SubRoomList {
   const current = fixturePrivateRoom.catalogId;
   return {
@@ -1143,7 +1149,7 @@ function fixtureSubRoomList(): SubRoomList {
       ...(subRoomFixture && fixturePrivateRoom.status !== 'archived'
         ? [
             {
-              ...fixtureSubRoom('01', room.name, { categoryId: FIXTURE_WORK_CATEGORY }),
+              ...fixtureSubRoom('01', room.name, fixtureCurrentSubRoom),
               catalogId: current,
             },
           ]
@@ -1211,7 +1217,9 @@ const fixtureCreatedSubRooms: SubRoom[] = [];
 const fixtureSubRoomActions: {
   readonly creations: CreateSubRoomInput[];
   readonly broughtAgents: { readonly agentId: string; readonly catalogId: string }[];
-} = { creations: [], broughtAgents: [] };
+  readonly revisions: (ReviseSubRoomInput & { readonly subRoomId: string })[];
+  readonly archived: string[];
+} = { creations: [], broughtAgents: [], revisions: [], archived: [] };
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
   get: () => structuredClone(fixtureSubRoomActions),
@@ -1238,6 +1246,31 @@ function createFixtureSubRoom(input: CreateSubRoomInput): Result<PrivateRoom, Pr
   const entry = { ...created, catalogId: input.catalogId };
   fixtureCreatedSubRooms.push(entry);
   return ok(room(entry));
+}
+// 子房间设置改眼前这一间：名字和名单里别的撞了回 `sub_room.name_taken`；拆门时隐藏跟着去掉。
+function reviseFixtureSubRoom(
+  subRoomId: string,
+  input: ReviseSubRoomInput,
+): Result<PrivateRoom, PrivateRoomFailure> {
+  fixtureSubRoomActions.revisions.push({ subRoomId, ...input });
+  if (subRoomId !== fixturePrivateRoom.catalogId)
+    return err({ code: 'sub_room.unavailable', retryable: false });
+  const taken = fixtureSubRoomList().subRooms.some(
+    (entry) => entry.catalogId !== subRoomId && entry.name === input.name,
+  );
+  if (taken) return err({ code: 'sub_room.name_taken', retryable: false });
+  const next: Partial<SubRoom> = {
+    ...fixtureCurrentSubRoom,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.description === undefined ? {} : { description: input.description }),
+    ...(input.access === undefined ? {} : { access: input.access }),
+    ...(input.hidden === undefined ? {} : { hidden: input.hidden }),
+    ...(input.access === 'open' ? { hidden: false } : {}),
+    ...(typeof input.categoryId === 'string' ? { categoryId: input.categoryId } : {}),
+  };
+  if (input.categoryId === null) delete next.categoryId;
+  fixtureCurrentSubRoom = next;
+  return ok(fixturePrivateRoom);
 }
 const fixtureArchivedSubRooms: readonly SubRoom[] = [
   fixtureSubRoom('71', 'Alpha 94', {
@@ -1272,7 +1305,7 @@ function fixtureArchivedSubRoomList(): SubRoomList {
         ? [
             {
               ...fixtureSubRoom('01', room.name, {
-                categoryId: FIXTURE_WORK_CATEGORY,
+                ...fixtureCurrentSubRoom,
                 archivedAtUnixMs: 1_794_400_000_000,
                 archivedByPrincipalId: fixtureOwner,
                 archivedReason: 'manual' as const,
@@ -1292,7 +1325,13 @@ const fixtureSubRoomSuffix = (catalogId: string) => catalogId.slice(-2);
 const fixtureSubRooms: SubRoomGateway = {
   admit: unavailableSubRoom,
   answerJoinRequest: unavailableSubRoom,
-  archive: unavailableSubRoom,
+  // 子房间设置：眼前这一间归档了，房间页接着照归档的子房间显示。
+  archive: ({ subRoomId }) => {
+    fixtureSubRoomActions.archived.push(subRoomId);
+    if (subRoomId !== fixturePrivateRoom.catalogId) return unavailableSubRoom();
+    fixturePrivateRoom = { ...fixturePrivateRoom, status: 'archived' };
+    return Promise.resolve(ok(undefined));
+  },
   ban: unavailableSubRoom,
   changePolicy: unavailableSubRoom,
   create: (_parentId, input) => Promise.resolve(createFixtureSubRoom(input)),
@@ -1316,7 +1355,7 @@ const fixtureSubRooms: SubRoomGateway = {
       fixturePrivateRoom = { ...fixturePrivateRoom, status: 'active' };
     return Promise.resolve(ok(undefined));
   },
-  revise: unavailableSubRoom,
+  revise: (ref, input) => Promise.resolve(reviseFixtureSubRoom(ref.subRoomId, input)),
   reviseCategory: unavailableSubRoom,
   revokeManager: unavailableSubRoom,
   subRooms: (_roomId, options) =>

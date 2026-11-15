@@ -1,5 +1,5 @@
 import { Banner, Button, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { Bot, Gavel, Globe2, KeyRound, Pin, UsersRound } from 'lucide-react';
+import { Bot, DoorOpen, Gavel, Globe2, KeyRound, Pin, UsersRound } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -9,24 +9,30 @@ import { useModerationCapabilities } from '@/features/moderation/data/moderation
 import { ModerationSettings } from '@/features/moderation/ui/moderation-settings';
 import { PrivateRoomCoordinator } from '@/features/private-rooms/application/private-room-coordinator';
 import {
-  usePrivateRoomList,
+  usePrivateRoomListWith,
   usePrivateRoomOrigin,
   usePrivateRoomPeople,
 } from '@/features/private-rooms/data/private-room-queries';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
+import {
+  managesSubRoom,
+  type SubRoom,
+  type SubRoomList,
+} from '@/features/private-rooms/domain/sub-rooms';
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomMembers } from '@/features/private-rooms/ui/private-room-members';
 import { PrivateRoomPublicSettings } from '@/features/private-rooms/ui/private-room-public-settings';
 import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import { RoomNoticeEditor } from '@/features/room-notice/ui/room-notice-editor';
 import type { WebSession } from '@/features/session/domain/session';
+import { SubRoomSettings } from '@/features/sub-rooms/ui/sub-room-settings';
 
 import { agentCountsByOwner } from '../domain/agent-owners';
 import { useAgentOwners } from './agent-owners';
 import './room-settings.css';
 
 export type RoomSettingsSection =
-  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation' | 'notice';
+  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation' | 'notice' | 'sub-room';
 
 /** 不替谁去问主人：只读房间页问到的那一份。 */
 const noAgents: readonly string[] = [];
@@ -38,6 +44,13 @@ const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   members: <UsersRound aria-hidden="true" />,
   moderation: <Gavel aria-hidden="true" />,
   notice: <Pin aria-hidden="true" />,
+  'sub-room': <DoorOpen aria-hidden="true" />,
+};
+
+/** 眼前是子房间时：它在名单里的那一行，和它所在的整间房的名单。 */
+export type RoomSettingsSubRoom = {
+  readonly list: SubRoomList;
+  readonly room: SubRoom;
 };
 
 export type RoomSettingsDialogProps = {
@@ -51,12 +64,17 @@ export type RoomSettingsDialogProps = {
   readonly onClose: () => void;
   /** 退出或归档了这个私人房间。 */
   readonly onExitRoom: () => void;
+  /**
+   * 眼前是子房间（`specs/redesign/sub-rooms.md`“网页”）：管得了的人第一节是“这间子房间”；成员、公开、
+   * Agent 进门这几节是整间房的（邀请链接、口令、公开），不出现。
+   */
+  readonly subRoom?: RoomSettingsSubRoom | null | undefined;
 };
 
 /**
  * 房间设置：一个对话框，分节切换。私人房间有“成员”和“公开”（管理者还有“公告”和“Agent 进门”），每个房间都有
- * “自动发言”，房间管理者还有“治理”。几节同时挂着、只显示一节：切过去再切回来，填到一半的内容
- * 和刚生成的口令都还在。
+ * “自动发言”，房间管理者还有“治理”。子房间没有成员、公开、Agent 进门，管得了它的人多一节“这间子房间”。
+ * 几节同时挂着、只显示一节：切过去再切回来，填到一半的内容和刚生成的口令都还在。
  */
 export function RoomSettingsDialog({
   catalogId,
@@ -66,10 +84,18 @@ export function RoomSettingsDialog({
   initialSection,
   onClose,
   onExitRoom,
+  subRoom = null,
 }: RoomSettingsDialogProps) {
   const { t } = useTranslation();
   const { privateRoomListings, privateRooms, moderation, roomNotices } = useAppServices();
-  const list = usePrivateRoomList(privateRooms, principal.principalId);
+  // 子房间不在房间列表里，单独问这一间（`usePrivateRoomListWith`）。
+  const list = usePrivateRoomListWith(
+    privateRooms,
+    principal.principalId,
+    catalogId,
+    true,
+    subRoom !== null,
+  );
   const capabilities = useModerationCapabilities(moderation, catalogId);
   const room = list.data?.ok === true ? joinedRoom(list.data.value, catalogId, principal) : null;
   const origin = usePrivateRoomOrigin(privateRooms, catalogId, room !== null);
@@ -82,11 +108,13 @@ export function RoomSettingsDialog({
   const canModerate =
     capabilities.data?.ok === true &&
     (capabilities.data.value.canModerateRoom || capabilities.data.value.canReadAudit);
+  const wholeRoom = room !== null && subRoom === null;
   const sections: readonly RoomSettingsSection[] = [
-    ...(room === null ? [] : (['members'] as const)),
-    ...(room === null || privateRoomListings === undefined ? [] : (['listing'] as const)),
+    ...(subRoom !== null && managesSubRoom(subRoom.room) ? (['sub-room'] as const) : []),
+    ...(wholeRoom ? (['members'] as const) : []),
+    ...(wholeRoom && privateRoomListings !== undefined ? (['listing'] as const) : []),
     ...(canManageRoom && roomNotices !== undefined ? (['notice'] as const) : []),
-    ...(canManageRoom ? (['agent-code'] as const) : []),
+    ...(canManageRoom && subRoom === null ? (['agent-code'] as const) : []),
     'automation',
     ...(canModerate ? (['moderation'] as const) : []),
   ];
@@ -94,16 +122,16 @@ export function RoomSettingsDialog({
   const current =
     chosen !== undefined && sections.includes(chosen) ? chosen : (sections[0] ?? 'automation');
   const loading = list.isPending || capabilities.isPending;
-  const privateFailed = !list.isPending && (list.isError || !list.data.ok);
+  const privateFailed = !list.isPending && (list.isError || list.data?.ok !== true);
 
   return (
     <Dialog
       className="room-settings"
       closeLabel={t('roomSettings.close')}
-      description={roomName}
+      description={subRoom === null ? roomName : `${roomName} · ${subRoom.list.parent.name}`}
       onClose={onClose}
       size="wide"
-      title={t('roomSettings.title')}
+      title={t(subRoom === null ? 'roomSettings.title' : 'subRooms.settings.title')}
     >
       {loading ? (
         <p className="room-settings__state" role="status">
@@ -162,6 +190,7 @@ export function RoomSettingsDialog({
                 room={room}
                 roomName={roomName}
                 section={section}
+                subRoom={subRoom}
               />
             </section>
           ))}
@@ -181,6 +210,7 @@ function RoomSettingsContent({
   notice,
   onClose,
   onExitRoom,
+  subRoom,
 }: {
   readonly section: RoomSettingsSection;
   readonly canManageRoom: boolean;
@@ -191,6 +221,7 @@ function RoomSettingsContent({
   readonly room: PrivateRoom | null;
   readonly onClose: () => void;
   readonly onExitRoom: () => void;
+  readonly subRoom: RoomSettingsSubRoom | null;
 }) {
   const {
     accessManagement,
@@ -218,6 +249,10 @@ function RoomSettingsContent({
   const owners = useAgentOwners(noAgents);
   const agentCounts = useMemo(() => agentCountsByOwner(owners.values()), [owners]);
   switch (section) {
+    case 'sub-room':
+      return subRoom === null ? null : (
+        <SubRoomSettings list={subRoom.list} onArchived={onClose} room={subRoom.room} />
+      );
     case 'members':
       return room === null ? null : (
         <PrivateRoomMembers

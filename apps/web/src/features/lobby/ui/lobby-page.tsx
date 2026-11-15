@@ -303,6 +303,10 @@ function ReadyLobby({
   });
   const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
   const subRoom = family !== null && isSubRoomOf(family, catalogId);
+  // 眼前这间子房间在名单里的那一行（归档了的不在）：子房间设置照它。
+  const subRoomEntry = subRoom
+    ? family.subRooms.find((entry) => entry.catalogId === catalogId)
+    : undefined;
   // 归档了的那一份：地址里的那一间不在没归档的名单里时找它，归档了的子房间页面问能不能恢复。
   const doorActive =
     door === null ? undefined : family?.subRooms.find((entry) => entry.catalogId === door);
@@ -645,6 +649,11 @@ function ReadyLobby({
           onExitRoom={onExitRoom}
           principal={principal}
           roomName={room.name}
+          subRoom={
+            family !== null && subRoomEntry !== undefined
+              ? { list: family, room: subRoomEntry }
+              : null
+          }
         />
       )}
       {peopleInviteOpen &&
