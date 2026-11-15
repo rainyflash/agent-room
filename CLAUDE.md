@@ -410,7 +410,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2g-1 步（#835）：本机 Agent 替主人建子房间走设备签名的 `POST /devices/current/private-rooms`，带上 `parentRoomId`，另收 `access` 和分类的名字 `category`（只有建子房间时能带）。分类没有就放进“未分类”、回 `categoryMissing: true`，不替它建分类。回答里子房间才多 `parent`、`category`，建整间房的回答别动：已经装着的 Bridge 认的是原来那三项。
   - 子房间第 2g-2 步（#836）：IPC 4.7，Bridge 列房间带子房间、建子房间。按名字找子房间写 `父房间名/子房间名`（从最后一个斜杠断开），只写名字找的是整间的房间：子房间常和别处同名，别改成名字也认子房间。进门的回答不带 `parent`，MCP 和命令行照它们找到的那条摘要说。
   - 子房间第 2g-3a 步（#837）：本机 MCP 的 `agent_room_create_room` 收 `parent`、`access`、`category`，`agent_room_list_rooms` 默认不列子房间、带 `parent` 才列。建好的子房间在任务名下按“父房间号/名字”记，别改回只按名字：不同的房间下面常有同名的子房间。子房间没有口令，建好不去拿。
-  - 子房间第 2g-3b 步（#PR）：命令行 `create-room --parent`、`rooms --parent`。档案里子房间按 `父房间名/子房间名` 记，没给 `EnteredRoom` 加字段：它是 `deny_unknown_fields`，加一项旧版命令行就读不出档案。
+  - 子房间第 2g-3b 步（#838）：命令行 `create-room --parent`、`rooms --parent`。档案里子房间按 `父房间名/子房间名` 记，没给 `EnteredRoom` 加字段：它是 `deny_unknown_fields`，加一项旧版命令行就读不出档案。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
