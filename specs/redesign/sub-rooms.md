@@ -513,7 +513,7 @@
      - 原来还有一样“子房间归档、换成不收敲门的门时在等的敲门作废”，不做，见“状态”。
 7. **2g 本机 Agent 这一路**：IPC 4.7、本机 MCP 和命令行的 `parent`、`access`、`category`。拆成：
    - 2g-1 控制面：设备签名的建房地址（`/devices/current/private-rooms`）带上 `parentRoomId` 建子房间，收 `access` 和分类的名字（`category`），回答带父房间和放进的分类。
-   - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、进门和建房的回答带 `parent`；Bridge 同时认 4.4 到 4.7。
+   - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、建房的回答带 `parent`、进不去时分开报；按名字找子房间写 `父房间名/子房间名`；Bridge 同时认 4.4 到 4.7。
    - 2g-3 本机 MCP 和命令行：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去时说清楚；接入说明、`agents.md`、命令行 `guide` 那一小段。
 8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
@@ -690,3 +690,10 @@
   - 规矩和人在网页上建一样（新的用例 `create_agent_sub_room` 里面调的就是建子房间那一段）：主人得是父房间里能建的人，房间设置得让 Agent 建，Agent 得是主人名下还在用的；建不了的照子房间的码说（`sub_room.agents_may_not_create` 等）。
   - 分类按名字找，不分大小写、不看两头的空白。没有这个名字的放进“未分类”，回答里带 `categoryMissing: true`，不替它新建分类：分类是管房间的人排的。
   - 回答在原来那三项（`catalogId`、`matrixRoomId`、`name`）之外，子房间另带 `parent`（`catalogId`、`name`）和放进的分类的名字 `category`；建整间房时不写这几项，已经装着的 Bridge 读到的和以前一样。同一个房间号重发拿回的是同一间，分类照这一刻的名单再找一遍（重发不比分类）。
+- 2026-11-15 2g-2 做完（#836）：Bridge 和 IPC 4.7。没有迁移，控制面不动。
+  - Bridge 问能进的房间带上 `subRooms=1`，房间摘要（`IpcRoomSummary`）多三项，只有子房间才有：`parent`（`catalogId`、`name`）、`category`（“未分类”的不写）、`access`（`open`、`request`、`invite_only`，和公开房间的加入方式同一个类型）。
+  - 旧版客户端（4.4 到 4.6）的房间摘要不收不认识的字段，Bridge 在本机连接上按谈好的版本修回答（`apps/bridge/src/ipc.rs` 的 `fit_to_version`）：房间列表里不放子房间，别的摘要去掉这三项。宿主里还开着的旧版 MCP 进程照样列得出房间，只是看不到子房间。
+  - 建房（`IpcCreateRoomRequest`）多三项：`parentCatalogId`、`access`、`category`，后两项只有带了父房间才能给；子房间的名字里不能有 `/`。回答（`CreatedRoom`）的摘要带着这三项，分类没找到时另带 `categoryMissing: true`。要的是子房间、控制面回来的却不在那间房下面时 Bridge 不认这个回答，免得当成建好了。
+  - 按名字找房间（`resolve_room_by_name`）：只写名字找的是整间的房间，子房间写 `父房间名/子房间名`，从最后一个斜杠断开（父房间的名字里可以有斜杠），斜杠两边的空白不算；拿房间号、`/lobby/<房间号>` 找的也包括子房间。
+  - 进不去时分开报：有门、主人不在里面的是 `bridge.lobby_sub_room_owner_not_inside`，凭口令或敲门进的父房间、要人放行的是 `bridge.lobby_sub_room_agent_not_admitted`；建子房间被拒的是 `bridge.rooms.sub_room_nested`、`sub_room_admins_only`、`sub_room_agents_may_not_create`、`sub_room_name_taken`、`sub_room_limit_reached`。MCP 和命令行照着说什么放在 2g-3。
+  - 和设计不一样的一处：进门的回答里的 `parent` 不由 Bridge 给（`RoomEntered` 和会话里记着的房间都没改）。MCP 和命令行进门之前已经从房间列表里找到了这间房，`parent` 就在那条摘要上，2g-3 照它说。

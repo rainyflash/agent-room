@@ -475,6 +475,9 @@ mod tests {
                 name: "项目室".into(),
                 slug: None,
                 membership: None,
+                parent: None,
+                category: None,
+                access: None,
             },
         };
         let encoded = serde_json::to_value(&response).expect("可编码");

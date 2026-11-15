@@ -9,9 +9,12 @@ use std::fmt;
 use agent_room_application::ports::PortFuture;
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId},
+    room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
+
+use crate::room_directory::ParentRoom;
 
 /// 建好的房间：拿房间 ID 照常进去。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +22,19 @@ pub struct CreatedRoom {
     pub catalog_id: RoomCatalogId,
     pub matrix_room_id: MatrixRoomReference,
     pub name: String,
+    /// 建的是子房间时：它在哪间房下面、放进的分类的名字（“未分类”的没有），和要的分类是不是没找到
+    /// （没找到就放进“未分类”，不替它新建）。
+    pub parent: Option<ParentRoom>,
+    pub category: Option<String>,
+    pub category_missing: bool,
+}
+
+/// 建子房间（`specs/redesign/sub-rooms.md` 第 2g 步）：在哪间房下面、哪种门、放进哪个分类（名字）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomPlacement {
+    pub parent: RoomCatalogId,
+    pub access: RoomJoinMode,
+    pub category: Option<String>,
 }
 
 /// 房间的口令，给人看的形式 `XXXX-XXXX-XXXX`。调试输出里不出现口令本身。
@@ -108,6 +124,13 @@ pub enum RoomManagementFailureKind {
     NotInRoom,
     NotBanned,
     BannedByPerson,
+    /// 下面几种只有建子房间时才有（`sub_room.*`）：父房间本身是子房间、房主定了只有房主和管理员能建、
+    /// 房主不让 Agent 建、同名、子房间到上限了。
+    SubRoomNested,
+    SubRoomAdminsOnly,
+    SubRoomAgentsMayNotCreate,
+    SubRoomNameTaken,
+    SubRoomLimitReached,
     /// 控制面还没有这些接口。
     Unsupported,
     NotAuthorized,
@@ -135,12 +158,13 @@ pub type RoomManagementResult<T> = Result<T, RoomManagementFailure>;
 
 pub trait ControlPlaneRoomManagementGateway: Send + Sync {
     /// 替账号建私人房间，记下是哪个 Agent 建的；房主照旧是这个账号。同一个 `catalog_id` 重试
-    /// 拿回同一个房间。
+    /// 拿回同一个房间。带上 `sub_room` 建的是那间房下面的子房间。
     fn create<'a>(
         &'a self,
         catalog_id: RoomCatalogId,
         name: &'a str,
         agent_id: AgentId,
+        sub_room: Option<&'a SubRoomPlacement>,
     ) -> PortFuture<'a, RoomManagementResult<CreatedRoom>>;
 
     /// 房间现在的口令。只看，不生成。

@@ -11,12 +11,13 @@ use agent_room_application::{
 use agent_room_bridge_core::{
     room_management::{
         ControlPlaneRoomManagementGateway, RoomCodeState, RoomManagementFailureKind,
-        RoomModerationRequest,
+        RoomModerationRequest, SubRoomPlacement,
     },
     session::{AuthorizedControlPlaneRequest, BridgeSessionResult, ControlPlaneRequestAuthorizer},
 };
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, DeviceId, PrincipalId, RoomCatalogId},
+    room_listing::RoomJoinMode,
     time::UtcMillis,
 };
 use agent_room_identity_adapter::SecureSecretFactory;
@@ -157,7 +158,7 @@ async fn 建房拿房间_id_当幂等键_签名覆盖方法路径和正文() {
     let gateway = gateway(spawn(control_plane.clone()).await, authorizer.clone());
 
     let created = gateway
-        .create(catalog_id(), "周会", agent_id())
+        .create(catalog_id(), "周会", agent_id(), None)
         .await
         .expect("建房");
 
@@ -183,6 +184,134 @@ async fn 建房拿房间_id_当幂等键_签名覆盖方法路径和正文() {
             body.clone()
         )]
     );
+}
+
+const PARENT_ID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e40";
+
+fn placement(category: Option<&str>) -> SubRoomPlacement {
+    SubRoomPlacement {
+        parent: RoomCatalogId::from_uuid(Uuid::parse_str(PARENT_ID).unwrap()),
+        access: RoomJoinMode::InviteOnly,
+        category: category.map(str::to_owned),
+    }
+}
+
+#[tokio::test]
+async fn 建子房间多带父房间_门和分类的名字_回答里认得出放进了哪儿() {
+    let control_plane = 假控制面::answering([(
+        StatusCode::CREATED,
+        json!({
+            "catalogId": CATALOG_ID,
+            "matrixRoomId": "!release:matrix.test",
+            "name": "Release",
+            "parent": {"catalogId": PARENT_ID, "name": "Project"},
+            "categoryMissing": true,
+        }),
+    )]);
+    let gateway = gateway(
+        spawn(control_plane.clone()).await,
+        Arc::new(测试请求授权器::default()),
+    );
+    let wanted = placement(Some("Design"));
+
+    let created = gateway
+        .create(catalog_id(), "Release", agent_id(), Some(&wanted))
+        .await
+        .expect("建子房间");
+
+    let parent = created.parent.expect("在父房间下面");
+    assert_eq!(parent.catalog_id, wanted.parent);
+    assert_eq!(parent.name, "Project");
+    assert_eq!(created.category, None);
+    assert!(created.category_missing);
+    let received = control_plane.received();
+    assert_eq!(
+        serde_json::from_str::<Value>(&received[0].3).expect("正文是 JSON"),
+        json!({
+            "name": "Release",
+            "agentId": AGENT_ID,
+            "parentRoomId": PARENT_ID,
+            "access": "invite_only",
+            "category": "Design",
+        })
+    );
+}
+
+#[tokio::test]
+async fn 要子房间却没放进那间房下面的回答不认_建子房间被拒按原因分开报() {
+    let whole = json!({
+        "catalogId": CATALOG_ID,
+        "matrixRoomId": "!release:matrix.test",
+        "name": "Release",
+    });
+    let elsewhere = json!({
+        "catalogId": CATALOG_ID,
+        "matrixRoomId": "!release:matrix.test",
+        "name": "Release",
+        "parent": {"catalogId": CATALOG_ID, "name": "Other"},
+    });
+    for answer in [whole, elsewhere] {
+        let control_plane = 假控制面::answering([(StatusCode::CREATED, answer)]);
+        let failure = gateway(
+            spawn(control_plane).await,
+            Arc::new(测试请求授权器::default()),
+        )
+        .create(catalog_id(), "Release", agent_id(), Some(&placement(None)))
+        .await
+        .expect_err("没放进要的那间房下面");
+        assert_eq!(
+            failure.kind(),
+            RoomManagementFailureKind::InvalidControlPlaneResponse
+        );
+    }
+
+    for (status, code, expected) in [
+        (
+            StatusCode::CONFLICT,
+            "sub_room.nested",
+            RoomManagementFailureKind::SubRoomNested,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "sub_room.admins_only",
+            RoomManagementFailureKind::SubRoomAdminsOnly,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            "sub_room.agents_may_not_create",
+            RoomManagementFailureKind::SubRoomAgentsMayNotCreate,
+        ),
+        (
+            StatusCode::CONFLICT,
+            "sub_room.name_taken",
+            RoomManagementFailureKind::SubRoomNameTaken,
+        ),
+        (
+            StatusCode::CONFLICT,
+            "sub_room.limit_reached",
+            RoomManagementFailureKind::SubRoomLimitReached,
+        ),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "sub_room.rate_limited",
+            RoomManagementFailureKind::RateLimited,
+        ),
+        (
+            StatusCode::CONFLICT,
+            "sub_room.not_in_parent",
+            RoomManagementFailureKind::Forbidden,
+        ),
+    ] {
+        let control_plane = 假控制面::answering([(status, json!({"code": code}))]);
+        let failure = gateway(
+            spawn(control_plane).await,
+            Arc::new(测试请求授权器::default()),
+        )
+        .create(catalog_id(), "Release", agent_id(), Some(&placement(None)))
+        .await
+        .expect_err("控制面拒绝");
+        assert_eq!(failure.kind(), expected, "{code}");
+    }
 }
 
 #[tokio::test]
@@ -392,7 +521,7 @@ async fn 错误码按点号后面那段认_没有这些接口的旧控制面报�
         Arc::new(测试请求授权器::default()),
     );
     assert_eq!(
-        old.create(catalog_id(), "周会", agent_id())
+        old.create(catalog_id(), "周会", agent_id(), None)
             .await
             .expect_err("旧控制面没有这些接口")
             .kind(),
@@ -418,7 +547,7 @@ async fn 回答不合规就不交给调用方() {
             spawn(control_plane).await,
             Arc::new(测试请求授权器::default()),
         )
-        .create(catalog_id(), "周会", agent_id())
+        .create(catalog_id(), "周会", agent_id(), None)
         .await
         .expect_err("建房回答不合规");
         assert_eq!(

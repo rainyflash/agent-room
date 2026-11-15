@@ -8,17 +8,21 @@ use agent_room_bridge_core::{
     onboarding::HostAgentRegistrationGateway,
     room_management::{
         ControlPlaneRoomManagementGateway, CreatedRoom, RoomCodeState, RoomKnock,
-        RoomManagementFailure, RoomManagementFailureKind,
+        RoomManagementFailure, RoomManagementFailureKind, SubRoomPlacement,
     },
 };
 use agent_room_bridge_ipc::{
-    IpcCreateRoomRequest, IpcErrorCategory, IpcMethod, IpcResponse, IpcRoomAccess,
-    IpcRoomAccessAction, IpcRoomCode, IpcRoomKind, IpcRoomKnock, IpcRoomSummary,
+    IpcCreateRoomRequest, IpcErrorCategory, IpcMethod, IpcParentRoom, IpcPublicRoomJoinMode,
+    IpcResponse, IpcRoomAccess, IpcRoomAccessAction, IpcRoomCode, IpcRoomKind, IpcRoomKnock,
+    IpcRoomSummary,
 };
-use agent_room_domain::ids::{AgentCreationRequestId, AgentId, PrincipalId, RoomCatalogId};
+use agent_room_domain::{
+    ids::{AgentCreationRequestId, AgentId, PrincipalId, RoomCatalogId},
+    room_listing::RoomJoinMode,
+};
 use uuid::Uuid;
 
-use super::registration_failure;
+use super::{ipc_join_mode, registration_failure};
 use crate::ipc::BridgeIpcDispatchFailure;
 
 pub(crate) struct RoomManagementAccess {
@@ -47,6 +51,17 @@ impl RoomManagementAccess {
         let key = parse(&request.session_key, "bridge.host_session.key_invalid")?;
         let catalog_id =
             RoomCatalogId::from_uuid(parse(&request.catalog_id, "bridge.ipc.room_invalid")?);
+        let sub_room = request
+            .parent_catalog_id
+            .as_deref()
+            .map(|parent| {
+                Ok::<_, BridgeIpcDispatchFailure>(SubRoomPlacement {
+                    parent: RoomCatalogId::from_uuid(parse(parent, "bridge.ipc.room_invalid")?),
+                    access: request.access.map_or(RoomJoinMode::Open, join_mode),
+                    category: request.category.clone(),
+                })
+            })
+            .transpose()?;
         // 与开会话同一个会话键、同一个名字：控制面按会话键幂等，这里建出的就是随后开会话的人物。
         let agent = self
             .host_agents
@@ -57,10 +72,11 @@ impl RoomManagementAccess {
             .await
             .map_err(|failure| registration_failure(failure.kind()))?;
         self.gateway
-            .create(catalog_id, &request.name, agent.agent_id)
+            .create(catalog_id, &request.name, agent.agent_id, sub_room.as_ref())
             .await
             .map(|room| IpcResponse::CreatedRoom {
-                room: created_summary(room),
+                category_missing: room.category_missing,
+                room: created_summary(room, sub_room.as_ref()),
             })
             .map_err(room_failure)
     }
@@ -162,7 +178,16 @@ fn parse(value: &str, code: &'static str) -> Result<Uuid, BridgeIpcDispatchFailu
         .map_err(|_| BridgeIpcDispatchFailure::new(code, IpcErrorCategory::Validation, false))
 }
 
-fn created_summary(room: CreatedRoom) -> IpcRoomSummary {
+const fn join_mode(mode: IpcPublicRoomJoinMode) -> RoomJoinMode {
+    match mode {
+        IpcPublicRoomJoinMode::Open => RoomJoinMode::Open,
+        IpcPublicRoomJoinMode::Request => RoomJoinMode::Request,
+        IpcPublicRoomJoinMode::InviteOnly => RoomJoinMode::InviteOnly,
+    }
+}
+
+/// 子房间另带它在哪间房下面、放进的分类和门（门照建的时候要的）。
+fn created_summary(room: CreatedRoom, sub_room: Option<&SubRoomPlacement>) -> IpcRoomSummary {
     IpcRoomSummary {
         kind: IpcRoomKind::PrivateRoom,
         catalog_id: room.catalog_id.to_string(),
@@ -170,6 +195,12 @@ fn created_summary(room: CreatedRoom) -> IpcRoomSummary {
         name: room.name,
         slug: None,
         membership: None,
+        parent: room.parent.map(|parent| IpcParentRoom {
+            catalog_id: parent.catalog_id.to_string(),
+            name: parent.name,
+        }),
+        category: room.category,
+        access: sub_room.map(|placement| ipc_join_mode(placement.access)),
     }
 }
 
@@ -179,6 +210,33 @@ fn knock_summary(knock: RoomKnock) -> IpcRoomKnock {
         display_name: knock.display_name,
         knocked_at_unix_ms: knock.knocked_at.value(),
         expires_at_unix_ms: knock.expires_at.value(),
+    }
+}
+
+/// 建子房间被拒的几种，照原因分开说。
+const fn sub_room_creation_failure(
+    kind: RoomManagementFailureKind,
+) -> (&'static str, IpcErrorCategory) {
+    match kind {
+        RoomManagementFailureKind::SubRoomNested => {
+            ("bridge.rooms.sub_room_nested", IpcErrorCategory::Validation)
+        }
+        RoomManagementFailureKind::SubRoomAdminsOnly => (
+            "bridge.rooms.sub_room_admins_only",
+            IpcErrorCategory::Authorization,
+        ),
+        RoomManagementFailureKind::SubRoomAgentsMayNotCreate => (
+            "bridge.rooms.sub_room_agents_may_not_create",
+            IpcErrorCategory::Authorization,
+        ),
+        RoomManagementFailureKind::SubRoomNameTaken => (
+            "bridge.rooms.sub_room_name_taken",
+            IpcErrorCategory::Conflict,
+        ),
+        _ => (
+            "bridge.rooms.sub_room_limit_reached",
+            IpcErrorCategory::Conflict,
+        ),
     }
 }
 
@@ -244,6 +302,14 @@ pub(super) fn room_failure(failure: RoomManagementFailure) -> BridgeIpcDispatchF
             IpcErrorCategory::Authorization,
             false,
         ),
+        kind @ (RoomManagementFailureKind::SubRoomNested
+        | RoomManagementFailureKind::SubRoomAdminsOnly
+        | RoomManagementFailureKind::SubRoomAgentsMayNotCreate
+        | RoomManagementFailureKind::SubRoomNameTaken
+        | RoomManagementFailureKind::SubRoomLimitReached) => {
+            let (code, category) = sub_room_creation_failure(kind);
+            (code, category, false)
+        }
         RoomManagementFailureKind::Unsupported => (
             "bridge.rooms.unsupported",
             IpcErrorCategory::IncompatibleVersion,

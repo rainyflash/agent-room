@@ -825,6 +825,9 @@ fn private_room(catalog_id: RoomCatalogId, membership: AccessibleRoomMembership)
         name: "listed".to_owned(),
         slug: None,
         membership: Some(membership),
+        parent: None,
+        category: None,
+        access: None,
     }
 }
 
@@ -894,6 +897,9 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
                     name: "Lobby".to_owned(),
                     slug: Some("lobby".to_owned()),
                     membership: None,
+                    parent: None,
+                    category: None,
+                    access: None,
                 },
                 AccessibleRoom {
                     kind: AccessibleRoomKind::PrivateRoom,
@@ -907,6 +913,9 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
                     name: "game dev".to_owned(),
                     slug: None,
                     membership: Some(AccessibleRoomMembership::Joined),
+                    parent: None,
+                    category: None,
+                    access: None,
                 },
             ],
             ..DirectoryFake::default()

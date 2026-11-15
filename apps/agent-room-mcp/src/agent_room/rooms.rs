@@ -277,9 +277,12 @@ impl AgentRoomMcpServer {
             name,
             session_key: identity.session_key.clone(),
             display_name: identity.display_name.clone(),
+            parent_catalog_id: None,
+            access: None,
+            category: None,
         };
         match self.backend.invoke(IpcMethod::CreateRoom(request)).await {
-            Ok(IpcResponse::CreatedRoom { room }) => Ok(room),
+            Ok(IpcResponse::CreatedRoom { room, .. }) => Ok(room),
             Ok(response) => Err(response_mismatch_result(
                 ExpectedResponse::CreatedRoom,
                 &response,
@@ -436,6 +439,9 @@ fn check_creation(name: &str, display_name: Option<&str>) -> Result<(), CallTool
         name: name.to_owned(),
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: display_name.map_or_else(default_display_name, str::to_owned),
+        parent_catalog_id: None,
+        access: None,
+        category: None,
     };
     IpcMethod::CreateRoom(probe).validate().map_err(|error| {
         validation_failure_result(

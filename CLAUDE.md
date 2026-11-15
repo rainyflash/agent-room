@@ -154,6 +154,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - **真实 Synapse 测试里的加密房间。** 参与者要用全新的受管账户：种子账户每次登录都会得到一台缺私钥的新设备。
 - **去掉 IPC 方法或授权范围时，Bridge 那边要留着。** MCP 和命令行在握手时带上要用的授权范围（`IpcScopeName`，报文里是名字）。升级以后，宿主里还在跑的旧版 MCP 进程照旧带着旧的范围握手，Bridge 不认这个名字就整个连不上，所有工具都失败。所以去掉工具只从新版客户端里去掉，Bridge 照旧认旧的范围和请求，收下以后照收不发；3c 去掉 `agent_room_publish_status` 就是这样做的（`IpcMethod::PublishStatus`）。
 - **升 IPC 版本时 Bridge 要同时认上一版。** 升级以后宿主里还开着的旧版 MCP 进程照旧报旧版本握手，Bridge 只认新版本的话，它们要等宿主重启才连得上。4.5（`EnterRoom`、`LeaveRoom`，#459）起 Bridge 同时接受 4.4（`apps/bridge/src/ipc.rs` 的版本列表）；新版客户端只报新版本，碰上旧 Bridge 握手时就说版本不兼容。
+  - 回答多了字段也一样：IPC 的结构都不收不认识的字段，旧版客户端拿到新字段整个回答就读不出来。4.7（子房间）起 Bridge 按这条连接谈好的版本修回答（`fit_to_version`）：给 4.6 及更早的房间列表里不放子房间、摘要去掉子房间那三项。以后给回答加字段也放进这里。
 - **聊天消息的标题和摘要别直接截正文。** 截出来会带换行，IPC 校验不收控制字符，多行消息就发不出去（`bridge.ipc.message_title_invalid`）。一律用 `IpcSendMessageRequest::chat_title_and_summary`，它先把正文压成一行。消息正文收换行和制表符，不收回车；命令行发之前把 CRLF 统一成换行。
 - **交给宿主读的文件，写完就关掉句柄**（#389）。Windows 上只要有人开着可写句柄，.NET 的 `File.ReadAllText` 就打不开（“文件正由另一进程使用”），因为它只许别人一起读；Codex 读附件用的正是它。Bridge 的附件缓存和 doctor 的验证码附件都只留 `TempPath`。新加交给宿主的文件也这样做，别让 `NamedTempFile` 一直开着。
 - **本机 Bridge 和网络 Agent 网关共用 matrix-adapter 打开客户端的那段**（`restore_with_handoffs` → `handoff_connection_from_client`），挂在那里的功能网络 Agent 也有。Alpha 56 的“找回加入前的消息”就这样让网络 Agent 也请别人重发加入前的房间密钥，服务器因此读得到加入前的消息；#316 起网关用 `without_room_key_requests()` 关掉。只给本机的功能要加配置开关，网关那边关掉。
@@ -407,6 +408,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2f-2b-1 步（#833）：父房间里移出 Agent 成员时子房间里跟着移出。迁移 `202611150001` 给任务表加了 `agent_id`，“这间子房间自己的事”的唯一索引改成 `principal_id`、`agent_id` 都空，往里排的冲突条件要写全（`WHERE principal_id IS NULL AND agent_id IS NULL`），不然报 42P10。别拆的：存储的 `remove_agent` 一个事务里连子房间一起改、排上；`admit_agent` 写子房间时锁住父房间那一条再看（`FOR SHARE`），挡住“刚核对完是父房间的 Agent 成员、那边就移出了”；后台对 Agent 只踢、不设发言级别（归档的房间设一次就解开了）。Agent 自己离开父房间时子房间不跟着。
   - 子房间第 2f-2b-2 步（#834）：父房间的禁言连只有他名下 Agent 成员在的子房间一起压（`sub_room_standings`）；凭口令进了父房间的本机 Agent 主人带不了时自己进没有门的子房间（`SubRoomAgentMemberSeating`，进门服务的 `sub_room_agent_members`），有门的回 403 `sub_room.agent_not_admitted`。别拆的：先看主人带不带得了（2f-1a），带不了才看它自己；主人在这一间里被封禁着的不让它自己进。
   - 子房间第 2g-1 步（#835）：本机 Agent 替主人建子房间走设备签名的 `POST /devices/current/private-rooms`，带上 `parentRoomId`，另收 `access` 和分类的名字 `category`（只有建子房间时能带）。分类没有就放进“未分类”、回 `categoryMissing: true`，不替它建分类。回答里子房间才多 `parent`、`category`，建整间房的回答别动：已经装着的 Bridge 认的是原来那三项。
+  - 子房间第 2g-2 步（#836）：IPC 4.7，Bridge 列房间带子房间、建子房间。按名字找子房间写 `父房间名/子房间名`（从最后一个斜杠断开），只写名字找的是整间的房间：子房间常和别处同名，别改成名字也认子房间。进门的回答不带 `parent`，MCP 和命令行照它们找到的那条摘要说。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

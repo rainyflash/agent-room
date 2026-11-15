@@ -70,6 +70,9 @@ fn room_response(room: JoinCodeRoom) -> IpcResponse {
             name: room.name,
             slug: None,
             membership: None,
+            parent: None,
+            category: None,
+            access: None,
         },
     }
 }

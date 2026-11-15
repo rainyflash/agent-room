@@ -6,7 +6,12 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use agent_room_domain::{
+    sub_room_categories::validate_sub_room_category_name, sub_rooms::validate_sub_room_name,
+};
+
 use crate::{
+    IpcPublicRoomJoinMode,
     host_sessions::{validate_display_name, validate_session_id},
     tools::{IpcMethodValidationFailure, failure, validate_uuid_v7},
 };
@@ -16,6 +21,10 @@ const ROOM_NAME_CHARACTERS: usize = 128;
 
 /// 建私人房间（`CreateRoom`，不要会话）。Bridge 先按会话键建好（或找回）这个人物，拿它当建房的
 /// Agent；随后照常用返回的房间开会话。
+///
+/// 带上 `parentCatalogId` 建的是那间房下面的子房间（4.7 起，`specs/redesign/sub-rooms.md` 第 2g 步），
+/// 还能带门和分类的名字；这两项只有建子房间时能带。子房间的名字里不能有 `/`：Agent 按
+/// `父房间名/子房间名` 找它。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IpcCreateRoomRequest {
@@ -24,6 +33,15 @@ pub struct IpcCreateRoomRequest {
     pub name: String,
     pub session_key: String,
     pub display_name: String,
+    /// 在哪间房下面（父房间的目录 ID）。不给是建一间整的房间。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_catalog_id: Option<String>,
+    /// 子房间的门，不给是没有门。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<IpcPublicRoomJoinMode>,
+    /// 放进哪个分类（名字）。父房间里没有这个分类就放进“未分类”，不替它新建。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
 }
 
 impl IpcCreateRoomRequest {
@@ -31,7 +49,22 @@ impl IpcCreateRoomRequest {
         validate_uuid_v7(&self.catalog_id, "bridge.ipc.room_invalid")?;
         validate_room_name(&self.name)?;
         validate_session_id(&self.session_key)?;
-        validate_display_name(&self.display_name)
+        validate_display_name(&self.display_name)?;
+        let Some(parent) = &self.parent_catalog_id else {
+            return if self.access.is_none() && self.category.is_none() {
+                Ok(())
+            } else {
+                Err(failure("bridge.ipc.sub_room_options_invalid"))
+            };
+        };
+        validate_uuid_v7(parent, "bridge.ipc.room_invalid")?;
+        validate_sub_room_name(&self.name).map_err(|_| failure("bridge.ipc.room_name_invalid"))?;
+        match &self.category {
+            Some(category) if validate_sub_room_category_name(category).is_err() => {
+                Err(failure("bridge.ipc.sub_room_category_invalid"))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -218,7 +251,102 @@ mod tests {
             name: "周报".into(),
             session_key: Uuid::now_v7().to_string(),
             display_name: "Scout".into(),
+            parent_catalog_id: None,
+            access: None,
+            category: None,
         }
+    }
+
+    fn sub_room_request() -> IpcCreateRoomRequest {
+        IpcCreateRoomRequest {
+            parent_catalog_id: Some(Uuid::now_v7().to_string()),
+            access: Some(IpcPublicRoomJoinMode::Request),
+            category: Some("Release".into()),
+            ..create_request()
+        }
+    }
+
+    #[test]
+    fn 建子房间带父房间_门和分类只有建子房间时能带() {
+        let request = sub_room_request();
+        let method = IpcMethod::CreateRoom(request.clone());
+        assert!(method.validate().is_ok());
+        let encoded = serde_json::to_value(&method).expect("可编码");
+        assert_eq!(
+            encoded["create_room"]["parentCatalogId"],
+            request.parent_catalog_id.clone().expect("有父房间")
+        );
+        assert_eq!(encoded["create_room"]["access"], "request");
+        assert_eq!(encoded["create_room"]["category"], "Release");
+        let whole = serde_json::to_value(IpcMethod::CreateRoom(create_request())).expect("可编码");
+        for field in ["parentCatalogId", "access", "category"] {
+            assert!(
+                whole["create_room"].get(field).is_none(),
+                "建整间的房间不写 {field}：旧 Bridge 不收不认识的字段"
+            );
+        }
+
+        let cases = [
+            (
+                IpcCreateRoomRequest {
+                    access: Some(IpcPublicRoomJoinMode::Open),
+                    ..create_request()
+                },
+                "bridge.ipc.sub_room_options_invalid",
+            ),
+            (
+                IpcCreateRoomRequest {
+                    category: Some("Release".into()),
+                    ..create_request()
+                },
+                "bridge.ipc.sub_room_options_invalid",
+            ),
+            (
+                IpcCreateRoomRequest {
+                    parent_catalog_id: Some(NOT_V7.into()),
+                    ..sub_room_request()
+                },
+                "bridge.ipc.room_invalid",
+            ),
+            (
+                IpcCreateRoomRequest {
+                    name: "周报/草稿".into(),
+                    ..sub_room_request()
+                },
+                "bridge.ipc.room_name_invalid",
+            ),
+            (
+                IpcCreateRoomRequest {
+                    category: Some(" Release".into()),
+                    ..sub_room_request()
+                },
+                "bridge.ipc.sub_room_category_invalid",
+            ),
+            (
+                IpcCreateRoomRequest {
+                    category: Some(String::new()),
+                    ..sub_room_request()
+                },
+                "bridge.ipc.sub_room_category_invalid",
+            ),
+        ];
+        for (request, code) in cases {
+            assert_eq!(
+                IpcMethod::CreateRoom(request)
+                    .validate()
+                    .expect_err("不合规")
+                    .code(),
+                code
+            );
+        }
+        let whole_with_slash = IpcCreateRoomRequest {
+            name: "Q3/Q4".into(),
+            ..create_request()
+        };
+        assert!(
+            IpcMethod::CreateRoom(whole_with_slash).validate().is_ok(),
+            "整间的房间名字里可以有斜杠"
+        );
     }
 
     fn with_session(method: IpcMethod) -> IpcMethod {

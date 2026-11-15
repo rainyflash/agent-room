@@ -124,9 +124,9 @@ impl ReqwestControlPlaneLobbyEntryGateway {
             .await
             .map_err(|()| response_body_failure(status))?;
         if !status.is_success() {
-            let category = serde_json::from_slice::<ErrorCategoryResponse>(&body)
+            let category = serde_json::from_slice::<ErrorEnvelope>(&body)
                 .ok()
-                .map(|envelope| envelope.category);
+                .and_then(|envelope| envelope.category);
             return Err(status_failure(status, category.as_deref()));
         }
         serde_json::from_slice::<LeaveResponse>(&body)
@@ -192,9 +192,13 @@ enum LobbyEntryResponse {
     },
 }
 
+/// 控制面错误回答里用得上的两样：类别（认“结果未知”）和错误码（认子房间的门）。
 #[derive(Deserialize)]
-struct ErrorCategoryResponse {
-    category: String,
+struct ErrorEnvelope {
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
 }
 
 async fn decode_response(
@@ -205,10 +209,11 @@ async fn decode_response(
         .await
         .map_err(|()| response_body_failure(status))?;
     if !status.is_success() {
-        let category = serde_json::from_slice::<ErrorCategoryResponse>(&body)
-            .ok()
-            .map(|envelope| envelope.category);
-        return Err(status_failure(status, category.as_deref()));
+        let envelope = serde_json::from_slice::<ErrorEnvelope>(&body).ok();
+        let (category, code) =
+            envelope.map_or((None, None), |envelope| (envelope.category, envelope.code));
+        return Err(door_failure(status, code.as_deref())
+            .unwrap_or_else(|| status_failure(status, category.as_deref())));
     }
     let response = serde_json::from_slice::<LobbyEntryResponse>(&body)
         .map_err(|_| failure(ControlPlaneLobbyEntryFailureKind::UnknownCommit))?;
@@ -278,6 +283,20 @@ fn response_body_failure(status: StatusCode) -> ControlPlaneLobbyEntryFailure {
     } else {
         status_failure(status, None)
     }
+}
+
+/// 子房间的门挡住了（`specs/redesign/sub-rooms.md` 第 2f 步）：分开报，Agent 好说清是要主人先申请，
+/// 还是要等管这一间的人放它进来。
+fn door_failure(status: StatusCode, code: Option<&str>) -> Option<ControlPlaneLobbyEntryFailure> {
+    if status != StatusCode::FORBIDDEN {
+        return None;
+    }
+    let kind = match code? {
+        "sub_room.owner_not_inside" => ControlPlaneLobbyEntryFailureKind::SubRoomOwnerNotInside,
+        "sub_room.agent_not_admitted" => ControlPlaneLobbyEntryFailureKind::SubRoomAgentNotAdmitted,
+        _ => return None,
+    };
+    Some(failure(kind))
 }
 
 fn status_failure(status: StatusCode, category: Option<&str>) -> ControlPlaneLobbyEntryFailure {
@@ -517,6 +536,42 @@ mod tests {
             failure.kind(),
             AgentLobbySessionFailureKind::EntryOutcomeUnknown
         );
+    }
+
+    #[tokio::test]
+    async fn 子房间的门挡住了分开报_要主人先进和要人放行不混在一起() {
+        for (code, expected) in [
+            (
+                "sub_room.owner_not_inside",
+                AgentLobbySessionFailureKind::SubRoomOwnerNotInside,
+            ),
+            (
+                "sub_room.agent_not_admitted",
+                AgentLobbySessionFailureKind::SubRoomAgentNotAdmitted,
+            ),
+            (
+                "lobby.room_refused",
+                AgentLobbySessionFailureKind::Forbidden,
+            ),
+        ] {
+            let refused = Router::new().route(
+                "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
+                post(move || async move {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({ "category": "authorization", "code": code })),
+                    )
+                }),
+            );
+            let failure = service(
+                spawn_server(refused).await,
+                Arc::new(测试请求授权器::default()),
+            )
+            .enter(&identity(), &config())
+            .await
+            .expect_err("控制面拒绝");
+            assert_eq!(failure.kind(), expected, "{code}");
+        }
     }
 
     #[tokio::test]

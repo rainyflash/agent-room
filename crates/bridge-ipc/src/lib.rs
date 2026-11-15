@@ -68,10 +68,11 @@ pub use tools::{
     IpcHandoffStatus, IpcHandoffSubmission, IpcHumanHandoffSource, IpcListHandoffsRequest,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcMessagesAroundRequest, IpcMethod, IpcMethodValidationFailure, IpcOpenContentRequest,
-    IpcOpenedAttachment, IpcOpenedContent, IpcOwnerSummary, IpcPendingTargetedHandoff,
-    IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus, IpcReplyExcerpt, IpcResponse,
-    IpcRoomHistoryRequest, IpcRoomKind, IpcRoomMembership, IpcRoomSummary, IpcSelfSummary,
-    IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState, IpcTimelineGap, IpcWorkStatus,
+    IpcOpenedAttachment, IpcOpenedContent, IpcOwnerSummary, IpcParentRoom,
+    IpcPendingTargetedHandoff, IpcPresenceSummary, IpcPublishStatusRequest, IpcPublishedStatus,
+    IpcReplyExcerpt, IpcResponse, IpcRoomHistoryRequest, IpcRoomKind, IpcRoomMembership,
+    IpcRoomSummary, IpcSelfSummary, IpcSendMessageRequest, IpcSentMessage, IpcSubmissionState,
+    IpcTimelineGap, IpcWorkStatus,
 };
 pub use wire::{
     IpcCaller, IpcErrorCategory, IpcFrame, IpcScopeName, IpcVersion, client_offer_from_frame,

@@ -184,6 +184,11 @@ pub enum ControlPlaneLobbyEntryFailureKind {
     InvalidRequest,
     AuthenticationRejected,
     Forbidden,
+    /// 子房间有门，主人还不在里面：要主人先申请或者被请进去（`sub_room.owner_not_inside`）。
+    SubRoomOwnerNotInside,
+    /// 子房间有门，Agent 是凭口令或敲门进的父房间：要管得了这一间的人按名字放它进来
+    /// （`sub_room.agent_not_admitted`）。
+    SubRoomAgentNotAdmitted,
     NotFound,
     Conflict,
     Unavailable,
@@ -299,6 +304,9 @@ pub enum AgentLobbySessionFailureKind {
     InvalidRequest,
     NotAuthorized,
     Forbidden,
+    /// 子房间有门，进不去：见 [`ControlPlaneLobbyEntryFailureKind`] 里的同名两种。
+    SubRoomOwnerNotInside,
+    SubRoomAgentNotAdmitted,
     NotFound,
     Conflict,
     ControlPlaneUnavailable,
@@ -337,6 +345,12 @@ fn map_control_plane_failure(
             AgentLobbySessionFailureKind::NotAuthorized
         }
         ControlPlaneLobbyEntryFailureKind::Forbidden => AgentLobbySessionFailureKind::Forbidden,
+        ControlPlaneLobbyEntryFailureKind::SubRoomOwnerNotInside => {
+            AgentLobbySessionFailureKind::SubRoomOwnerNotInside
+        }
+        ControlPlaneLobbyEntryFailureKind::SubRoomAgentNotAdmitted => {
+            AgentLobbySessionFailureKind::SubRoomAgentNotAdmitted
+        }
         ControlPlaneLobbyEntryFailureKind::NotFound => AgentLobbySessionFailureKind::NotFound,
         ControlPlaneLobbyEntryFailureKind::Conflict => AgentLobbySessionFailureKind::Conflict,
         ControlPlaneLobbyEntryFailureKind::Unavailable => {

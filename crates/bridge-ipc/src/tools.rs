@@ -858,6 +858,13 @@ pub enum IpcResponse {
     /// 建好的私人房间，建房的人物已在里面。
     CreatedRoom {
         room: IpcRoomSummary,
+        /// 建子房间时要了分类，父房间里却没有叫这个名字的：放进了“未分类”（4.7 起）。
+        #[serde(
+            rename = "categoryMissing",
+            default,
+            skip_serializing_if = "std::ops::Not::not"
+        )]
+        category_missing: bool,
     },
     /// 房间怎么进：口令和等着的敲门。
     RoomAccess {
@@ -999,6 +1006,34 @@ pub struct IpcRoomSummary {
     pub slug: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub membership: Option<IpcRoomMembership>,
+    /// 下面三项只有子房间才有（4.7 起，`specs/redesign/sub-rooms.md` 第 2g 步）：它在哪间房下面、
+    /// 分类的名字（“未分类”的没有）、哪种门（和公开房间的加入方式同样三个词：`open` 没有门、
+    /// `request` 要申请、`invite_only` 只能请进来）。按名字找子房间写 `父房间名/子房间名`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<IpcParentRoom>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::IpcPublicRoomJoinMode>,
+}
+
+/// 子房间在哪间房下面。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcParentRoom {
+    pub catalog_id: String,
+    pub name: String,
+}
+
+impl IpcRoomSummary {
+    /// 4.7 以前的客户端不收不认识的字段：子房间那几项去掉。
+    #[must_use]
+    pub fn without_sub_room_fields(mut self) -> Self {
+        self.parent = None;
+        self.category = None;
+        self.access = None;
+        self
+    }
 }
 
 impl agent_room_bridge_core::room_directory::NamedRoom for IpcRoomSummary {
@@ -1021,6 +1056,10 @@ impl agent_room_bridge_core::room_directory::NamedRoom for IpcRoomSummary {
             IpcRoomKind::PrivateRoom => self.slug.as_deref(),
             IpcRoomKind::PublicLobby => None,
         }
+    }
+
+    fn room_parent_name(&self) -> Option<&str> {
+        self.parent.as_ref().map(|parent| parent.name.as_str())
     }
 }
 

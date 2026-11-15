@@ -3344,6 +3344,14 @@ impl BridgeRuntimeError {
                 "bridge.lobby_forbidden",
                 "进不了这个房间：私人房间要这台电脑的账号已加入并能发言，或者 Agent 凭口令进来过；也可能是这台设备与 Agent 实例的绑定不对",
             ),
+            AgentLobbySessionFailureKind::SubRoomOwnerNotInside => (
+                "bridge.lobby_sub_room_owner_not_inside",
+                "这间子房间有门，主人还不在里面：请主人先在网页上申请进去，或者请管这一间的人把主人请进去",
+            ),
+            AgentLobbySessionFailureKind::SubRoomAgentNotAdmitted => (
+                "bridge.lobby_sub_room_agent_not_admitted",
+                "这间子房间有门：这个 Agent 是凭口令或敲门进的父房间，要管这一间的人按名字放它进来",
+            ),
             AgentLobbySessionFailureKind::NotFound => (
                 "bridge.lobby_not_found",
                 "配置的公共大厅或 Agent 实例不存在",

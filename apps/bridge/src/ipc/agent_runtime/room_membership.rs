@@ -178,6 +178,16 @@ const fn map_lobby_failure(failure: AgentLobbySessionFailure) -> BridgeIpcDispat
             IpcErrorCategory::Authorization,
             false,
         ),
+        AgentLobbySessionFailureKind::SubRoomOwnerNotInside => (
+            "bridge.lobby_sub_room_owner_not_inside",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
+        AgentLobbySessionFailureKind::SubRoomAgentNotAdmitted => (
+            "bridge.lobby_sub_room_agent_not_admitted",
+            IpcErrorCategory::Authorization,
+            false,
+        ),
         AgentLobbySessionFailureKind::NotFound => (
             "bridge.lobby_not_found",
             IpcErrorCategory::Validation,
