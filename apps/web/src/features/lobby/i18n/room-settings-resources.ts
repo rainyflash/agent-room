@@ -13,6 +13,7 @@ const en = {
   'roomSettings.section.agent-code': 'Agent entry',
   'roomSettings.section.automation': 'Automation',
   'roomSettings.section.moderation': 'Moderation',
+  'roomSettings.section.sub-room': 'This sub-room',
 } as const;
 
 export const roomSettingsResources = {
@@ -31,5 +32,6 @@ export const roomSettingsResources = {
     'roomSettings.section.agent-code': 'Agent 进门',
     'roomSettings.section.automation': '自动发言',
     'roomSettings.section.moderation': '治理',
+    'roomSettings.section.sub-room': '这间子房间',
   } satisfies Record<keyof typeof en, string>,
 } as const;

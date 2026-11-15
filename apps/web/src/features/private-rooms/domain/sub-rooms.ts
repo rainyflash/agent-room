@@ -80,6 +80,9 @@ export const subRoomPolicySchema = z.object({
   canChange: z.boolean(),
 });
 
+/** 你管得了这一间：服务器只给管得了的人写在等的申请有几个（这一间的管理员、父房间的房主和管理员）。 */
+export const managesSubRoom = (room: SubRoom): boolean => room.pendingRequestCount !== undefined;
+
 export type SubRoomAccess = z.infer<typeof subRoomAccessSchema>;
 export type SubRoomCategory = z.infer<typeof subRoomCategorySchema>;
 export type SubRoom = z.infer<typeof subRoomSchema>;

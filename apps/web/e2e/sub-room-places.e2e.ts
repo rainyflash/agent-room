@@ -17,6 +17,8 @@ type FixtureSubRoomActions = {
     readonly name: string;
   }[];
   readonly broughtAgents: readonly { readonly agentId: string; readonly catalogId: string }[];
+  readonly revisions: readonly Record<string, unknown>[];
+  readonly archived: readonly string[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -354,6 +356,65 @@ test('归档了的子房间：对话上面写着归档了，能恢复的人点�
   await expectAccessible(page);
   await notice.getByRole('button', { name: 'Restore' }).click();
   await expect(notice).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test('子房间设置：管这一间的人改名字、分类和门，名字撞了说出来；归档以后对话上面写着归档了', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(subRoom);
+  await page.getByRole('button', { name: 'Room settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sub-room settings' });
+  await expect(dialog).toHaveAccessibleDescription('Builders Exchange · Agent Room');
+  // 整间房的成员、公开、Agent 进门不在这里。
+  await expect(dialog.getByRole('radio', { name: 'This sub-room', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('radio', { name: 'Members', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('radio', { name: 'Agent entry', exact: true })).toHaveCount(0);
+  const section = dialog.getByRole('region', { name: 'This sub-room' });
+  const save = section.getByRole('button', { name: 'Save' });
+  await expect(save).toBeDisabled();
+  await expect(section.getByRole('combobox', { name: 'Category' })).toHaveValue(
+    '01990d9e-8400-7000-8000-000000000460',
+  );
+  await expect(
+    section.getByRole('checkbox', { name: /Don’t show it in the sub-room list/u }),
+  ).toBeDisabled();
+  await expectAccessible(page);
+
+  const name = section.getByRole('textbox', { name: 'Name' });
+  await name.fill('Release checklist');
+  await save.click();
+  await expect(section).toContainText('There’s already a sub-room with this name.');
+  await name.fill('Restore drills');
+  await section.getByRole('combobox', { name: 'Category' }).selectOption({ label: 'Ops' });
+  await section.getByRole('radio', { name: /^Invite only/u }).check();
+  await expect(section).toContainText('With a door, this sub-room is encrypted.');
+  await section.getByRole('checkbox', { name: /Don’t show it in the sub-room list/u }).check();
+  await save.click();
+  await expect(section.getByRole('status')).toHaveText('Saved');
+  await expect(save).toBeDisabled();
+  const actions = await fixtureSubRoomActions(page);
+  expect(actions.revisions.at(-1)).toMatchObject({
+    access: 'invite_only',
+    categoryId: '01990d9e-8400-7000-8000-000000000461',
+    hidden: true,
+    name: 'Restore drills',
+  });
+  // 名单跟着重问：左栏里这一间换了名字、挪到了 Ops 下面。
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  await expect(places.getByRole('button', { name: 'Restore drills', exact: true })).toBeVisible();
+
+  await section.getByRole('button', { name: 'Archive this sub-room' }).click();
+  const confirm = section.getByRole('group', { name: 'Archive “Restore drills”?' });
+  await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await confirm.getByRole('button', { name: 'Archive' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.sub-room-archived')).toContainText(
+    'This sub-room is archived. Earlier messages can still be read, and nobody can post.',
+  );
+  expect((await fixtureSubRoomActions(page)).archived).toHaveLength(1);
   expect(failures).toEqual([]);
 });
 

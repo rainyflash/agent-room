@@ -9,7 +9,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import type { WebSession } from '@/features/session/domain/session';
-import { RoomSettingsDialog } from '@/features/lobby/ui/room-settings-dialog';
+import {
+  RoomSettingsDialog,
+  type RoomSettingsSubRoom,
+} from '@/features/lobby/ui/room-settings-dialog';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -120,7 +123,11 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
-function renderDialog(principalId: string, initialSection?: 'automation' | 'notice') {
+function renderDialog(
+  principalId: string,
+  initialSection?: 'automation' | 'notice',
+  subRoom?: RoomSettingsSubRoom,
+) {
   const onClose = vi.fn();
   render(
     <I18nextProvider i18n={i18n}>
@@ -137,6 +144,7 @@ function renderDialog(principalId: string, initialSection?: 'automation' | 'noti
           }}
           principal={principal(principalId)}
           roomName="Architecture room"
+          subRoom={subRoom}
         />
       </QueryClientProvider>
     </I18nextProvider>,
@@ -144,7 +152,52 @@ function renderDialog(principalId: string, initialSection?: 'automation' | 'noti
   return { onClose };
 }
 
+const subRoomEntry = (manages: boolean): RoomSettingsSubRoom => ({
+  list: {
+    parent: { catalogId: '0198b601-77a1-7bb8-83eb-a8fe68c97e40', name: 'Agent Room' },
+    canCreate: true,
+    categories: [],
+    subRooms: [],
+  },
+  room: {
+    catalogId: CATALOG,
+    name: 'Architecture room',
+    description: '',
+    access: 'open',
+    hidden: false,
+    createdByPrincipalId: OWNER,
+    createdAtUnixMs: 1,
+    managerPrincipalIds: [],
+    joined: true,
+    banned: false,
+    ...(manages ? { pendingRequestCount: 0 } : {}),
+  },
+});
+
 describe('房间设置', () => {
+  it('子房间：管得了的人第一节是“这间子房间”，没有成员、公开、Agent 进门', async () => {
+    setServices({ listings: true, moderator: false, rooms: [privateRoom] });
+    renderDialog(OWNER, undefined, subRoomEntry(true));
+
+    const dialog = screen.getByRole('dialog', { name: 'Sub-room settings' });
+    expect(dialog).toHaveAccessibleDescription('Architecture room · Agent Room');
+    const sections = await screen.findByRole('radiogroup', { name: 'Room settings sections' });
+    expect(
+      within(sections)
+        .getAllByRole('radio')
+        .map((option) => option.textContent),
+    ).toEqual(['This sub-room', 'Automation']);
+    expect(screen.getByRole('region', { name: 'This sub-room' })).toBeVisible();
+  });
+
+  it('子房间里管不了的人：只有自动发言', async () => {
+    setServices({ listings: true, moderator: false, rooms: [privateRoom] });
+    renderDialog(MEMBER, undefined, subRoomEntry(false));
+
+    expect(await screen.findByRole('region', { name: 'Automation' })).toBeVisible();
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+  });
+
   it('公共大厅里的普通成员只有自动发言一节，不显示分节切换', async () => {
     setServices({ moderator: false, rooms: [] });
     renderDialog(MEMBER);

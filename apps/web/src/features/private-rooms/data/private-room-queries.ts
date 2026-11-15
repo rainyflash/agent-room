@@ -52,17 +52,21 @@ export function usePrivateRoom(gateway: PrivateRoomGateway, catalogId: string, e
 
 /**
  * 房间列表加上眼前这一间：列表里没有它（子房间）时单独问一次，问到了接在列表后面，问不到（公开大厅、
- * 你不在里面）就只是列表。`data` 和房间列表是同一个形状，单独问的那次回来以前没有。
+ * 你不在里面）就只是列表。`data` 和房间列表是同一个形状，单独问的那次回来以前没有。`lookUp` 为 false
+ * 时不单独问（已经知道它不是子房间，免得公开大厅白问一次）。
  */
 export function usePrivateRoomListWith(
   gateway: PrivateRoomGateway,
   accountId: string | undefined,
   catalogId: string,
   enabled = true,
+  lookUp = true,
 ) {
   const list = usePrivateRoomList(gateway, accountId, enabled);
   const missing =
-    list.data?.ok === true && !list.data.value.some((room) => room.catalogId === catalogId);
+    lookUp &&
+    list.data?.ok === true &&
+    !list.data.value.some((room) => room.catalogId === catalogId);
   const single = usePrivateRoom(gateway, catalogId, enabled && missing);
   const data = useMemo(() => {
     if (list.data?.ok !== true || !missing) return list.data;
@@ -73,6 +77,9 @@ export function usePrivateRoomListWith(
     data,
     isError: list.isError || (missing && single.isError),
     isPending: list.isPending || (missing && single.data === undefined && !single.isError),
+    refetch: async () => {
+      await Promise.all([list.refetch(), ...(missing ? [single.refetch()] : [])]);
+    },
   };
 }
 

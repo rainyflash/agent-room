@@ -7,6 +7,8 @@ import './archive-room-confirm.css';
 
 export type ArchiveRoomConfirmProps = {
   readonly name: string;
+  /** 归档以后怎样；不给是整间房的说法（撤不回来）。子房间归档了能恢复，另给一句。 */
+  readonly detail?: string;
   readonly pending: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -18,6 +20,7 @@ export type ArchiveRoomConfirmProps = {
  * 回车不会直接归档。
  */
 export function ArchiveRoomConfirm({
+  detail,
   name,
   pending,
   onCancel,
@@ -33,7 +36,7 @@ export function ArchiveRoomConfirm({
     <div aria-labelledby={titleId} className="archive-room-confirm" role="group">
       <div className="archive-room-confirm__text">
         <strong id={titleId}>{t('privateRooms.archiveConfirm.title', { name })}</strong>
-        <p>{t('privateRooms.archiveConfirm.detail')}</p>
+        <p>{detail ?? t('privateRooms.archiveConfirm.detail')}</p>
       </div>
       <div className="archive-room-confirm__actions">
         <Button
