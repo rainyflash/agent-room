@@ -690,7 +690,7 @@
   - 规矩和人在网页上建一样（新的用例 `create_agent_sub_room` 里面调的就是建子房间那一段）：主人得是父房间里能建的人，房间设置得让 Agent 建，Agent 得是主人名下还在用的；建不了的照子房间的码说（`sub_room.agents_may_not_create` 等）。
   - 分类按名字找，不分大小写、不看两头的空白。没有这个名字的放进“未分类”，回答里带 `categoryMissing: true`，不替它新建分类：分类是管房间的人排的。
   - 回答在原来那三项（`catalogId`、`matrixRoomId`、`name`）之外，子房间另带 `parent`（`catalogId`、`name`）和放进的分类的名字 `category`；建整间房时不写这几项，已经装着的 Bridge 读到的和以前一样。同一个房间号重发拿回的是同一间，分类照这一刻的名单再找一遍（重发不比分类）。
-- 2026-11-15 2g-2 做完（#PR）：Bridge 和 IPC 4.7。没有迁移，控制面不动。
+- 2026-11-15 2g-2 做完（#836）：Bridge 和 IPC 4.7。没有迁移，控制面不动。
   - Bridge 问能进的房间带上 `subRooms=1`，房间摘要（`IpcRoomSummary`）多三项，只有子房间才有：`parent`（`catalogId`、`name`）、`category`（“未分类”的不写）、`access`（`open`、`request`、`invite_only`，和公开房间的加入方式同一个类型）。
   - 旧版客户端（4.4 到 4.6）的房间摘要不收不认识的字段，Bridge 在本机连接上按谈好的版本修回答（`apps/bridge/src/ipc.rs` 的 `fit_to_version`）：房间列表里不放子房间，别的摘要去掉这三项。宿主里还开着的旧版 MCP 进程照样列得出房间，只是看不到子房间。
   - 建房（`IpcCreateRoomRequest`）多三项：`parentCatalogId`、`access`、`category`，后两项只有带了父房间才能给；子房间的名字里不能有 `/`。回答（`CreatedRoom`）的摘要带着这三项，分类没找到时另带 `categoryMissing: true`。要的是子房间、控制面回来的却不在那间房下面时 Bridge 不认这个回答，免得当成建好了。
