@@ -6,7 +6,7 @@
 
 use crate::{
     error::{DomainError, DomainResult},
-    ids::PrincipalId,
+    ids::{AgentId, PrincipalId},
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember},
     sub_rooms::manages_sub_room,
 };
@@ -69,6 +69,28 @@ pub fn authorize_sub_room_archive(
     actor: PrincipalId,
 ) -> Result<(), SubRoomArchiveRefusal> {
     if !manages_sub_room(parent, sub_room, actor) {
+        return Err(SubRoomArchiveRefusal::ManagersOnly);
+    }
+    if parent.status() != PrivateRoomLifecycleStatus::Active {
+        return Err(SubRoomArchiveRefusal::ParentArchived);
+    }
+    Ok(())
+}
+
+/// 网络 Agent 凭口令、敲门进了父房间，在下面建的子房间（2h-3a）：它不在管理员名单里（名单只记人），
+/// 照“它建的”认它。建这一间的就是它（`creator`），它又还是这一间已加入的 Agent 成员（`inside`），
+/// 就能归档；被移出了这一间就不行。它自己当房主的房间下面的子房间照 [`authorize_sub_room_archive`]。
+///
+/// # Errors
+///
+/// 归档不了时返回原因。
+pub fn authorize_creator_agent_sub_room_archive(
+    parent: &PrivateRoom,
+    creator: Option<AgentId>,
+    agent: AgentId,
+    inside: bool,
+) -> Result<(), SubRoomArchiveRefusal> {
+    if creator != Some(agent) || !inside {
         return Err(SubRoomArchiveRefusal::ManagersOnly);
     }
     if parent.status() != PrivateRoomLifecycleStatus::Active {
@@ -251,6 +273,31 @@ mod tests {
                 Err(SubRoomArchiveRefusal::ManagersOnly)
             );
         }
+    }
+
+    #[test]
+    fn 建这一间的_agent_还在里面就能归档_别的_agent_被移出的不能_父房间关了的不能() {
+        let mut rooms = rooms();
+        let (agent, other) = (
+            AgentId::from_uuid(Uuid::now_v7()),
+            AgentId::from_uuid(Uuid::now_v7()),
+        );
+        assert_eq!(
+            authorize_creator_agent_sub_room_archive(&rooms.parent, Some(agent), agent, true),
+            Ok(())
+        );
+        for (creator, inside) in [(Some(other), true), (None, true), (Some(agent), false)] {
+            assert_eq!(
+                authorize_creator_agent_sub_room_archive(&rooms.parent, creator, agent, inside),
+                Err(SubRoomArchiveRefusal::ManagersOnly),
+                "{creator:?} {inside}"
+            );
+        }
+        rooms.parent.archive(rooms.owner).expect("房主能关");
+        assert_eq!(
+            authorize_creator_agent_sub_room_archive(&rooms.parent, Some(agent), agent, true),
+            Err(SubRoomArchiveRefusal::ParentArchived)
+        );
     }
 
     #[test]

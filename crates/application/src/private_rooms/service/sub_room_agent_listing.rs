@@ -135,7 +135,7 @@ impl PrivateRoomService {
     }
 
     /// 这个 Agent 是这一间里已加入的 Agent 成员。
-    async fn agent_inside(
+    pub(super) async fn agent_inside(
         &self,
         catalog_id: RoomCatalogId,
         agent_id: AgentId,

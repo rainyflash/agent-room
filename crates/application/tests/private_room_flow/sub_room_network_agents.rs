@@ -2,9 +2,15 @@
 //! 合成主体不是房间里的人，子房间里只有房主，它记成这一间的 Agent 成员；同名的回到它建过的那间。
 //! 存的当口它被移出父房间时什么都不写，由真实存储的测试看（`sub_room_agent_members.rs`）。
 
-use agent_room_application::private_rooms::{
-    AgentSubRoomCreated, AgentSubRoomListing, AgentSubRooms, CreateAgentSubRoom, ListAgentSubRooms,
-    PrivateRoomResult,
+use agent_room_application::{
+    ports::PrivateRoomSnapshot,
+    private_rooms::{
+        AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomListing, AgentSubRooms,
+        ArchiveAgentSubRoom, CreateAgentSubRoom, ListAgentSubRooms, PrivateRoomResult,
+    },
+};
+use agent_room_domain::{
+    join_codes::PrivateRoomAgentMemberStatus, sub_room_archive::SubRoomArchiveReason,
 };
 
 use super::*;
@@ -301,4 +307,153 @@ async fn 合成主体是父房间里的人时照网页的规矩看_管父房间�
         .await
         .expect("成员看得到名单");
     assert!(names(&member).is_empty(), "藏起来的成员看不到");
+}
+
+// ---- 归档（2h-3a）
+
+async fn archived_by(
+    rooms: &Rooms,
+    principal: u128,
+    catalog: u128,
+) -> PrivateRoomResult<Option<PrivateRoomSnapshot>> {
+    rooms
+        .service
+        .archive_agent_sub_room(ArchiveAgentSubRoom {
+            actor: PrivateRoomActor::NetworkAgent(device(
+                principal_id(principal),
+                "@user-0123abcd:matrix.test",
+            )),
+            agent_id: network_agent(),
+            catalog_id: catalog_id(catalog),
+        })
+        .await
+}
+
+fn refused_with(result: PrivateRoomResult<Option<PrivateRoomSnapshot>>) -> PrivateRoomFailureKind {
+    result.expect_err("应当被拒").kind()
+}
+
+#[tokio::test]
+async fn 凭口令进来的网络_agent_归档它建的子房间_记它的合成主体_再关一次照样成功() {
+    let rooms = with_network_agent();
+    create(&rooms, by_network(PARENT, 20, "Its own"))
+        .await
+        .expect("它建了一间");
+    // 真实存储建的时候就把它记成这一间的 Agent 成员（`seat_creator_agent`），替身要自己记。
+    admit(&rooms, 20);
+
+    let archived = archived_by(&rooms, NETWORK, 20)
+        .await
+        .expect("建它的 Agent 能归档")
+        .expect("是子房间");
+
+    assert_eq!(
+        archived.room().status(),
+        PrivateRoomLifecycleStatus::Archived
+    );
+    let record = rooms.store.link(20).link.archived.expect("记了归档");
+    assert_eq!(record.by, Some(principal_id(NETWORK)));
+    assert_eq!(record.reason, SubRoomArchiveReason::Manual);
+    assert_eq!(
+        rooms
+            .matrix
+            .changes_in(archived.instance().matrix_room_id().as_str()),
+        ["archive"],
+        "请求里就在聊天服务器上锁住了"
+    );
+
+    let again = archived_by(&rooms, NETWORK, 20)
+        .await
+        .expect("已经归档的再关一次照样成功")
+        .expect("是子房间");
+    assert_eq!(again.room().status(), PrivateRoomLifecycleStatus::Archived);
+    assert_eq!(
+        rooms.store.link(20).link.archived,
+        Some(record),
+        "不再记一遍"
+    );
+    assert_eq!(
+        archived_by(&rooms, NETWORK, PARENT).await.expect("整间房"),
+        None,
+        "不是子房间：照整间房关"
+    );
+}
+
+#[tokio::test]
+async fn 别人建的_它被移出的_归档不了_不在父房间里的说找不到() {
+    let rooms = with_network_agent();
+    rooms.store.seed(&Seed::open(20, "someone else's"));
+    admit(&rooms, 20);
+    create(&rooms, by_network(PARENT, 21, "Its own"))
+        .await
+        .expect("它建了一间");
+    admit(&rooms, 21);
+
+    assert_eq!(
+        refused_with(archived_by(&rooms, NETWORK, 20).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "在里面也不行：不是它建的"
+    );
+    rooms
+        .agent_members
+        .set_status(21, network_agent(), PrivateRoomAgentMemberStatus::Removed);
+    assert_eq!(
+        refused_with(archived_by(&rooms, NETWORK, 21).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "被移出了这一间"
+    );
+    assert_eq!(
+        rooms.store.room(21).status(),
+        PrivateRoomLifecycleStatus::Active
+    );
+
+    let outside = Rooms::new();
+    outside.agents.own(principal_id(NETWORK), network_agent());
+    outside.store.seed(&Seed::open(20, "open"));
+    assert_eq!(
+        refused_with(archived_by(&outside, NETWORK, 20).await),
+        PrivateRoomFailureKind::NotFound
+    );
+    assert_eq!(
+        refused_with(archived_by(&outside, NETWORK, 99).await),
+        PrivateRoomFailureKind::NotFound,
+        "没有这间房"
+    );
+}
+
+#[tokio::test]
+async fn 合成主体是父房间的房主时照房主归档_谁建的都行_本机_agent_不走这一路() {
+    let rooms = Rooms::new();
+    rooms.store.seed(&Seed::open(20, "release"));
+
+    let archived = archived_by(&rooms, OWNER, 20)
+        .await
+        .expect("房主能归档")
+        .expect("是子房间");
+    assert_eq!(
+        archived.room().status(),
+        PrivateRoomLifecycleStatus::Archived
+    );
+    assert_eq!(
+        rooms.store.link(20).link.archived.map(|record| record.by),
+        Some(Some(principal_id(OWNER)))
+    );
+
+    rooms.store.seed(&Seed::open(21, "other"));
+    let by_device = rooms
+        .service
+        .archive_agent_sub_room(ArchiveAgentSubRoom {
+            actor: PrivateRoomActor::Device(device(
+                principal_id(OWNER),
+                "@user-0123abcd:matrix.test",
+            )),
+            agent_id: network_agent(),
+            catalog_id: catalog_id(21),
+        })
+        .await;
+    assert_eq!(refused_with(by_device), PrivateRoomFailureKind::Forbidden);
+    assert_eq!(
+        rooms.store.room(21).status(),
+        PrivateRoomLifecycleStatus::Active
+    );
 }

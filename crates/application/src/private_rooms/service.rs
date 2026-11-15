@@ -62,6 +62,7 @@ pub use sub_room_agent_listing::{
     AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms, ListAgentSubRooms,
 };
 pub use sub_room_agent_owner::{AgentOwnerSeat, SubRoomAgentOwnerSeating};
+pub use sub_room_archive::{AgentSubRoomArchival, ArchiveAgentSubRoom};
 pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};
 pub use sub_rooms::SubRoomUseCases;
 use sub_rooms::{ensure_not_sub_room, ensure_parent_room};
