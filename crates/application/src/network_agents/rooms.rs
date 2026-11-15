@@ -33,9 +33,12 @@ use super::{
     NetworkAgentService, NetworkAgentSubRoomList, dependency, internal, repository,
 };
 use crate::{
-    ports::{NetworkAgentRecord, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
+    ports::{
+        NetworkAgentRecord, PendingJoinRequest, PortFuture, PrivateRoomAgentKnockRecord,
+        PrivateRoomSnapshot,
+    },
     private_rooms::{
-        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock,
+        AdmitPersonByAgent, AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock,
         ArchiveAgentSubRoom, ArchivePrivateRoom, CreateAgentSubRoom, CreatePrivateRoom,
         FindAgentManagedSubRoom, InspectAgentAccess, InvitePrivateRoomMember,
         ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor, PrivateRoomFailure,
@@ -92,8 +95,8 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>>;
 
     /// 看它建的房间现在的口令。没有口令时回答 `Missing`，不替它生成：看口令不该有副作用。
-    /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID；看口令、敲门、
-    /// 移出 Agent 也认它管得了的子房间（2h-4a，子房间回答 `SubRoom`），邀请人只认整间房。
+    /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID，也认它管得了的
+    /// 子房间：看口令、敲门、移出 Agent（2h-4a，子房间回答 `SubRoom`），看人的申请、请人进来（2h-4b）。
     fn room_code<'a>(
         &'a self,
         token: &'a str,
@@ -121,6 +124,14 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         room: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>>>;
 
+    /// 它管的子房间里在等的人的申请，先来的在前（2h-4b）。整间房回空的：它建的整间房不公开，不收
+    /// 申请。批准就是把这个人请进来（[`Self::invite_person`]），拒绝留给人做。
+    fn waiting_requests<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PendingJoinRequest>>>;
+
     /// 放行：记为这个房间的 Agent 成员，敲门还在等。由网关替它进房间，进去了再 `complete_knock`。
     fn admit_knock<'a>(
         &'a self,
@@ -147,12 +158,14 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
 
     /// 按账户 ID 邀请一个人，给查看、发言和自动发言；对方在应用里接受后就能进来。已经受邀、已经在房间里
     /// 都算成功。每个网络 Agent 每天发的邀请有上限。
+    ///
+    /// 它管的子房间（2h-4b）：只能请父房间里的人，直接进来，他在等的申请记成批准；不算每天的邀请。
     fn invite_person<'a>(
         &'a self,
         token: &'a str,
         room: &'a str,
         account_id: PrincipalId,
-    ) -> PortFuture<'a, NetworkAgentResult<()>>;
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentInvitation>>;
 
     /// 移出凭口令或敲门进来的 Agent；它要再进来得有新口令或再敲门。已经移出的也算成功。
     fn remove_agent<'a>(
@@ -168,6 +181,15 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         &'a self,
         token: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentIncomingKnocks>>;
+}
+
+/// 请人的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkAgentInvitation {
+    /// 它建的整间房：邀请发出去了，对方在应用里接受后进来。
+    Invited,
+    /// 它管的子房间（2h-4b）：人直接进来了，他在等的申请记成批准。
+    BroughtIn,
 }
 
 /// 网络 Agent 建好的房间，或回到的同名房间。
@@ -259,6 +281,8 @@ pub struct NetworkAgentIncomingKnock {
 struct ManagedRoom {
     /// 网络 Agent 自己：每天发的邀请按它算。
     agent: NetworkAgentId,
+    /// 它的 Agent：认子房间时用。
+    agent_id: Option<AgentId>,
     actor: PrivateRoomActor,
     room: NetworkAgentRoom,
     /// 是它管得了的子房间（2h-4a），不是它当房主的整间房。
@@ -492,7 +516,7 @@ impl NetworkAgentService {
             room,
             sub_room,
             ..
-        } = self.managed_with_sub_rooms(token, room).await?;
+        } = self.managed(token, room).await?;
         if sub_room {
             return Ok(NetworkAgentRoomCodeView {
                 room,
@@ -545,7 +569,7 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>> {
-        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         self.access
             .waiting_knocks(InspectAgentAccess {
                 actor,
@@ -555,6 +579,21 @@ impl NetworkAgentService {
             .map_err(knock_failure)
     }
 
+    async fn waiting_requests_internal(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<Vec<PendingJoinRequest>> {
+        let managed = self.managed(token, room).await?;
+        if !managed.sub_room {
+            return Ok(Vec::new());
+        }
+        self.sub_room_management
+            .agent_sub_room_join_requests(managed_sub_room(&managed)?)
+            .await
+            .map_err(sub_room_archive_failure)
+    }
+
     /// 回答敲门的请求：认出房间，带上它这个操作者。
     async fn answer(
         &self,
@@ -562,7 +601,7 @@ impl NetworkAgentService {
         room: &str,
         agent_id: AgentId,
     ) -> NetworkAgentResult<AnswerKnock> {
-        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         Ok(AnswerKnock {
             actor,
             catalog_id: room.catalog_id,
@@ -575,10 +614,23 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
         account_id: PrincipalId,
-    ) -> NetworkAgentResult<()> {
+    ) -> NetworkAgentResult<NetworkAgentInvitation> {
+        let managed = self.managed(token, room).await?;
+        if managed.sub_room {
+            // 子房间只请得了父房间里的人，碰不到陌生人，不算每天的邀请。
+            return self
+                .sub_room_management
+                .admit_person_by_agent(AdmitPersonByAgent {
+                    room: managed_sub_room(&managed)?,
+                    target: account_id,
+                })
+                .await
+                .map(|()| NetworkAgentInvitation::BroughtIn)
+                .map_err(sub_room_admission_failure);
+        }
         let ManagedRoom {
             agent, actor, room, ..
-        } = self.managed(token, room).await?;
+        } = managed;
         // 邀请会弹到对方的应用里：每天发的有上限。没有这个账户的也算一次，免得拿它一个个试账户 ID。
         self.take(
             &format!("invite:day:{}", agent.as_uuid().simple()),
@@ -594,7 +646,7 @@ impl NetworkAgentService {
                 permissions: PrivateRoomPermissions::INVITED_BY_AGENT,
             })
             .await
-            .map(|_| ())
+            .map(|_| NetworkAgentInvitation::Invited)
             .map_err(invitation_failure)
     }
 
@@ -604,7 +656,7 @@ impl NetworkAgentService {
         room: &str,
         agent_id: AgentId,
     ) -> NetworkAgentResult<()> {
-        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
         self.access
             .remove_agent(RemoveAgentMember {
                 actor,
@@ -615,23 +667,9 @@ impl NetworkAgentService {
             .map_err(removal_failure)
     }
 
-    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的整间房。
-    async fn managed(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
-        self.managed_room(token, room, false).await
-    }
-
-    /// 和 [`Self::managed`] 一样，另认它管得了的子房间（2h-4a）。看口令、敲门、移出 Agent 用这个。
-    async fn managed_with_sub_rooms(
-        &self,
-        token: &str,
-        room: &str,
-    ) -> NetworkAgentResult<ManagedRoom> {
-        self.managed_room(token, room, true).await
-    }
-
     /// 换口令、停用口令：子房间认得出，但说子房间没有口令。
     async fn managed_with_code(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
-        let managed = self.managed_with_sub_rooms(token, room).await?;
+        let managed = self.managed(token, room).await?;
         if managed.sub_room {
             return Err(NetworkAgentFailure::new(
                 NetworkAgentFailureKind::SubRoomHasNoCode,
@@ -640,12 +678,9 @@ impl NetworkAgentService {
         Ok(managed)
     }
 
-    async fn managed_room(
-        &self,
-        token: &str,
-        room: &str,
-        sub_rooms: bool,
-    ) -> NetworkAgentResult<ManagedRoom> {
+    /// 管房间的请求先认令牌、记一次活动，再认出房间：它当房主、还没关的整间房，或者它管得了的子房间
+    /// （2h-4）。
+    async fn managed(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
         let record = self.authenticated(token).await?;
         let now = self.clock.now();
         self.store
@@ -669,13 +704,11 @@ impl NetworkAgentService {
         if let Some(room) = whole {
             return Ok(ManagedRoom {
                 agent: record.id,
+                agent_id: record.agent_id,
                 actor,
                 room,
                 sub_room: false,
             });
-        }
-        if !sub_rooms {
-            return Err(not_owned());
         }
         let catalog_id = self.room_of(record.id, room).await?;
         let snapshot = self
@@ -690,6 +723,7 @@ impl NetworkAgentService {
             .ok_or_else(not_owned)?;
         Ok(ManagedRoom {
             agent: record.id,
+            agent_id: record.agent_id,
             actor,
             room: owned_room(&snapshot),
             sub_room: true,
@@ -972,6 +1006,14 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         Box::pin(self.waiting_knocks_internal(token, room))
     }
 
+    fn waiting_requests<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PendingJoinRequest>>> {
+        Box::pin(self.waiting_requests_internal(token, room))
+    }
+
     fn admit_knock<'a>(
         &'a self,
         token: &'a str,
@@ -1019,7 +1061,7 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         token: &'a str,
         room: &'a str,
         account_id: PrincipalId,
-    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentInvitation>> {
         Box::pin(self.invite_person_internal(token, room, account_id))
     }
 
@@ -1182,6 +1224,34 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
         return NetworkAgentFailure::new(NetworkAgentFailureKind::KnockNotFound);
     }
     access_failure(failure)
+}
+
+/// 认出来的子房间交给私人房间那边时的请求。
+fn managed_sub_room(managed: &ManagedRoom) -> NetworkAgentResult<FindAgentManagedSubRoom> {
+    Ok(FindAgentManagedSubRoom {
+        actor: managed.actor.clone(),
+        agent_id: managed.agent_id.ok_or_else(internal)?,
+        catalog_id: managed.room.catalog_id,
+    })
+}
+
+/// 把人请进子房间没成（2h-4b）：说清楚是他不在上面那间房里，还是在这一间被封禁着；找不到账户的和
+/// 整间房邀请一样说。
+fn sub_room_admission_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
+    match failure.kind() {
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::NotInParent) => {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::SubRoomPersonNotInParent)
+        }
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::TargetBanned) => {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::SubRoomPersonBanned)
+        }
+        PrivateRoomFailureKind::NotFound
+            if failure.stage() == PrivateRoomFailureStage::Directory =>
+        {
+            NetworkAgentFailure::new(NetworkAgentFailureKind::AccountNotFound)
+        }
+        _ => sub_room_archive_failure(failure),
+    }
 }
 
 const fn not_owned() -> NetworkAgentFailure {

@@ -203,14 +203,7 @@ impl PrivateRoomService {
             .pending_join_requests(request.catalog_id)
             .await
             .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
-        // 和房间里的名字一样，昵称里像邮箱的只留 @ 前面那段。
-        Ok(pending
-            .into_iter()
-            .map(|pending| PendingJoinRequest {
-                requester_display_name: shown_display_name(&pending.requester_display_name),
-                ..pending
-            })
-            .collect())
+        Ok(shown_requests(pending))
     }
 
     /// 批准：照子房间的规则把他记成已加入（不看门，门就是让管这一间的人开的），在 Matrix 上邀请
@@ -298,4 +291,16 @@ impl PrivateRoomService {
             ))
         }
     }
+}
+
+/// 给管这一间的人（和管它的网络 Agent）看的在等的申请：和房间里的名字一样，昵称里像邮箱的只留 @
+/// 前面那段。
+pub(super) fn shown_requests(pending: Vec<PendingJoinRequest>) -> Vec<PendingJoinRequest> {
+    pending
+        .into_iter()
+        .map(|pending| PendingJoinRequest {
+            requester_display_name: shown_display_name(&pending.requester_display_name),
+            ..pending
+        })
+        .collect()
 }

@@ -5,13 +5,14 @@
 use agent_room_application::{
     ports::PrivateRoomSnapshot,
     private_rooms::{
-        AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomListing, AgentSubRoomManagement,
-        AgentSubRooms, ArchiveAgentSubRoom, CreateAgentSubRoom, FindAgentManagedSubRoom,
-        ListAgentSubRooms, PrivateRoomResult,
+        AdmitPersonByAgent, AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomListing,
+        AgentSubRoomManagement, AgentSubRooms, ArchiveAgentSubRoom, CreateAgentSubRoom,
+        FindAgentManagedSubRoom, ListAgentSubRooms, PrivateRoomResult, RequestSubRoomJoin,
     },
 };
 use agent_room_domain::{
-    join_codes::PrivateRoomAgentMemberStatus, sub_room_archive::SubRoomArchiveReason,
+    join_codes::PrivateRoomAgentMemberStatus, room_join_requests::JoinRequestStatus,
+    sub_room_archive::SubRoomArchiveReason,
 };
 
 use super::*;
@@ -565,4 +566,167 @@ async fn 别人建的管不了_归档了的管不了_不在父房间里的说找
         })
         .await;
     assert_eq!(refused_with(by_device), PrivateRoomFailureKind::Forbidden);
+}
+
+// ---- 人的申请、把父房间里的人请进来（2h-4b）
+
+fn agent_room(principal: u128, catalog: u128) -> FindAgentManagedSubRoom {
+    FindAgentManagedSubRoom {
+        actor: PrivateRoomActor::NetworkAgent(device(
+            principal_id(principal),
+            "@user-0123abcd:matrix.test",
+        )),
+        agent_id: network_agent(),
+        catalog_id: catalog_id(catalog),
+    }
+}
+
+async fn bring_in(
+    rooms: &Rooms,
+    principal: u128,
+    catalog: u128,
+    target: u128,
+) -> PrivateRoomResult<()> {
+    rooms
+        .service
+        .admit_person_by_agent(AdmitPersonByAgent {
+            room: agent_room(principal, catalog),
+            target: principal_id(target),
+        })
+        .await
+}
+
+fn failed_with<T: std::fmt::Debug>(result: PrivateRoomResult<T>) -> PrivateRoomFailureKind {
+    result.expect_err("应该被拒").kind()
+}
+
+#[tokio::test]
+async fn 网络_agent_看得到它管的子房间里的申请_请人进来就是批准_记它的合成主体() {
+    let rooms = Rooms::new();
+    rooms.store.seed(&Seed {
+        access: RoomJoinMode::Request,
+        ..Seed::open(20, "security")
+    });
+    rooms
+        .service
+        .request_sub_room_join(RequestSubRoomJoin {
+            actor: person(MEMBER),
+            parent_catalog_id: catalog_id(PARENT),
+            catalog_id: catalog_id(20),
+            message: "想来帮忙".to_owned(),
+        })
+        .await
+        .expect("能申请");
+
+    let pending = rooms
+        .service
+        .agent_sub_room_join_requests(agent_room(OWNER, 20))
+        .await
+        .expect("合成主体是房主，看得到");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].record.requester, principal_id(MEMBER));
+    assert_eq!(pending[0].record.message.as_str(), "想来帮忙");
+    assert!(
+        rooms
+            .service
+            .agent_sub_room_join_requests(agent_room(OWNER, PARENT))
+            .await
+            .expect("整间房")
+            .is_empty(),
+        "整间房没有申请"
+    );
+
+    rooms.clear_events();
+    bring_in(&rooms, OWNER, 20, MEMBER).await.expect("请得进来");
+    assert_eq!(
+        rooms.events().last(),
+        Some(&"matrix.invite"),
+        "和人请进来同一段，最后才邀请"
+    );
+    assert!(
+        rooms
+            .store
+            .room(20)
+            .member(principal_id(MEMBER))
+            .is_some_and(PrivateRoomMember::has_joined),
+        "直接进来，不用再点接受"
+    );
+    let stored = rooms.store.requests_of(20);
+    assert_eq!(stored[0].status, JoinRequestStatus::Approved);
+    assert_eq!(stored[0].decided_by, Some(principal_id(OWNER)));
+    assert!(
+        rooms
+            .service
+            .agent_sub_room_join_requests(agent_room(OWNER, 20))
+            .await
+            .expect("看得到")
+            .is_empty(),
+        "批准了就不在等了"
+    );
+
+    bring_in(&rooms, OWNER, 20, MEMBER)
+        .await
+        .expect("已经在里面的再请一次不算错");
+}
+
+#[tokio::test]
+async fn 请不进来的_不在父房间里的_封禁着的_不是子房间的_它管不了的() {
+    let rooms = Rooms::new();
+    rooms.store.seed(&Seed {
+        access: RoomJoinMode::InviteOnly,
+        ..Seed::open(20, "vault")
+    });
+    rooms.store.change(20, |room| {
+        room.ban_member(principal_id(OWNER), principal_id(MEMBER))
+            .expect("房主能封禁");
+    });
+    rooms.clear_events();
+
+    assert_eq!(
+        failed_with(bring_in(&rooms, OWNER, 20, OUTSIDER).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::NotInParent)
+    );
+    assert_eq!(
+        failed_with(bring_in(&rooms, OWNER, 20, MEMBER).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::TargetBanned)
+    );
+    assert_eq!(
+        failed_with(bring_in(&rooms, OWNER, PARENT, MEMBER).await),
+        PrivateRoomFailureKind::NotFound,
+        "整间房不走这一路"
+    );
+    assert!(rooms.events().is_empty(), "什么都没动");
+
+    // 凭口令进了父房间的网络 Agent：它建的、还在里面的请得进来，别人建的管不了。
+    let rooms = with_network_agent();
+    create(&rooms, by_network(PARENT, 21, "Its own"))
+        .await
+        .expect("它建了一间");
+    admit(&rooms, 21);
+    bring_in(&rooms, NETWORK, 21, VIEWER)
+        .await
+        .expect("它建的请得进来");
+    assert!(
+        rooms
+            .store
+            .room(21)
+            .member(principal_id(VIEWER))
+            .is_some_and(PrivateRoomMember::has_joined)
+    );
+    rooms.store.seed(&Seed::open(22, "someone else's"));
+    admit(&rooms, 22);
+    assert_eq!(
+        failed_with(bring_in(&rooms, NETWORK, 22, VIEWER).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly)
+    );
+    assert_eq!(
+        failed_with(
+            rooms
+                .service
+                .agent_sub_room_join_requests(agent_room(NETWORK, 22))
+                .await
+        ),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "管不了的也看不到申请"
+    );
 }

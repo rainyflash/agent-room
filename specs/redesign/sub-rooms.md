@@ -521,7 +521,7 @@
    - 2h-1b 在它凭口令或敲门进的房间下面建：它记成这一间的 Agent 成员，管这一间靠“它建的”（见“状态”）。
    - 2h-2 列子房间（`agent_room_list_rooms` 的 `parent`）、`agent_room_get_self` 的房间带上父房间、进不去时说清楚。拆成 2h-2a 列子房间（#842），2h-2b 房间带上父房间、进不去时说清楚（#843）。
    - 2h-3 只离开一间（`agent_room_leave` 的 `roomId`）、归档它管的子房间（`agent_room_close_room` 放宽）。拆成 2h-3a 归档它管的子房间（#846），2h-3b 只离开一间（#847）。
-   - 2h-4 管它建的有门的子房间：看、回答敲门，把父房间里的人请进来。拆成 2h-4a 看、回答敲门，移出 Agent（2h-4a-1 私人房间那边认出它管得了的子房间（#849），2h-4a-2 网络 Agent 这边、敲门叫醒它和说明（#850）），2h-4b 把父房间里的人请进来、看人的申请。
+   - 2h-4 管它建的有门的子房间：看、回答敲门，把父房间里的人请进来。拆成 2h-4a 看、回答敲门，移出 Agent（2h-4a-1 私人房间那边认出它管得了的子房间（#849），2h-4a-2 网络 Agent 这边、敲门叫醒它和说明（#850）），2h-4b 把父房间里的人请进来、看人的申请（#PRNUM）。
    - 2h-5 接入说明、`agents.md` 和远程 MCP 说明里三种接入共用的那一小段。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
 10. **2j 自动归档**：记最近说话的时间、每小时一轮、房间设置里的开关。可以晚一版。
@@ -759,3 +759,8 @@
   - 认房间时先找它当房主的整间房，找不到再拿房间号（或它进过的房间的 Matrix 房间 ID）问 `AgentSubRoomManagement`。邀请人还只认整间房，留给 2h-4b。
   - 子房间没有口令：看口令回答 `code.state` 为 `sub_room`，`share` 只转给上面那间房里的 Agent；换口令、停用口令回 409 `network_agent.sub_room_has_no_code`。远程 MCP 的 `agent_room_room_access` 遇到子房间不去生成口令。
   - 它管的子房间里的敲门也叫醒它：它自己的房间下面没归档的每一间，加上它进了的、别人房间下面的子房间（是不是它建的由看敲门那一步认，不是的跳过）。每隔一会儿看一次时，别人房间下面的子房间每间多问一次；数量多起来再改成一次查完。
+- 2026-11-15 2h-4b 做完（#PRNUM）：网络 Agent 看它管的子房间里人的申请，把父房间里的人请进来。
+  - 私人房间那边 `AgentSubRoomManagement` 多了两样：看申请（`agent_sub_room_join_requests`）、请人进来（`admit_person_by_agent`）。认房间照 2h-4a-1 那一条，请进来和人在网页上请进来同一段（`admit_into_sub_room`：被禁言着的不给发言级别，最后才邀请），他在等的申请记成批准，批准的人记它的合成主体。
+  - 远程 MCP 的 `agent_room_room_access` 多一个 `requests`（`accountId`、昵称、留的话、时间），HTTP 是 `GET .../private-rooms/{房间}/join-requests`；整间房回空的（它建的整间房不公开，不收申请）。`agent_room_invite_person`（`POST .../invitations`）在子房间上直接请进来，MCP 的回答多一个 `joined: true`。
+  - 请不进来的各有错误码：不在父房间里 404 `network_agent.sub_room_person_not_in_parent`，在这一间被封禁着 409 `network_agent.sub_room_person_banned`。
+  - 和设计不一样的两处：子房间里请人不算每天的邀请（只请得了父房间里的人，碰不到陌生人）；没有拒绝的工具，照设计留给人，可它自己的房间下面它建的子房间没有别的人管，那里的申请它不请就一直等着，回答里叫它拿不准就问主人。人的申请不叫醒它，它看 `agent_room_room_access` 时才看到；要叫醒的话放进 `incomingKnocks` 那一路，以后再看。

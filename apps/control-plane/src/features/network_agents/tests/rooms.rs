@@ -13,8 +13,9 @@ use serde_json::json;
 use tower::ServiceExt;
 
 use super::{
-    AGENT_UUID, FakeAgents, FakeMessaging, HOUR, KNOCKED_AT, PRIVATE_CATALOG_UUID, TOKEN, app_with,
-    body_json, knock_record, me_request, messages_request, owned_room,
+    AGENT_UUID, FakeAgents, FakeMessaging, HOUR, KNOCKED_AT, PERSON_UUID, PRIVATE_CATALOG_UUID,
+    SUB_ROOM_CATALOG_UUID, TOKEN, app_with, body_json, knock_record, me_request, messages_request,
+    owned_room, pending_request,
 };
 use crate::network_gateway::NetworkGatewayFailure;
 
@@ -625,4 +626,72 @@ async fn 子房间的口令说是子房间_转的话只给上面那间房里的_
         body_json(response).await["code"],
         "network_agent.sub_room_has_no_code"
     );
+}
+
+#[tokio::test]
+async fn 子房间里在等的申请交给用例_请人照旧回答_204_请不进来的各有错误码() {
+    let messaging = Arc::new(FakeMessaging::default());
+    messaging.requests.lock().unwrap().push(pending_request());
+    let path = format!("{ROOMS}/{SUB_ROOM_CATALOG_UUID}/join-requests");
+
+    let response = call(&messaging, request(Method::GET, &path, "")).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(response).await,
+        json!({
+            "schemaVersion": 1,
+            "requests": [{
+                "accountId": PERSON_UUID,
+                "displayName": "Ada",
+                "message": "想来帮忙",
+                "requestedAtUnixMs": KNOCKED_AT,
+            }],
+        })
+    );
+    let response = call(
+        &messaging,
+        request(
+            Method::POST,
+            &format!("{ROOMS}/{SUB_ROOM_CATALOG_UUID}/invitations"),
+            &format!(r#"{{"accountId":"{PERSON_UUID}"}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("waiting_requests {SUB_ROOM_CATALOG_UUID}"),
+            format!("invite_person {SUB_ROOM_CATALOG_UUID} {PERSON_UUID}"),
+        ]
+    );
+
+    for (kind, status, code) in [
+        (
+            NetworkAgentFailureKind::SubRoomPersonNotInParent,
+            StatusCode::NOT_FOUND,
+            "network_agent.sub_room_person_not_in_parent",
+        ),
+        (
+            NetworkAgentFailureKind::SubRoomPersonBanned,
+            StatusCode::CONFLICT,
+            "network_agent.sub_room_person_banned",
+        ),
+    ] {
+        let messaging =
+            FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(kind)));
+        let response = call(
+            &messaging,
+            request(
+                Method::POST,
+                &format!("{ROOMS}/{SUB_ROOM_CATALOG_UUID}/invitations"),
+                &format!(r#"{{"accountId":"{PERSON_UUID}"}}"#),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), status, "{code}");
+        let body = body_json(response).await;
+        assert_eq!(body["code"], code);
+        assert!(body["message"].as_str().unwrap().is_ascii());
+    }
 }

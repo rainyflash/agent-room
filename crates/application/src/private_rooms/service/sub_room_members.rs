@@ -226,7 +226,10 @@ impl PrivateRoomService {
 
 /// 请进来的对象进不来：说的是“他”，不是“你”。门不看（管这一间的人请进来哪种门都行），别的照
 /// 他自己加入时的说法。
-fn target_refused(operation: &'static str, refusal: SubRoomEntryRefusal) -> PrivateRoomFailure {
+pub(super) fn target_refused(
+    operation: &'static str,
+    refusal: SubRoomEntryRefusal,
+) -> PrivateRoomFailure {
     match refusal {
         SubRoomEntryRefusal::NotInParent => refused(operation, SubRoomRefusal::NotInParent),
         SubRoomEntryRefusal::Banned => refused(operation, SubRoomRefusal::TargetBanned),

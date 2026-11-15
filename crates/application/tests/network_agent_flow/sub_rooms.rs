@@ -1,14 +1,18 @@
 //! 网络 Agent 在它建的房间下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）。
 
 use agent_room_application::network_agents::{
-    NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomCode,
-    NetworkAgentRoomUseCases, NetworkAgentSubRoomActivity, NetworkAgentSubRoomList,
-    NetworkAgentSubRoomRequest,
+    NetworkAgentFailure, NetworkAgentInvitation, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
+    NetworkAgentRoomCode, NetworkAgentRoomUseCases, NetworkAgentSubRoomActivity,
+    NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
 };
 use agent_room_application::{
-    ports::{NetworkAgentRoomParent, NetworkAgentRoomRecord, SubRoomEntry},
+    ports::{
+        JoinRequestRecord, NetworkAgentRoomParent, NetworkAgentRoomRecord, PendingJoinRequest,
+        SubRoomEntry,
+    },
     private_rooms::{AgentSubRoomItem, AgentSubRooms, ListAgentSubRooms},
 };
+use agent_room_domain::room_join_requests::{JoinRequestMessage, JoinRequestStatus};
 
 use super::*;
 
@@ -696,16 +700,6 @@ async fn 它自己房间下面的子房间_看口令说是子房间_换口令说
             && Some(request.agent_id) == record.agent_id
             && request.actor.principal_id() == record.principal_id
     }));
-    assert_eq!(
-        kind(
-            harness
-                .service
-                .invite_person(&token, &number, PrincipalId::from_uuid(Uuid::now_v7()))
-                .await
-        ),
-        NetworkAgentFailureKind::RoomNotOwned,
-        "邀请人还只认整间房"
-    );
 }
 
 #[tokio::test]
@@ -766,4 +760,109 @@ async fn 它在别人房间下面建的子房间_看敲门_敲门也叫醒它_�
         NetworkAgentFailureKind::RoomNotOwned,
         "别人的整间房管不了"
     );
+}
+
+// ---- 人的申请、把父房间里的人请进来（2h-4b）
+
+fn pending_request(catalog_id: RoomCatalogId, requester: PrincipalId) -> PendingJoinRequest {
+    PendingJoinRequest {
+        record: JoinRequestRecord {
+            catalog_id,
+            requester,
+            message: JoinRequestMessage::parse("想来帮忙").unwrap(),
+            status: JoinRequestStatus::Pending,
+            requested_at: UtcMillis::new(START).unwrap(),
+            decided_at: None,
+            decided_by: None,
+        },
+        requester_display_name: "Ada".to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn 它管的子房间里看得到人的申请_请人就是直接请进来_被拒照实说_整间房照旧邀请() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let room = parent(&harness, &token, "项目").await;
+    let whole = room.room.catalog_id.to_string();
+    let below = sub_room(&harness, &token, &whole, "设计", None)
+        .await
+        .unwrap()
+        .room;
+    let number = below.catalog_id.to_string();
+    let person = PrincipalId::from_uuid(Uuid::now_v7());
+    harness
+        .rooms
+        .sub_room_requests
+        .lock()
+        .unwrap()
+        .push(pending_request(below.catalog_id, person));
+
+    let requests = harness
+        .service
+        .waiting_requests(&token, &number)
+        .await
+        .unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].record.requester, person);
+    assert!(
+        harness
+            .service
+            .waiting_requests(&token, &whole)
+            .await
+            .unwrap()
+            .is_empty(),
+        "它建的整间房不公开，不收申请"
+    );
+
+    assert_eq!(
+        harness
+            .service
+            .invite_person(&token, &number, person)
+            .await
+            .unwrap(),
+        NetworkAgentInvitation::BroughtIn
+    );
+    let brought = harness.rooms.people_brought_in.lock().unwrap().clone();
+    assert_eq!(brought.len(), 1);
+    assert_eq!(brought[0].target, person);
+    assert_eq!(brought[0].room.catalog_id, below.catalog_id);
+    assert_eq!(Some(brought[0].room.agent_id), record.agent_id);
+    assert!(
+        harness.rooms.invited.lock().unwrap().is_empty(),
+        "不走整间房的邀请"
+    );
+
+    for (refusal, expected) in [
+        (
+            SubRoomRefusal::NotInParent,
+            NetworkAgentFailureKind::SubRoomPersonNotInParent,
+        ),
+        (
+            SubRoomRefusal::TargetBanned,
+            NetworkAgentFailureKind::SubRoomPersonBanned,
+        ),
+        (
+            SubRoomRefusal::ManagersOnly,
+            NetworkAgentFailureKind::RoomNotOwned,
+        ),
+    ] {
+        *harness.rooms.admission_refusal.lock().unwrap() = Some(sub_room_refused(refusal));
+        assert_eq!(
+            kind(harness.service.invite_person(&token, &number, person).await),
+            expected
+        );
+    }
+
+    assert_eq!(
+        harness
+            .service
+            .invite_person(&token, &whole, person)
+            .await
+            .unwrap(),
+        NetworkAgentInvitation::Invited,
+        "整间房照旧发邀请"
+    );
+    assert_eq!(harness.rooms.invited.lock().unwrap().len(), 1);
 }

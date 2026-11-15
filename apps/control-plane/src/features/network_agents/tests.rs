@@ -7,19 +7,19 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentJoinedRoom,
-        NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
-        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
-        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomActivity,
-        NetworkAgentSubRoomList, NetworkAgentSubRoomRequest, NetworkAgentSubRoomSummary,
-        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentInvitation,
+        NetworkAgentJoinedRoom, NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby,
+        NetworkAgentLobbyExit, NetworkAgentMatrixDevice, NetworkAgentOwnedRoom,
+        NetworkAgentOwnedSubRoom, NetworkAgentPendingExit, NetworkAgentPlacement,
+        NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
+        NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentSession,
+        NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
+        NetworkAgentSubRoomSummary, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{
-        Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
-        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomRecord, PortFuture,
-        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretValue,
+        Clock, JoinRequestRecord, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
+        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomRecord, PendingJoinRequest,
+        PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretValue,
     },
     private_rooms::AdmittedKnock,
 };
@@ -27,6 +27,7 @@ use agent_room_domain::{
     ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus},
     private_rooms::PrivateRoomPermissions,
+    room_join_requests::{JoinRequestMessage, JoinRequestStatus},
     room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     time::UtcMillis,
@@ -63,6 +64,8 @@ const SUBMISSION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";
 pub(super) const PRIVATE_CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e54";
 /// 建子房间时回答的那间子房间。
 pub(super) const SUB_ROOM_CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e5a";
+/// 申请进子房间的人。
+pub(super) const PERSON_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e70";
 const KNOCKED_AT: i64 = 1_758_600_000_000;
 const HOUR: i64 = 60 * 60 * 1_000;
 
@@ -328,6 +331,8 @@ pub(super) struct FakeMessaging {
     pub(super) room_calls: Mutex<Vec<(String, String)>>,
     /// 看口令时房间现在的口令；不设就是看得到的那个。
     pub(super) room_code: Mutex<Option<NetworkAgentRoomCode>>,
+    /// 子房间里在等的人的申请（2h-4b）；请人时有它就当成子房间，直接请进来。
+    pub(super) requests: Mutex<Vec<PendingJoinRequest>>,
     /// 等消息时一起交出去的、敲它建的房间的门的。
     pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
     /// 进房间时那个房间现在的公告，和问过哪个房间（令牌、房间）。
@@ -785,6 +790,16 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         self.owned_result(vec![knock_record()])
     }
 
+    fn waiting_requests<'a>(
+        &'a self,
+        token: &'a str,
+        room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<Vec<PendingJoinRequest>>> {
+        self.room_call(token, format!("waiting_requests {room}"));
+        let requests = self.requests.lock().unwrap().clone();
+        self.owned_result(requests)
+    }
+
     fn admit_knock<'a>(
         &'a self,
         _token: &'a str,
@@ -818,9 +833,14 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         token: &'a str,
         room: &'a str,
         account_id: PrincipalId,
-    ) -> PortFuture<'a, NetworkAgentResult<()>> {
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentInvitation>> {
         self.room_call(token, format!("invite_person {room} {account_id}"));
-        self.owned_result(())
+        let invitation = if self.requests.lock().unwrap().is_empty() {
+            NetworkAgentInvitation::Invited
+        } else {
+            NetworkAgentInvitation::BroughtIn
+        };
+        self.owned_result(invitation)
     }
 
     fn remove_agent<'a>(
@@ -842,6 +862,22 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
 }
 
 /// 有人敲 `owned_room` 的门，在等它回答。
+/// 子房间里在等的一个人的申请（2h-4b）。
+pub(super) fn pending_request() -> PendingJoinRequest {
+    PendingJoinRequest {
+        record: JoinRequestRecord {
+            catalog_id: RoomCatalogId::from_uuid(uuid(SUB_ROOM_CATALOG_UUID)),
+            requester: PrincipalId::from_uuid(uuid(PERSON_UUID)),
+            message: JoinRequestMessage::parse("想来帮忙").unwrap(),
+            status: JoinRequestStatus::Pending,
+            requested_at: UtcMillis::new(KNOCKED_AT).unwrap(),
+            decided_at: None,
+            decided_by: None,
+        },
+        requester_display_name: "Ada".to_owned(),
+    }
+}
+
 pub(super) fn knock_record() -> PrivateRoomAgentKnockRecord {
     PrivateRoomAgentKnockRecord {
         catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),

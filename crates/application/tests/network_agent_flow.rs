@@ -31,7 +31,7 @@ use agent_room_application::{
         NetworkAgentKeyFactory, NetworkAgentLobbyAway, NetworkAgentPause, NetworkAgentProvisioning,
         NetworkAgentRecord, NetworkAgentRoomRecord, NetworkAgentSecretKind,
         NetworkAgentSecretSealer, NetworkAgentStaleCutoff, NetworkAgentStore, NetworkSourceWeights,
-        PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
+        PendingJoinRequest, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord,
         PrivateRoomJoinCodeRecord, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
         PrivateRoomListingStore, PrivateRoomSnapshot, PublicLobbyDirectoryEntry,
         PublicLobbyObservationRoom, PublicRoomDetailRecord, PublicRoomDirectoryStore,
@@ -41,13 +41,13 @@ use agent_room_application::{
         SecretValue, StoredAgentInstanceRegistration, UniformSourceWeights,
     },
     private_rooms::{
-        AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
-        AgentAccessView, AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomCreation,
-        AgentSubRoomListing, AgentSubRoomManagement, AgentSubRooms, AnswerKnock,
-        ArchiveAgentSubRoom, ArchivePrivateRoom, ChangePrivateRoomPermissions, CreateAgentSubRoom,
-        CreatePrivateRoom, FindAgentManagedSubRoom, GeneratedJoinCode, GovernPrivateRoomMember,
-        InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller,
-        KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
+        AdmitPersonByAgent, AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind,
+        AgentAccessResult, AgentAccessView, AgentSubRoomArchival, AgentSubRoomCreated,
+        AgentSubRoomCreation, AgentSubRoomListing, AgentSubRoomManagement, AgentSubRooms,
+        AnswerKnock, ArchiveAgentSubRoom, ArchivePrivateRoom, ChangePrivateRoomPermissions,
+        CreateAgentSubRoom, CreatePrivateRoom, FindAgentManagedSubRoom, GeneratedJoinCode,
+        GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember,
+        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
         ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
         PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
         PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
@@ -1463,6 +1463,10 @@ struct FakeRooms {
     sub_room_archive: Mutex<Option<PrivateRoomResult<Option<PrivateRoomSnapshot>>>>,
     /// 认它管得了的子房间的请求（2h-4a）。
     sub_rooms_managed: Mutex<Vec<FindAgentManagedSubRoom>>,
+    /// 子房间里在等的人的申请（2h-4b），请进来的人，和请人时要回的拒绝。
+    sub_room_requests: Mutex<Vec<PendingJoinRequest>>,
+    people_brought_in: Mutex<Vec<AdmitPersonByAgent>>,
+    admission_refusal: Mutex<Option<PrivateRoomFailure>>,
 }
 
 /// 父房间里有的分类：要别的名字就放进“未分类”。
@@ -1560,14 +1564,13 @@ impl AgentSubRoomArchival for FakeRooms {
 
 /// 认它管得了的子房间（2h-4a）：父房间的房主是它的合成主体（它自己的房间下面），或者这一间是它建的，
 /// 没归档就管得了；替身不看它在不在里面。不是子房间回空，没有这间房说找不到。
-impl AgentSubRoomManagement for FakeRooms {
-    fn agent_managed_sub_room(
+impl FakeRooms {
+    fn managed_sub_room(
         &self,
-        request: FindAgentManagedSubRoom,
-    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>> {
+        request: &FindAgentManagedSubRoom,
+    ) -> PrivateRoomResult<Option<PrivateRoomSnapshot>> {
         assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
-        let result = self
-            .rooms
+        self.rooms
             .lock()
             .unwrap()
             .iter()
@@ -1588,8 +1591,52 @@ impl AgentSubRoomManagement for FakeRooms {
                         Err(sub_room_refused(SubRoomRefusal::ManagersOnly))
                     }
                 },
-            );
+            )
+    }
+}
+
+/// 看申请、请人进来（2h-4b）先照上面认房间：不是子房间的申请回空、请人说找不到。
+impl AgentSubRoomManagement for FakeRooms {
+    fn agent_managed_sub_room(
+        &self,
+        request: FindAgentManagedSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>> {
+        let result = self.managed_sub_room(&request);
         self.sub_rooms_managed.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+
+    fn agent_sub_room_join_requests(
+        &self,
+        request: FindAgentManagedSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<PendingJoinRequest>>> {
+        let result = self.managed_sub_room(&request).map(|managed| {
+            if managed.is_some() {
+                self.sub_room_requests.lock().unwrap().clone()
+            } else {
+                Vec::new()
+            }
+        });
+        Box::pin(async move { result })
+    }
+
+    fn admit_person_by_agent(
+        &self,
+        request: AdmitPersonByAgent,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        let result = match self.managed_sub_room(&request.room) {
+            Ok(Some(_)) => self
+                .admission_refusal
+                .lock()
+                .unwrap()
+                .take()
+                .map_or(Ok(()), Err),
+            Ok(None) => Err(room_failure(PrivateRoomFailureKind::NotFound)),
+            Err(failure) => Err(failure),
+        };
+        if result.is_ok() {
+            self.people_brought_in.lock().unwrap().push(request);
+        }
         Box::pin(async move { result })
     }
 }

@@ -70,9 +70,9 @@ use crate::{
 
 pub use crate::ports::NetworkAgentRoomParent;
 pub use rooms::{
-    NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentOwnedRoom,
-    NetworkAgentOwnedSubRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
-    NetworkAgentRoomUseCases, NetworkAgentSubRoomRequest,
+    NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentInvitation,
+    NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomCode,
+    NetworkAgentRoomCodeView, NetworkAgentRoomUseCases, NetworkAgentSubRoomRequest,
 };
 pub use sub_room_listing::{
     NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomSummary,
@@ -401,6 +401,10 @@ pub enum NetworkAgentFailureKind {
     RoomNotJoined,
     /// 子房间没有口令（2h-4a）：换口令、停用口令都不行，上面那间房里的 Agent 拿房间号敲门。
     SubRoomHasNoCode,
+    /// 把人请进它管的子房间（2h-4b）：这个人不在上面那间房里。
+    SubRoomPersonNotInParent,
+    /// 把人请进它管的子房间：这个人在这一间被封禁着，只有管它的人能在网页上解封。
+    SubRoomPersonBanned,
     /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
     /// 不往外说。
     NotNetworkAgent,
