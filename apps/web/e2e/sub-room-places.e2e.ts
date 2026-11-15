@@ -252,6 +252,111 @@ test('新建子房间：左栏和“浏览子房间”都能打开；名字撞�
   expect(failures).toEqual([]);
 });
 
+test('还没进的子房间：浏览页点名字打开它的卡片，撤回、再申请都在卡片上；点房间名回对话', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${parentRoom}&view=sub-rooms`);
+  await page
+    .locator('.sub-room-browser')
+    .getByRole('button', { name: 'Alerts', exact: true })
+    .click();
+  await expect(page).toHaveURL(/door=01990d9e-8400-7000-8000-000000000455/u);
+  await expect(page).not.toHaveURL(/view=sub-rooms/u);
+  const door = page.getByRole('region', { name: 'Alerts', exact: true });
+  await expect(door.getByRole('heading', { level: 2, name: 'Alerts' })).toBeFocused();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    /^Builders Exchange\s*\/\s*Alerts$/u,
+  );
+  // 顶栏那一小句（几个人、几个 Agent）说的是整间房，这一页不写，免得读成 Alerts 的。
+  await expect(page.locator('.room-desk__meta')).toHaveCount(0);
+  await expect(door).toContainText('Ops · Needs approval to join');
+  await expect(door).toContainText('Talk about a firing alert here, not in the main room.');
+  await expect(door).toContainText('Grace runs this one');
+  await expect(door.getByRole('status')).toHaveText('Waiting for Grace to approve.');
+  // 里面有谁、说了什么，进去以后才看得到：卡片上没有成员和消息。
+  await expect(door).toContainText('Who’s inside and what’s been said shows up after you join.');
+  await expectAccessible(page);
+
+  await door.getByRole('button', { name: 'Withdraw request' }).click();
+  await expect(door).toContainText('Grace or the room’s admins can let you in.');
+  await door.getByRole('button', { name: 'Ask to join', exact: true }).click();
+  const form = door.getByRole('form', { name: 'Ask to join Alerts' });
+  await form.getByRole('textbox').fill('On call this week');
+  await form.getByRole('button', { name: 'Send request' }).click();
+  await expect(form).toHaveCount(0);
+  await expect(door.getByRole('status')).toHaveText('Waiting for Grace to approve.');
+
+  await page.getByRole('button', { name: /^Back to Builders Exchange/u }).click();
+  await expect(page).not.toHaveURL(/door=/u);
+  await expect(door).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
+test('子房间的门写在地址里：只能请进来的说清楚，直接能进的一个按钮，归档了的能恢复；没有这一间就当没写', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const doorOf = (suffix: string) =>
+    page.goto(`${parentRoom}&door=01990d9e-8400-7000-8000-0000000004${suffix}`);
+
+  await doorOf('56');
+  const security = page.getByRole('region', { name: 'Security', exact: true });
+  await expect(security).toContainText('Ops · Invite only');
+  await expect(security).toContainText('Grace, Ada run this one');
+  await expect(security).toContainText(
+    'Only an admin can bring people in here. You can’t ask to join.',
+  );
+  await expect(security.getByRole('button')).toHaveCount(0);
+  await expectAccessible(page);
+
+  await doorOf('54');
+  const notMine = page.getByRole('region', { name: 'Not mine', exact: true });
+  await expect(notMine).toContainText('Work · Anyone in the room can walk in');
+  await expect(notMine).toContainText('The room’s owner and admins run this one');
+  await notMine.getByRole('button', { name: 'Join this one' }).click();
+  // 加入没办成（夹具没接上服务器）：卡片上说，错误码收在后面。
+  await expect(notMine.getByRole('alert')).toContainText('sub_room.unavailable');
+
+  // 归档了的：写清楚只能看，能恢复的人有“恢复”；恢复以后回到要申请的那扇门。
+  await doorOf('72');
+  const handles = page.getByRole('region', { name: 'Handles ran out', exact: true });
+  await expect(handles).toContainText(
+    'This sub-room is archived. Earlier messages can still be read, and nobody can post.',
+  );
+  // 归档了的谁都进不去：不写“进去以后”那句。
+  await expect(handles).not.toContainText('Your agents can come in once you’re in.');
+  await expectAccessible(page);
+  await handles.getByRole('button', { name: 'Restore' }).click();
+  await expect(handles.getByRole('button', { name: 'Ask to join', exact: true })).toBeVisible();
+  await expect(handles).not.toContainText('This sub-room is archived.');
+  await expect(handles).toContainText('Your agents can come in once you’re in.');
+
+  // 名单上没有的号（看不到、写错了）：照常是对话。
+  await doorOf('99');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible();
+  await expect(page.locator('.sub-room-door')).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
+test('归档了的子房间：对话上面写着归档了，能恢复的人点“恢复”就回来', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${subRoom}&archived`);
+  const notice = page.locator('.sub-room-archived');
+  await expect(notice).toHaveRole('status');
+  await expect(notice).toContainText(
+    'This sub-room is archived. Earlier messages can still be read, and nobody can post.',
+  );
+  await expectAccessible(page);
+  await notice.getByRole('button', { name: 'Restore' }).click();
+  await expect(notice).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
 test('浏览子房间在手机上：一行拆成两层，不横向滚动', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -266,6 +371,13 @@ test('浏览子房间在手机上：一行拆成两层，不横向滚动', async
   await browser.getByRole('button', { name: 'New sub-room' }).click();
   const dialog = page.getByRole('dialog', { name: 'New sub-room' });
   await expect(dialog.getByRole('radio', { name: /^Invite only/u })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await expectAccessible(page);
+
+  // 还没进的一间的卡片：铺满一屏宽，按钮够得着。
+  await page.goto(`${parentRoom}&door=01990d9e-8400-7000-8000-000000000455`);
+  const door = page.getByRole('region', { name: 'Alerts', exact: true });
+  await expect(door.getByRole('button', { name: 'Withdraw request' })).toBeInViewport();
   await expectNoHorizontalOverflow(page);
   await expectAccessible(page);
   expect(failures).toEqual([]);

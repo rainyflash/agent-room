@@ -170,7 +170,20 @@
 a.sub-room-browser__name {
   text-decoration: none;
 }
-a.sub-room-browser__name:hover {
+/* 还没进的：名字是个按钮，点了展开它的卡片；看着和进得去的名字一样。 */
+button.sub-room-browser__name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  background: none;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+}
+a.sub-room-browser__name:hover,
+button.sub-room-browser__name:hover {
   text-decoration: underline;
 }
 .sub-room-browser__purpose,

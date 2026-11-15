@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
 
 import { useAppServices } from '@/app/app-services';
+import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
 import { subRoomsQueryKey } from '@/features/private-rooms/data/sub-room-queries';
 import type { PrivateRoomFailure } from '@/features/private-rooms/domain/private-room';
 import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
@@ -45,7 +46,10 @@ export function useSubRoomActions(parentId: string): SubRoomActions {
         const result = await action();
         setBusy(null);
         if (!result.ok) setFailure({ catalogId: room.catalogId, code: result.error.code });
-        await queries.invalidateQueries({ queryKey: subRoomsQueryKey });
+        // 恢复以后这一间自己的页面也要重读（“已经归档”那一行收起来），所以连房间一起刷新。
+        await queries.invalidateQueries({
+          queryKey: kind === 'restore' ? privateRoomListQueryKey : subRoomsQueryKey,
+        });
       })();
     },
     [queries],

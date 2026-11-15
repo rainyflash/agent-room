@@ -1140,7 +1140,7 @@ function fixtureSubRoomList(): SubRoomList {
       { categoryId: FIXTURE_OPS_CATEGORY, name: 'Ops', position: 1 },
     ],
     subRooms: [
-      ...(subRoomFixture
+      ...(subRoomFixture && fixturePrivateRoom.status !== 'archived'
         ? [
             {
               ...fixtureSubRoom('01', room.name, { categoryId: FIXTURE_WORK_CATEGORY }),
@@ -1178,6 +1178,7 @@ function fixtureSubRoomList(): SubRoomList {
         access: 'request',
         categoryId: FIXTURE_OPS_CATEGORY,
         description: 'Talk about a firing alert here, not in the main room.',
+        managerPrincipalIds: [fixtureMember],
         ...(fixtureSubRoomRequests.has('55') ? { requestedAtUnixMs: 1_763_100_000_000 } : {}),
       }),
       fixtureSubRoom('56', 'Security', {
@@ -1185,6 +1186,7 @@ function fixtureSubRoomList(): SubRoomList {
         access: 'invite_only',
         categoryId: FIXTURE_OPS_CATEGORY,
         description: 'Security problems that are not public yet.',
+        managerPrincipalIds: [fixtureMember, fixtureOwner],
       }),
       ...fixtureCreatedSubRooms,
       ...fixtureArchivedSubRooms
@@ -1261,11 +1263,27 @@ const fixtureArchivedSubRooms: readonly SubRoom[] = [
   }),
 ];
 function fixtureArchivedSubRoomList(): SubRoomList {
+  const current = fixturePrivateRoom.catalogId;
   return {
     ...fixtureSubRoomList(),
-    subRooms: fixtureArchivedSubRooms.filter(
-      (entry) => !fixtureRestoredSubRooms.has(entry.catalogId),
-    ),
+    subRooms: [
+      // `?private&subRoom&archived`：眼前这一间是归档了的，你在里面、能恢复。
+      ...(subRoomFixture && fixturePrivateRoom.status === 'archived'
+        ? [
+            {
+              ...fixtureSubRoom('01', room.name, {
+                categoryId: FIXTURE_WORK_CATEGORY,
+                archivedAtUnixMs: 1_794_400_000_000,
+                archivedByPrincipalId: fixtureOwner,
+                archivedReason: 'manual' as const,
+                canRestore: true,
+              }),
+              catalogId: current,
+            },
+          ]
+        : []),
+      ...fixtureArchivedSubRooms.filter((entry) => !fixtureRestoredSubRooms.has(entry.catalogId)),
+    ],
   };
 }
 const unavailableSubRoom = () =>
@@ -1294,6 +1312,8 @@ const fixtureSubRooms: SubRoomGateway = {
   },
   restore: ({ subRoomId }) => {
     fixtureRestoredSubRooms.add(subRoomId);
+    if (subRoomId === fixturePrivateRoom.catalogId)
+      fixturePrivateRoom = { ...fixturePrivateRoom, status: 'active' };
     return Promise.resolve(ok(undefined));
   },
   revise: unavailableSubRoom,
@@ -2096,8 +2116,12 @@ function LobbyFixture({
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(() =>
     new URLSearchParams(search).get('message'),
   );
+  // 还没进的子房间的卡片（`?door=<房间号>`）：换到别的一页时收起来，和应用的地址一样。
+  const [door, setDoor] = useState<string | null>(() => new URLSearchParams(search).get('door'));
   const updateView = (nextView: RoomPageView): void => {
     const url = new URL(window.location.href);
+    url.searchParams.delete('door');
+    setDoor(null);
     if (nextView === 'space') url.searchParams.delete('view');
     else url.searchParams.set('view', nextView);
     window.history.replaceState(null, '', url);
@@ -2140,6 +2164,18 @@ function LobbyFixture({
                             setSelectedMessageId(null);
                           }
                           updateView(nextView);
+                        }}
+                        door={door}
+                        onOpenDoor={(subRoomId) => {
+                          const url = new URL(window.location.href);
+                          url.searchParams.delete('view');
+                          url.searchParams.set('door', subRoomId);
+                          window.history.replaceState(null, '', url);
+                          setSelectedDirectSessionId(null);
+                          setSelectedAgentId(null);
+                          setSelectedMessageId(null);
+                          setView('space');
+                          setDoor(subRoomId);
                         }}
                         onOpenRoomPanel={(nextView) => {
                           setSelectedDirectSessionId(null);

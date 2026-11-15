@@ -32,6 +32,11 @@ export type LobbySearch = {
   readonly agent?: string;
   readonly direct?: string;
   readonly directory?: 'open';
+  /**
+   * 你还没进的一间子房间（`specs/redesign/sub-rooms.md`“网页”）：父房间的页面上展开成一张卡片，写它是
+   * 干什么的、谁在管，能加入、申请或者撤回。只在父房间的地址上有。
+   */
+  readonly door?: string;
   /** 房间页的版面。不写时看这台设备记着的（`features/lobby/application/room-page-layout.ts`）。 */
   readonly layout?: RoomPageLayout;
   readonly message?: string;
@@ -55,10 +60,12 @@ export function normalizeLobbySearch(search: Record<string, unknown>): LobbySear
   const agent = contextIdentifierSchema.safeParse(search.agent);
   const direct = contextIdentifierSchema.safeParse(search.direct);
   const message = contextIdentifierSchema.safeParse(search.message);
+  const door = routeIdentifierSchema.safeParse(search.door);
   return {
     ...(agent.success ? { agent: agent.data } : {}),
     ...(direct.success ? { direct: direct.data } : {}),
     ...(search.directory === 'open' ? { directory: 'open' as const } : {}),
+    ...(door.success ? { door: door.data } : {}),
     ...(search.layout === 'conversation' || search.layout === 'scene'
       ? { layout: search.layout }
       : {}),
@@ -136,6 +143,11 @@ export function lobbySearchWithView(search: LobbySearch, view: RoomWorkspaceView
 /** 打开对话、资料，或者把 Agent 表格展开成整页。选中的 Agent、私聊和正在看的消息都放开。 */
 export function lobbySearchWithRoomPanel(search: LobbySearch, view: RoomPanelView): LobbySearch {
   return { view, ...kept(search) };
+}
+
+/** 打开一间还没进的子房间的卡片：别的选择都收起来，换到别处（`kept` 不带它）时卡片也收起。 */
+export function lobbySearchWithDoor(search: LobbySearch, subRoomId: string): LobbySearch {
+  return { door: subRoomId, ...kept(search) };
 }
 
 /**

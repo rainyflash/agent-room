@@ -90,8 +90,10 @@ import {
 } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
+import { ArchivedSubRoomNotice } from '@/features/sub-rooms/ui/archived-sub-room-notice';
 import { NewSubRoomDialog } from '@/features/sub-rooms/ui/new-sub-room-dialog';
 import { SubRoomBrowser } from '@/features/sub-rooms/ui/sub-room-browser';
+import { SubRoomDoor } from '@/features/sub-rooms/ui/sub-room-door';
 import { SubRoomPlaces } from '@/features/sub-rooms/ui/sub-room-places';
 import { useUnseenSubRooms } from '@/features/sub-rooms/ui/use-unseen-sub-rooms';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
@@ -125,6 +127,8 @@ function writePanelSize(size: PanelSize): void {
 
 export type LobbyPageProps = {
   readonly catalogId: string;
+  /** 地址里写着的、你还没进的一间子房间：在这一页上展开成它的卡片。 */
+  readonly door: string | null;
   /** 对话占主栏，还是原来的场景（`specs/redesign/room-page.md`）。 */
   readonly layout: RoomPageLayout;
   readonly onExitRoom: () => void;
@@ -134,6 +138,7 @@ export type LobbyPageProps = {
   readonly onSelectedMessageChange: (messageId: string | null) => void;
   readonly onViewChange: (view: RoomWorkspaceView) => void;
   readonly onOpenRoomPanel: (view: RoomPanelView) => void;
+  readonly onOpenDoor: (subRoomId: string) => void;
   readonly principal: WebSession | null;
   readonly roomId: string;
   readonly selectedAgentId: string | null;
@@ -201,6 +206,7 @@ export function LobbyPage(props: LobbyPageProps) {
 
 function ReadyLobby({
   catalogId,
+  door,
   layout,
   onExitRoom,
   onLayoutChange,
@@ -209,6 +215,7 @@ function ReadyLobby({
   onSelectedMessageChange,
   onViewChange,
   onOpenRoomPanel,
+  onOpenDoor,
   principal,
   room,
   scene,
@@ -296,6 +303,24 @@ function ReadyLobby({
   });
   const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
   const subRoom = family !== null && isSubRoomOf(family, catalogId);
+  // 归档了的那一份：地址里的那一间不在没归档的名单里时找它，归档了的子房间页面问能不能恢复。
+  const doorActive =
+    door === null ? undefined : family?.subRooms.find((entry) => entry.catalogId === door);
+  const archivedFamilyQuery = useSubRooms(subRooms, catalogId, {
+    archived: true,
+    enabled:
+      principal !== null &&
+      catalogRoom &&
+      family !== null &&
+      ((door !== null && doorActive === undefined) || (subRoom && archived)),
+  });
+  const archivedFamily =
+    archivedFamilyQuery.data?.ok === true ? archivedFamilyQuery.data.value : null;
+  const doorRoom =
+    doorActive ??
+    (door === null
+      ? undefined
+      : archivedFamily?.subRooms.find((entry) => entry.catalogId === door));
   // 左栏：“浏览子房间”和你在的子房间（眼前是子房间时它也算）；顶栏和“主房间”回到父房间。
   // 一间都没有时，建得了的人也看得到“浏览子房间”和“新建子房间”。
   const hasSubRoomPlaces = family !== null && (family.subRooms.length > 0 || family.canCreate);
@@ -385,14 +410,22 @@ function ReadyLobby({
   // Agent 表格展开成的整页：只在对话版面的主房间里有。开着私聊时地址里写了也先看私聊。
   const agentsPage = conversationLayout && view === 'agents' && selectedDirectSessionId === null;
   // “浏览子房间”：只在对话版面的父房间上有（子房间左栏里那一行去父房间的这一页）。
+  // 还没进的一间子房间的卡片：也只在对话版面的父房间上有；名单上找不到这一间（看不到、号不对）就当没写。
+  const doorPage =
+    conversationLayout &&
+    doorRoom !== undefined &&
+    selectedDirectSessionId === null &&
+    family !== null &&
+    !subRoom;
   const subRoomsPage =
     conversationLayout &&
     view === 'sub-rooms' &&
     selectedDirectSessionId === null &&
     family !== null &&
-    !subRoom;
+    !subRoom &&
+    !doorPage;
   // 展开成整页的东西开着：对话和右栏都不画。
-  const fullPage = agentsPage || subRoomsPage;
+  const fullPage = agentsPage || subRoomsPage || doorPage;
   const unseenSubRooms = useUnseenSubRooms(family, subRoomsPage);
   const localAgentIds = useLocalAgentIds(agentsPage);
   const panel: RoomWorkspaceView = view === 'agents' || view === 'sub-rooms' ? 'space' : view;
@@ -512,7 +545,7 @@ function ReadyLobby({
       );
       [...origins].find((origin) => origin.offsetParent !== null)?.focus();
     }
-  }, [agentsPage, fullPage, subRoomsPage]);
+  }, [agentsPage, doorPage, fullPage, subRoomsPage]);
   // 私聊的列表。对话版面里它在左栏，窄了在房间名旁边的下拉里（点了一项先把下拉关上：`before`）；
   // 场景里它在 Agent 抽屉里。
   const directNavigation = (before?: () => void) =>
@@ -649,7 +682,12 @@ function ReadyLobby({
   );
   const conversationNotices = (
     <>
-      {writesAllowed || selectedDirectSessionId !== null ? null : (
+      {writesAllowed || selectedDirectSessionId !== null ? null : archived && subRoom ? (
+        <ArchivedSubRoomNotice
+          list={family}
+          room={archivedFamily?.subRooms.find((entry) => entry.catalogId === catalogId)}
+        />
+      ) : (
         <p className="room-panel__read-only" role="status">
           {archived ? <Archive aria-hidden="true" /> : <MessageSquareOff aria-hidden="true" />}
           {t(archived ? 'roomWorkspace.archivedNotice' : 'roomWorkspace.readOnlyNotice')}
@@ -891,23 +929,38 @@ function ReadyLobby({
                     />
                   ),
                 }
-              : subRoomsPage
+              : doorPage
                 ? {
-                    title: t('subRooms.browse.title'),
+                    title: doorRoom.name,
+                    aboutAnotherRoom: true,
                     onClose: () => {
                       pageFocus.current = 'closed';
                       closedPage.current = 'sub-rooms';
                       openRoomPanel('conversation');
                     },
-                    content: (
-                      <SubRoomBrowser
-                        list={family}
-                        onCreate={createSubRoom}
-                        principalId={principal?.principalId ?? null}
-                      />
-                    ),
+                    content: <SubRoomDoor list={family} room={doorRoom} />,
                   }
-                : null
+                : subRoomsPage
+                  ? {
+                      title: t('subRooms.browse.title'),
+                      onClose: () => {
+                        pageFocus.current = 'closed';
+                        closedPage.current = 'sub-rooms';
+                        openRoomPanel('conversation');
+                      },
+                      content: (
+                        <SubRoomBrowser
+                          list={family}
+                          onCreate={createSubRoom}
+                          onOpenDoor={(subRoomId) => {
+                            pageFocus.current = 'opened';
+                            onOpenDoor(subRoomId);
+                          }}
+                          principalId={principal?.principalId ?? null}
+                        />
+                      ),
+                    }
+                  : null
           }
           pendingJoinRequests={pendingJoinRequests}
           peopleCount={roster.people.people.length}
