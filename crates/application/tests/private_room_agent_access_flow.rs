@@ -19,6 +19,7 @@ use agent_room_application::{
         PrivateRoomListingStore, PrivateRoomMatrixGateway, PrivateRoomSnapshot, PrivateRoomStore,
         PublicRoomPlatformHold, PublicRoomPlatformHoldStore, SealedJoinCode, SealedSecret,
         SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure, SecretValue,
+        SubRoomDoorSource, SubRoomLink,
     },
     private_rooms::{
         AGENT_KNOCK_TTL_MILLIS, AgentAccessFailureKind, AnswerKnock, InspectAgentAccess,
@@ -50,6 +51,10 @@ use agent_room_domain::{
 };
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
+
+/// 子房间第 2f-2a 步：父房间里的 Agent 成员进子房间。
+#[path = "private_room_agent_access_flow/sub_room_knocks.rs"]
+mod sub_room_knocks;
 
 const NOW: i64 = 1_790_000_000_000;
 const HOUR: i64 = 3_600_000;
@@ -251,7 +256,7 @@ async fn 子房间不给口令_生成和查看都说去父房间_以前建出来
         .await
         .expect("停用照旧能做");
 
-    // Agent 进子房间的规则做好以前不收敲门，说的和没有这间房一样。
+    // 这个 Agent 不是父房间里的 Agent 成员：说的和没有这间房一样（2f-2a）。
     assert_eq!(
         fixture
             .service
@@ -1076,10 +1081,9 @@ impl Fixture {
         Self::with_room(room)
     }
 
-    /// 挂在另一间房下面的子房间（`specs/redesign/sub-rooms.md`）。
+    /// 挂在另一间房下面、没有门的子房间（`specs/redesign/sub-rooms.md`），父房间也在。
     fn sub_room() -> Self {
-        let parent = RoomCatalogId::from_uuid(Uuid::from_u128(77));
-        Self::with_snapshot(snapshot(active_room()).under(parent))
+        sub_room_knocks::family(RoomJoinMode::Open, false)
     }
 
     fn with_room(room: PrivateRoom) -> Self {
@@ -1087,6 +1091,11 @@ impl Fixture {
     }
 
     fn with_snapshot(room: PrivateRoomSnapshot) -> Self {
+        Self::with_rooms(vec![room], None)
+    }
+
+    /// 几间房，外加子房间的父子关系（门在里面）。
+    fn with_rooms(rooms: Vec<PrivateRoomSnapshot>, door: Option<SubRoomLink>) -> Self {
         let store = Arc::new(MemoryAccessStore::default());
         let sealer = Arc::new(FakeSealer::default());
         let matrix = Arc::new(RecordingMatrix::default());
@@ -1094,7 +1103,7 @@ impl Fixture {
         let listing = Arc::new(FixedListing::default());
         let holds = Arc::new(FixedHold::default());
         let service = PrivateRoomAgentAccessService::new(PrivateRoomAgentAccessDependencies {
-            rooms: Arc::new(FixedRooms(room)),
+            rooms: Arc::new(FixedRooms(rooms)),
             access: store.clone(),
             memberships: Arc::new(FixedMemberships),
             matrix: matrix.clone(),
@@ -1108,6 +1117,7 @@ impl Fixture {
             source_weights: Arc::new(SharedNine),
             listings: listing.clone(),
             holds: holds.clone(),
+            sub_room_doors: Arc::new(FixedDoors(door)),
         });
         Self {
             service,
@@ -1300,10 +1310,19 @@ fn with_speaker(mut room: PrivateRoom) -> PrivateRoom {
 }
 
 fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
+    snapshot_in(catalog_id(), matrix_room(), room)
+}
+
+/// 别的房间号、别的聊天服务器房间的快照（子房间的父房间）。
+fn snapshot_in(
+    catalog: RoomCatalogId,
+    matrix: MatrixRoomReference,
+    room: PrivateRoom,
+) -> PrivateRoomSnapshot {
     // 目录、实例和房间的生命周期必须一致。
     let archived = room.status() == PrivateRoomLifecycleStatus::Archived;
     let catalog = RoomCatalog::new(
-        catalog_id(),
+        catalog,
         RoomCatalogFields {
             kind: RoomCatalogKind::PrivateRoom,
             slug: None,
@@ -1325,8 +1344,8 @@ fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
     let instance = RoomInstance::restore(
         RoomInstanceId::from_uuid(Uuid::from_u128(20)),
         RoomInstanceFields {
-            catalog_id: catalog_id(),
-            matrix_room_id: matrix_room(),
+            catalog_id: catalog.id(),
+            matrix_room_id: matrix,
             region: None,
             capacity: RoomCapacity::standard(),
             allocated_slots: 0,
@@ -1481,7 +1500,20 @@ impl JoinCodeSealer for FakeSealer {
     }
 }
 
-struct FixedRooms(PrivateRoomSnapshot);
+struct FixedRooms(Vec<PrivateRoomSnapshot>);
+
+/// 子房间的父子关系：只有这一间。
+struct FixedDoors(Option<SubRoomLink>);
+
+impl SubRoomDoorSource for FixedDoors {
+    fn sub_room_door(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>> {
+        let found = self.0.clone().filter(|link| link.catalog_id == catalog_id);
+        Box::pin(async move { Ok(found) })
+    }
+}
 
 impl PrivateRoomStore for FixedRooms {
     fn create<'a>(
@@ -1495,7 +1527,11 @@ impl PrivateRoomStore for FixedRooms {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
-        let found = (catalog_id == self.0.catalog().id()).then(|| self.0.clone());
+        let found = self
+            .0
+            .iter()
+            .find(|snapshot| snapshot.catalog().id() == catalog_id)
+            .cloned();
         Box::pin(async move { Ok(found) })
     }
     fn list_for_principal(
@@ -1635,29 +1671,41 @@ struct MemoryAccessStore {
     codes: Mutex<BTreeMap<RoomCatalogId, ([u8; 32], PrivateRoomJoinCodeRecord)>>,
     /// 封存的口令另放一处：`install_code` 像旧版控制面一样只写摘要，不碰它。
     sealed: Mutex<BTreeMap<RoomCatalogId, SealedSecret>>,
-    members: Mutex<BTreeMap<AgentId, PrivateRoomAgentMemberRecord>>,
-    joined_via: Mutex<BTreeMap<AgentId, PrivateRoomAgentJoinedVia>>,
+    members: Mutex<BTreeMap<(RoomCatalogId, AgentId), PrivateRoomAgentMemberRecord>>,
+    joined_via: Mutex<BTreeMap<(RoomCatalogId, AgentId), PrivateRoomAgentJoinedVia>>,
     attempts: Mutex<BTreeMap<String, (UtcMillis, u32)>>,
-    knocks: Mutex<BTreeMap<AgentId, PrivateRoomAgentKnockRecord>>,
+    knocks: Mutex<BTreeMap<(RoomCatalogId, AgentId), PrivateRoomAgentKnockRecord>>,
 }
 
 impl MemoryAccessStore {
     fn joined_via(&self, agent_id: AgentId) -> Option<PrivateRoomAgentJoinedVia> {
-        self.joined_via.lock().unwrap().get(&agent_id).copied()
+        self.joined_via
+            .lock()
+            .unwrap()
+            .get(&(catalog_id(), agent_id))
+            .copied()
     }
 
     fn knock_status(&self, agent_id: AgentId) -> Option<PrivateRoomAgentKnockStatus> {
+        self.knock_status_in(catalog_id(), agent_id)
+    }
+
+    fn knock_status_in(
+        &self,
+        catalog: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> Option<PrivateRoomAgentKnockStatus> {
         self.knocks
             .lock()
             .unwrap()
-            .get(&agent_id)
+            .get(&(catalog, agent_id))
             .map(|knock| knock.status)
     }
 
     /// 别的 Agent 在等：不经用例，直接记下。
     fn add_waiting(&self, agent_id: AgentId, knocked_at: i64) {
         self.knocks.lock().unwrap().insert(
-            agent_id,
+            (catalog_id(), agent_id),
             PrivateRoomAgentKnockRecord {
                 catalog_id: catalog_id(),
                 agent_id,
@@ -1705,10 +1753,18 @@ impl MemoryAccessStore {
     }
 
     fn status(&self, agent_id: AgentId) -> Option<PrivateRoomAgentMemberStatus> {
+        self.status_in(catalog_id(), agent_id)
+    }
+
+    fn status_in(
+        &self,
+        catalog: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> Option<PrivateRoomAgentMemberStatus> {
         self.members
             .lock()
             .unwrap()
-            .get(&agent_id)
+            .get(&(catalog, agent_id))
             .map(|member| member.status)
     }
 
@@ -1793,17 +1849,29 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
     }
     fn agent_member(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
         agent_id: AgentId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomAgentMemberRecord>>> {
-        let found = self.members.lock().unwrap().get(&agent_id).cloned();
+        let found = self
+            .members
+            .lock()
+            .unwrap()
+            .get(&(catalog_id, agent_id))
+            .cloned();
         Box::pin(async move { Ok(found) })
     }
     fn agent_members(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentMemberRecord>>> {
-        let all = self.members.lock().unwrap().values().cloned().collect();
+        let all = self
+            .members
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((catalog, _), _)| *catalog == catalog_id)
+            .map(|(_, member)| member.clone())
+            .collect();
         Box::pin(async move { Ok(all) })
     }
     fn admit_agent(
@@ -1815,18 +1883,19 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<()>> {
         let mut members = self.members.lock().unwrap();
+        let key = (catalog_id, agent_id);
         let rejoined = members
-            .get(&agent_id)
+            .get(&key)
             .is_none_or(|member| member.status != PrivateRoomAgentMemberStatus::Joined);
         if rejoined {
-            self.joined_via.lock().unwrap().insert(agent_id, via);
+            self.joined_via.lock().unwrap().insert(key, via);
         }
         let joined_at = members
-            .get(&agent_id)
+            .get(&key)
             .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
             .map_or(now, |member| member.joined_at);
         members.insert(
-            agent_id,
+            key,
             PrivateRoomAgentMemberRecord {
                 catalog_id,
                 agent_id,
@@ -1843,7 +1912,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
     }
     fn remove_agent(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
         agent_id: AgentId,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<bool>> {
@@ -1851,7 +1920,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
             .members
             .lock()
             .unwrap()
-            .get_mut(&agent_id)
+            .get_mut(&(catalog_id, agent_id))
             .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
             .map(|member| {
                 member.status = PrivateRoomAgentMemberStatus::Removed;
@@ -1903,7 +1972,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
     ) -> PortFuture<'_, RepositoryResult<PrivateRoomAgentKnockOutcome>> {
         let mut knocks = self.knocks.lock().unwrap();
         let outcome = if let Some(declined) = knocks
-            .get(&agent_id)
+            .get(&(catalog_id, agent_id))
             .filter(|knock| knock.status == PrivateRoomAgentKnockStatus::Declined)
         {
             PrivateRoomAgentKnockOutcome::Declined(declined.clone())
@@ -1911,7 +1980,8 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
             let others: Vec<UtcMillis> = knocks
                 .values()
                 .filter(|knock| {
-                    knock.agent_id != agent_id
+                    knock.catalog_id == catalog_id
+                        && knock.agent_id != agent_id
                         && knock.status == PrivateRoomAgentKnockStatus::Waiting
                         && knock.expires_at > now
                 })
@@ -1931,7 +2001,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
                     expires_at,
                     decided_at: None,
                 };
-                knocks.insert(agent_id, record.clone());
+                knocks.insert((catalog_id, agent_id), record.clone());
                 PrivateRoomAgentKnockOutcome::Waiting(record)
             }
         };
@@ -1939,7 +2009,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
     }
     fn waiting_knocks(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
         now: UtcMillis,
     ) -> PortFuture<'_, RepositoryResult<Vec<PrivateRoomAgentKnockRecord>>> {
         let mut waiting: Vec<_> = self
@@ -1948,7 +2018,9 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
             .unwrap()
             .values()
             .filter(|knock| {
-                knock.status == PrivateRoomAgentKnockStatus::Waiting && knock.expires_at > now
+                knock.catalog_id == catalog_id
+                    && knock.status == PrivateRoomAgentKnockStatus::Waiting
+                    && knock.expires_at > now
             })
             .cloned()
             .collect();
@@ -1964,16 +2036,15 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
             .knocks
             .lock()
             .unwrap()
-            .get(&agent_id)
-            .filter(|knock| knock.knocked_at >= since)
+            .values()
+            .filter(|knock| knock.agent_id == agent_id && knock.knocked_at >= since)
             .cloned()
-            .into_iter()
             .collect();
         Box::pin(async move { Ok(found) })
     }
     fn decide_knock(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
         agent_id: AgentId,
         status: PrivateRoomAgentKnockStatus,
         _decided_by: PrincipalId,
@@ -1983,7 +2054,7 @@ impl PrivateRoomAgentAccessStore for MemoryAccessStore {
             .knocks
             .lock()
             .unwrap()
-            .get_mut(&agent_id)
+            .get_mut(&(catalog_id, agent_id))
             .filter(|knock| knock.status == PrivateRoomAgentKnockStatus::Waiting)
             .map(|knock| {
                 knock.status = status;

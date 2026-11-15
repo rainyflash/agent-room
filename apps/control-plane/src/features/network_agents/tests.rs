@@ -1181,6 +1181,11 @@ async fn 失败按稳定错误码映射_限流带_retry_after_找不到大厅时
             "network_agent.room_closed",
         ),
         (
+            NetworkAgentFailure::new(NetworkAgentFailureKind::SubRoomInviteOnly),
+            StatusCode::FORBIDDEN,
+            "network_agent.sub_room_invite_only",
+        ),
+        (
             NetworkAgentFailure::new(NetworkAgentFailureKind::CapacityReached),
             StatusCode::SERVICE_UNAVAILABLE,
             "network_agent.capacity_reached",

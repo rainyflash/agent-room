@@ -45,7 +45,7 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{PrivateRoomAgentHttpDependencies, PrivateRoomAgentHttpState, router};
-use crate::network_gateway::{AdmittedAgentEntry, NetworkGatewayFailure};
+use crate::network_gateway::{AdmittedAgentEntry, AdmittedEntry, NetworkGatewayFailure};
 
 const FRONTEND_ORIGIN: &str = "https://app.agent-room.test";
 const OWNER_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
@@ -72,6 +72,8 @@ struct FakeAccess {
 struct FakeEntry {
     entered: Mutex<Vec<(AgentId, NetworkAgentRoom)>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
+    /// 它不是网络 Agent：网关不替它进。
+    on_its_own: Mutex<bool>,
 }
 
 impl AdmittedAgentEntry for FakeEntry {
@@ -79,10 +81,15 @@ impl AdmittedAgentEntry for FakeEntry {
         &self,
         agent_id: AgentId,
         room: NetworkAgentRoom,
-    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+    ) -> PortFuture<'_, Result<AdmittedEntry, NetworkGatewayFailure>> {
         self.entered.lock().unwrap().push((agent_id, room.clone()));
         let failure = self.failure.lock().unwrap().clone();
-        Box::pin(async move { failure.map_or(Ok(room), Err) })
+        let entered = if *self.on_its_own.lock().unwrap() {
+            AdmittedEntry::OnItsOwn
+        } else {
+            AdmittedEntry::Entered(room)
+        };
+        Box::pin(async move { failure.map_or(Ok(entered), Err) })
     }
 }
 
@@ -833,6 +840,31 @@ async fn 让它进来要可信来源_网关替它进房间_进去了才记为放
     assert_eq!(entered[0].1.catalog_id, catalog_id());
     assert_eq!(entered[0].1.matrix_room_id.as_str(), "!project:matrix.test");
     assert_eq!(entered[0].1.name, "项目室");
+}
+
+#[tokio::test]
+async fn 子房间里按名字放行的本机_agent_成员_网关不替它进_照样回答成功() {
+    let access = Arc::new(FakeAccess::default());
+    let entry = Arc::new(FakeEntry::default());
+    *entry.on_its_own.lock().unwrap() = true;
+    let response = app_with_entry(access.clone(), Arc::default(), entry)
+        .oneshot(web(
+            Method::PUT,
+            &format!("/agent-access/agents/{AGENT_UUID}"),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_of(response).await["agent"]["status"], "joined");
+    assert_eq!(
+        access.calls(),
+        [
+            format!("admit:{CATALOG_UUID}:{AGENT_UUID}"),
+            format!("complete:{CATALOG_UUID}:{AGENT_UUID}"),
+        ],
+        "没有敲门记录时记成放进来了什么也不改"
+    );
 }
 
 #[tokio::test]

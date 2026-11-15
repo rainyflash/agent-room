@@ -462,6 +462,7 @@ async fn admit_knock(
 }
 
 /// 放行：记为 Agent 成员，网关替它进房间，进去了才把敲门记为放进来了。网页和设备共用。
+/// 子房间里按名字放行的本机 Agent 成员由它自己进（`AdmittedEntry::OnItsOwn`），这里照样回答成功。
 async fn admit(
     state: &PrivateRoomAgentHttpState,
     answer: AnswerKnock,

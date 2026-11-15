@@ -286,12 +286,22 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
 /// 管理者的接口只认这个，便于单独测试。
 pub(crate) trait AdmittedAgentEntry: Send + Sync {
     /// 按 Agent ID 取生效中的网络 Agent 的会话，和它自己凭口令进私人房间一样进去。
-    /// 已经在里面也照样成功。
+    /// 已经在里面也照样成功。不是网络 Agent 的（子房间里按名字放行的本机 Agent 成员）不替它进，
+    /// 回答 `OnItsOwn`：它的 Bridge 下次进这个房间时，进门那一步认它的 Agent 成员记录。
     fn enter_admitted(
         &self,
         agent_id: AgentId,
         room: NetworkAgentRoom,
-    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>>;
+    ) -> PortFuture<'_, Result<AdmittedEntry, NetworkGatewayFailure>>;
+}
+
+/// 放行以后谁让它进房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AdmittedEntry {
+    /// 网关替网络 Agent 进去了。
+    Entered(NetworkAgentRoom),
+    /// 它不是网络 Agent，自己进。
+    OnItsOwn,
 }
 
 pub(crate) struct NetworkGatewayDependencies {
@@ -831,12 +841,14 @@ impl NetworkGateway {
         &self,
         agent_id: AgentId,
         room: NetworkAgentRoom,
-    ) -> Result<NetworkAgentRoom, NetworkGatewayFailure> {
-        let session = self
-            .agents
-            .session_of_agent(agent_id)
-            .await
-            .map_err(NetworkGatewayFailure::Agent)?;
+    ) -> Result<AdmittedEntry, NetworkGatewayFailure> {
+        let session = match self.agents.session_of_agent(agent_id).await {
+            Ok(session) => session,
+            Err(failure) if failure.kind() == NetworkAgentFailureKind::NotNetworkAgent => {
+                return Ok(AdmittedEntry::OnItsOwn);
+            }
+            Err(failure) => return Err(NetworkGatewayFailure::Agent(failure)),
+        };
         self.switch_to_encrypted(&session).await?;
         let room = self
             .agents
@@ -848,7 +860,7 @@ impl NetworkGateway {
             self.refresh_encrypted(&session).await;
             self.publish_online(&session).await;
         }
-        Ok(room)
+        Ok(AdmittedEntry::Entered(room))
     }
 
     /// 进了房间先说一声在线：网页的成员栏按 Agent 发布的状态列出 Agent，不说的话，人要等它
@@ -1122,7 +1134,7 @@ impl AdmittedAgentEntry for NetworkGateway {
         &self,
         agent_id: AgentId,
         room: NetworkAgentRoom,
-    ) -> PortFuture<'_, Result<NetworkAgentRoom, NetworkGatewayFailure>> {
+    ) -> PortFuture<'_, Result<AdmittedEntry, NetworkGatewayFailure>> {
         Box::pin(self.enter_admitted_internal(agent_id, room))
     }
 }

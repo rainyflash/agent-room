@@ -174,9 +174,9 @@ pub use rooms::{
 };
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
-    SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
-    SubRoomPolicyRecord, SubRoomPrivacy, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore,
-    SubRoomSyncScope, SubRoomSyncTask,
+    SubRoomDoorSource, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange,
+    SubRoomParentFacts, SubRoomPolicyRecord, SubRoomPrivacy, SubRoomRevision, SubRoomRevisionBlock,
+    SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
 };
 pub use rooms::{
     NewSubRoomCategory, SubRoomCategory, SubRoomCategoryName, SubRoomCategoryOutcome,

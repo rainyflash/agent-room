@@ -258,6 +258,15 @@ pub enum SubRoomSyncScope {
     Under(RoomCatalogId),
 }
 
+/// Agent 进门那一边（2f-2a）只要一间子房间挂在谁下面、哪种门，不用整个 [`SubRoomStore`]。
+pub trait SubRoomDoorSource: Send + Sync {
+    /// 这间房是子房间时，它的父子关系；不是子房间为空。
+    fn sub_room_door(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>>;
+}
+
 /// 分类（2e-1）、归档和恢复（2e-2）也是这个存储口子的一部分：子房间的用例拿同一份存储。
 pub trait SubRoomStore: SubRoomCategoryStore + SubRoomArchiveStore + Send + Sync {
     /// 这间房是子房间时，它的父子关系。
