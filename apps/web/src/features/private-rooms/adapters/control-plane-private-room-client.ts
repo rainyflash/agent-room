@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 import {
   admittedAgentSchema,
   joinCodeSchema,
@@ -58,23 +56,14 @@ import {
   type RoomNoticeGateway,
   type WrittenRoomNotice,
 } from '@/features/room-notice/domain/room-notice';
-import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
-import { err, ok, type Result } from '@/shared/result';
+import { ok, type Result } from '@/shared/result';
+
+import { PrivateRoomHttp, type PrivateRoomHttpOptions } from './private-room-http';
 
 /** 放行时服务器替 Agent 进房间：第一次进加密房间要开加密存储、建身份，比平常的请求慢。 */
 const ADMIT_TIMEOUT_MS = 45_000;
 
-const errorEnvelopeSchema = z.looseObject({
-  code: z.string().min(1),
-  correlationId: z.string().optional(),
-  retryable: z.boolean().optional(),
-});
-
-export type ControlPlanePrivateRoomClientOptions = {
-  readonly baseUrl: string;
-  readonly fetch?: typeof globalThis.fetch;
-  readonly timeoutMs?: number;
-};
+export type ControlPlanePrivateRoomClientOptions = PrivateRoomHttpOptions;
 
 export class ControlPlanePrivateRoomClient
   implements
@@ -86,22 +75,14 @@ export class ControlPlanePrivateRoomClient
     RoomNoticeGateway,
     RoomRoleChangeGateway
 {
-  readonly #baseUrl: string;
-  readonly #fetch: typeof globalThis.fetch;
-  readonly #timeoutMs: number;
+  readonly #http: PrivateRoomHttp;
 
-  constructor({
-    baseUrl,
-    fetch: fetchImplementation = globalThis.fetch.bind(globalThis),
-    timeoutMs = 8_000,
-  }: ControlPlanePrivateRoomClientOptions) {
-    this.#baseUrl = baseUrl;
-    this.#fetch = fetchImplementation;
-    this.#timeoutMs = timeoutMs;
+  constructor(options: ControlPlanePrivateRoomClientOptions) {
+    this.#http = new PrivateRoomHttp(options);
   }
 
   async list(): Promise<Result<readonly PrivateRoom[], PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       '/private-rooms',
       { method: 'GET' },
       privateRoomListSchema,
@@ -114,7 +95,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   origin(catalogId: string): Promise<Result<PrivateRoomOrigin, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `/private-rooms/${encodeURIComponent(catalogId)}/origin`,
       { method: 'GET' },
       privateRoomOriginSchema,
@@ -124,7 +105,7 @@ export class ControlPlanePrivateRoomClient
   async people(
     catalogId: string,
   ): Promise<Result<readonly PrivateRoomPerson[], PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       `/private-rooms/${encodeURIComponent(catalogId)}/people`,
       { method: 'GET' },
       privateRoomPeopleSchema,
@@ -135,7 +116,7 @@ export class ControlPlanePrivateRoomClient
   async roleChanges(
     catalogId: string,
   ): Promise<Result<readonly RoomRoleChange[], PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       `/private-rooms/${encodeURIComponent(catalogId)}/role-changes`,
       { method: 'GET' },
       roomRoleChangesSchema,
@@ -225,7 +206,7 @@ export class ControlPlanePrivateRoomClient
     catalogId: string,
     text: string,
   ): Promise<Result<WrittenRoomNotice, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `/private-rooms/${encodeURIComponent(catalogId)}/notice`,
       { body: JSON.stringify({ text }), method: 'PUT' },
       writtenRoomNoticeSchema,
@@ -239,7 +220,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   agentAccess(catalogId: string): Promise<Result<PrivateRoomAgentAccess, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       this.#agentAccessPath(catalogId),
       { method: 'GET' },
       privateRoomAgentAccessSchema,
@@ -249,7 +230,7 @@ export class ControlPlanePrivateRoomClient
   async agentKnocks(
     catalogId: string,
   ): Promise<Result<readonly PrivateRoomAgentKnock[], PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       `${this.#agentAccessPath(catalogId)}/knocks`,
       { method: 'GET' },
       privateRoomAgentKnocksSchema,
@@ -261,7 +242,7 @@ export class ControlPlanePrivateRoomClient
     catalogId: string,
     agentId: string,
   ): Promise<Result<PrivateRoomAgentMember, PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       `${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`,
       { method: 'PUT' },
       admittedAgentSchema,
@@ -271,13 +252,16 @@ export class ControlPlanePrivateRoomClient
   }
 
   declineKnock(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#send(`${this.#agentAccessPath(catalogId)}/knocks/${encodeURIComponent(agentId)}`, {
-      method: 'DELETE',
-    });
+    return this.#http.send(
+      `${this.#agentAccessPath(catalogId)}/knocks/${encodeURIComponent(agentId)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   generateJoinCode(catalogId: string): Promise<Result<JoinCode, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `${this.#agentAccessPath(catalogId)}/code`,
       { method: 'PUT' },
       joinCodeSchema,
@@ -285,7 +269,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   revealJoinCode(catalogId: string): Promise<Result<JoinCode, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `${this.#agentAccessPath(catalogId)}/code`,
       { method: 'GET' },
       joinCodeSchema,
@@ -293,11 +277,11 @@ export class ControlPlanePrivateRoomClient
   }
 
   disableJoinCode(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#send(`${this.#agentAccessPath(catalogId)}/code`, { method: 'DELETE' });
+    return this.#http.send(`${this.#agentAccessPath(catalogId)}/code`, { method: 'DELETE' });
   }
 
   inviteLink(catalogId: string): Promise<Result<PrivateRoomInviteLink, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       this.#inviteLinkPath(catalogId),
       { method: 'GET' },
       privateRoomInviteLinkSchema,
@@ -308,7 +292,7 @@ export class ControlPlanePrivateRoomClient
     catalogId: string,
     permissions?: PrivateRoomPermissions,
   ): Promise<Result<PrivateRoomInviteLink, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       this.#inviteLinkPath(catalogId),
       {
         body: JSON.stringify(permissions === undefined ? {} : { permissions }),
@@ -319,12 +303,12 @@ export class ControlPlanePrivateRoomClient
   }
 
   disableInviteLink(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#send(this.#inviteLinkPath(catalogId), { method: 'DELETE' });
+    return this.#http.send(this.#inviteLinkPath(catalogId), { method: 'DELETE' });
   }
 
   // 秘密放在请求正文里，不进地址：地址会进服务器和代理的日志。
   previewInvite(secret: string): Promise<Result<PrivateRoomInvitePreview, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       '/private-room-invites/preview',
       { body: JSON.stringify({ secret }), method: 'POST' },
       privateRoomInvitePreviewSchema,
@@ -332,7 +316,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   redeemInvite(secret: string): Promise<Result<RedeemedPrivateRoomInvite, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       '/private-room-invites/redeem',
       { body: JSON.stringify({ secret }), method: 'POST' },
       redeemedPrivateRoomInviteSchema,
@@ -340,14 +324,18 @@ export class ControlPlanePrivateRoomClient
   }
 
   listing(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
-    return this.#request(this.#listingPath(catalogId), { method: 'GET' }, privateRoomListingSchema);
+    return this.#http.request(
+      this.#listingPath(catalogId),
+      { method: 'GET' },
+      privateRoomListingSchema,
+    );
   }
 
   updateListing(
     catalogId: string,
     settings: PrivateRoomListingSettings,
   ): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       this.#listingPath(catalogId),
       {
         body: JSON.stringify({
@@ -363,7 +351,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   changeShareCode(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `${this.#listingPath(catalogId)}/share-code`,
       { method: 'POST' },
       privateRoomListingSchema,
@@ -371,7 +359,7 @@ export class ControlPlanePrivateRoomClient
   }
 
   join(catalogId: string): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       `/private-rooms/${encodeURIComponent(catalogId)}/join`,
       { method: 'POST' },
       publicRoomMembershipSchema,
@@ -382,7 +370,7 @@ export class ControlPlanePrivateRoomClient
     catalogId: string,
     message: string,
   ): Promise<Result<PublicRoomMembership, PrivateRoomFailure>> {
-    return this.#request(
+    return this.#http.request(
       this.#joinRequestsPath(catalogId),
       { body: JSON.stringify({ message }), method: 'POST' },
       publicRoomMembershipSchema,
@@ -390,13 +378,13 @@ export class ControlPlanePrivateRoomClient
   }
 
   withdrawJoinRequest(catalogId: string): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#send(this.#joinRequestsPath(catalogId), { method: 'DELETE' });
+    return this.#http.send(this.#joinRequestsPath(catalogId), { method: 'DELETE' });
   }
 
   async joinRequests(
     catalogId: string,
   ): Promise<Result<readonly PendingJoinRequest[], PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       this.#joinRequestsPath(catalogId),
       { method: 'GET' },
       pendingJoinRequestsSchema,
@@ -409,7 +397,7 @@ export class ControlPlanePrivateRoomClient
     principalId: string,
     decision: JoinRequestDecision,
   ): Promise<Result<void, PrivateRoomFailure>> {
-    const response = await this.#request(
+    const response = await this.#http.request(
       `${this.#joinRequestsPath(catalogId)}/${encodeURIComponent(principalId)}`,
       { body: JSON.stringify({ decision }), method: 'PUT' },
       answeredJoinRequestSchema,
@@ -418,9 +406,12 @@ export class ControlPlanePrivateRoomClient
   }
 
   removeCodeAgent(catalogId: string, agentId: string): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#send(`${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`, {
-      method: 'DELETE',
-    });
+    return this.#http.send(
+      `${this.#agentAccessPath(catalogId)}/agents/${encodeURIComponent(agentId)}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   #joinRequestsPath(catalogId: string): string {
@@ -454,86 +445,6 @@ export class ControlPlanePrivateRoomClient
   }
 
   #roomRequest(path: string, init: RequestInit): Promise<Result<PrivateRoom, PrivateRoomFailure>> {
-    return this.#request(path, init, privateRoomSchema);
+    return this.#http.request(path, init, privateRoomSchema);
   }
-
-  #request<T>(
-    path: string,
-    init: RequestInit,
-    schema: z.ZodType<T>,
-    timeoutMs = this.#timeoutMs,
-  ): Promise<Result<T, PrivateRoomFailure>> {
-    return this.#exchange(
-      path,
-      init,
-      async (response) => {
-        const parsed = schema.safeParse(await response.json());
-        return parsed.success
-          ? ok(parsed.data)
-          : err({ code: 'private_room.invalid_response', retryable: false });
-      },
-      timeoutMs,
-    );
-  }
-
-  /** Writes that answer 204 without a body. */
-  #send(path: string, init: RequestInit): Promise<Result<void, PrivateRoomFailure>> {
-    return this.#exchange(path, init, () => Promise.resolve(ok(undefined)), this.#timeoutMs);
-  }
-
-  async #exchange<T>(
-    path: string,
-    init: RequestInit,
-    read: (response: Response) => Promise<Result<T, PrivateRoomFailure>>,
-    timeoutMs: number,
-  ): Promise<Result<T, PrivateRoomFailure>> {
-    const controller = new AbortController();
-    const timeout = globalThis.setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
-    try {
-      const headers = new Headers(init.headers);
-      headers.set('Accept', 'application/json');
-      if (init.body !== undefined) {
-        headers.set('Content-Type', 'application/json');
-      }
-      const response = await this.#fetch(controlPlaneEndpoint(this.#baseUrl, path), {
-        ...init,
-        cache: 'no-store',
-        credentials: 'include',
-        headers,
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        return err(await readFailure(response));
-      }
-      return await read(response);
-    } catch {
-      return err({ code: 'private_room.unreachable', retryable: true });
-    } finally {
-      globalThis.clearTimeout(timeout);
-    }
-  }
-}
-
-async function readFailure(response: Response): Promise<PrivateRoomFailure> {
-  const correlationId = response.headers.get('x-correlation-id') ?? undefined;
-  try {
-    const parsed = errorEnvelopeSchema.safeParse(await response.json());
-    if (parsed.success) {
-      const responseCorrelationId = parsed.data.correlationId ?? correlationId;
-      return {
-        code: parsed.data.code,
-        retryable: parsed.data.retryable ?? response.status >= 500,
-        ...(responseCorrelationId === undefined ? {} : { correlationId: responseCorrelationId }),
-      };
-    }
-  } catch {
-    // 响应体不可用时仍保留确定性的 HTTP 边界。
-  }
-  return {
-    code: `private_room.http_${String(response.status)}`,
-    retryable: response.status >= 500,
-    ...(correlationId === undefined ? {} : { correlationId }),
-  };
 }

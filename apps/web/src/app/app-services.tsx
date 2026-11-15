@@ -75,6 +75,8 @@ export type AppServices = {
   readonly publicRoomJoins?: import('@/features/private-rooms/domain/public-room-join').PublicRoomJoinGateway;
   /** 房间的身份变动记录，房主和管理员看；测试和夹具里可以没有。 */
   readonly roomRoleChanges?: import('@/features/private-rooms/domain/room-role-changes').RoomRoleChangeGateway;
+  /** 子房间：名单、建、进出、门和管理、分类、房间的三项设置；测试和夹具里可以没有。 */
+  readonly subRooms?: import('@/features/private-rooms/domain/sub-rooms').SubRoomGateway;
   /** 房主和管理员改房间的常驻公告；测试和夹具里可以没有。 */
   readonly roomNotices?: import('@/features/room-notice/domain/room-notice').RoomNoticeGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */

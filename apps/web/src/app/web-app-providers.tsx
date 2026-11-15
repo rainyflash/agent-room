@@ -44,6 +44,7 @@ import { MatrixAccountPreferencesGateway } from '@/features/preferences/adapters
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
 import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters/control-plane-private-room-client';
+import { ControlPlaneSubRoomClient } from '@/features/private-rooms/adapters/control-plane-sub-room-client';
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlanePublicWatchClient } from '@/features/public-watch/adapters/control-plane-public-watch-client';
@@ -260,6 +261,7 @@ export function createCloudRuntime(
     roomRoleChanges: privateRooms,
     publicRoomEntry: privateRooms,
     publicRoomJoins: privateRooms,
+    subRooms: new ControlPlaneSubRoomClient(businessApi),
     // 不登录也能看：不放进登录范围，没登录的人打开别的页面时清理登录状态也不会中止它。
     publicWatch: new ControlPlanePublicWatchClient({
       baseUrl: config.controlPlaneUrl,
