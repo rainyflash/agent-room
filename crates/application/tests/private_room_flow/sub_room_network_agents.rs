@@ -5,8 +5,9 @@
 use agent_room_application::{
     ports::PrivateRoomSnapshot,
     private_rooms::{
-        AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomListing, AgentSubRooms,
-        ArchiveAgentSubRoom, CreateAgentSubRoom, ListAgentSubRooms, PrivateRoomResult,
+        AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomListing, AgentSubRoomManagement,
+        AgentSubRooms, ArchiveAgentSubRoom, CreateAgentSubRoom, FindAgentManagedSubRoom,
+        ListAgentSubRooms, PrivateRoomResult,
     },
 };
 use agent_room_domain::{
@@ -456,4 +457,112 @@ async fn 合成主体是父房间的房主时照房主归档_谁建的都行_本
         rooms.store.room(21).status(),
         PrivateRoomLifecycleStatus::Active
     );
+}
+
+// ---- 认出它管得了的子房间（2h-4）
+
+async fn managed_by(
+    rooms: &Rooms,
+    principal: u128,
+    catalog: u128,
+) -> PrivateRoomResult<Option<PrivateRoomSnapshot>> {
+    rooms
+        .service
+        .agent_managed_sub_room(FindAgentManagedSubRoom {
+            actor: PrivateRoomActor::NetworkAgent(device(
+                principal_id(principal),
+                "@user-0123abcd:matrix.test",
+            )),
+            agent_id: network_agent(),
+            catalog_id: catalog_id(catalog),
+        })
+        .await
+}
+
+#[tokio::test]
+async fn 合成主体是父房间的房主时_每间子房间都管得了_整间房回空() {
+    let rooms = Rooms::new();
+    rooms.store.seed(&Seed::open(20, "release"));
+
+    let managed = managed_by(&rooms, OWNER, 20)
+        .await
+        .expect("房主管得了")
+        .expect("是子房间");
+    assert_eq!(managed.catalog().id(), catalog_id(20));
+    assert_eq!(
+        managed_by(&rooms, OWNER, PARENT).await.expect("整间房"),
+        None,
+        "不是子房间：照整间房认"
+    );
+}
+
+#[tokio::test]
+async fn 凭口令进来的网络_agent_管得了它建的_还在里面的子房间() {
+    let rooms = with_network_agent();
+    create(&rooms, by_network(PARENT, 20, "Its own"))
+        .await
+        .expect("它建了一间");
+    admit(&rooms, 20);
+
+    let managed = managed_by(&rooms, NETWORK, 20)
+        .await
+        .expect("建它的 Agent 管得了")
+        .expect("是子房间");
+    assert_eq!(managed.catalog().id(), catalog_id(20));
+
+    rooms
+        .agent_members
+        .set_status(20, network_agent(), PrivateRoomAgentMemberStatus::Removed);
+    assert_eq!(
+        refused_with(managed_by(&rooms, NETWORK, 20).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "被移出了这一间"
+    );
+}
+
+#[tokio::test]
+async fn 别人建的管不了_归档了的管不了_不在父房间里的说找不到_本机_agent_不走这一路() {
+    let rooms = with_network_agent();
+    rooms.store.seed(&Seed::open(20, "someone else's"));
+    admit(&rooms, 20);
+    assert_eq!(
+        refused_with(managed_by(&rooms, NETWORK, 20).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "在里面也不行：不是它建的"
+    );
+
+    create(&rooms, by_network(PARENT, 21, "Its own"))
+        .await
+        .expect("它建了一间");
+    admit(&rooms, 21);
+    archived_by(&rooms, NETWORK, 21)
+        .await
+        .expect("归档")
+        .expect("是子房间");
+    assert_eq!(
+        refused_with(managed_by(&rooms, NETWORK, 21).await),
+        PrivateRoomFailureKind::SubRoom(SubRoomRefusal::ManagersOnly),
+        "归档了的不管"
+    );
+
+    let outside = Rooms::new();
+    outside.agents.own(principal_id(NETWORK), network_agent());
+    outside.store.seed(&Seed::open(20, "open"));
+    assert_eq!(
+        refused_with(managed_by(&outside, NETWORK, 20).await),
+        PrivateRoomFailureKind::NotFound
+    );
+
+    let by_device = rooms
+        .service
+        .agent_managed_sub_room(FindAgentManagedSubRoom {
+            actor: PrivateRoomActor::Device(device(
+                principal_id(OWNER),
+                "@user-0123abcd:matrix.test",
+            )),
+            agent_id: network_agent(),
+            catalog_id: catalog_id(20),
+        })
+        .await;
+    assert_eq!(refused_with(by_device), PrivateRoomFailureKind::Forbidden);
 }

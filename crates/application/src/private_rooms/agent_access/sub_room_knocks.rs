@@ -4,7 +4,9 @@
 //! 父房间里的 Agent 成员的，说的和没有这间房一样。
 //!
 //! 管得了这一间的人和人的申请那边一样（[`manages_sub_room`]）：父房间的房主和管理员，进没进来都算，
-//! 加上这一间的子房间管理员。替人操作的 Agent 管子房间放到 2h。
+//! 加上这一间的子房间管理员。网络 Agent 管它管得了的子房间（2h-4，`agent_managed_sub_room`）：它自己
+//! 当房主的房间下面每一间，和它在别人房间下面建的、它还在里面的。本机 Agent 替人管子房间不做：它建的
+//! 子房间由主人管。
 //!
 //! 父房间里移出 Agent 成员时，它在的子房间里先踢出去（2f-2b-1，`kick_from_sub_rooms`）。
 //!
@@ -64,10 +66,12 @@ impl SubRoomAgentMemberSeating for PrivateRoomAgentAccessService {
     }
 }
 
-/// 一间子房间进门要看的：它的父房间、它的门。
+/// 一间子房间进门要看的：它的父房间、它的门，和谁建的。
 struct SubRoomGate {
     parent: PrivateRoomSnapshot,
     door: SubRoomDoor,
+    created_by: PrincipalId,
+    created_by_agent: Option<AgentId>,
 }
 
 impl PrivateRoomAgentAccessService {
@@ -92,7 +96,12 @@ impl PrivateRoomAgentAccessService {
             .await
             .map_err(|error| repository(operation, &error))?
             .ok_or_else(not_found)?;
-        Ok(SubRoomGate { parent, door })
+        Ok(SubRoomGate {
+            parent,
+            door,
+            created_by: link.created_by,
+            created_by_agent: link.created_by_agent,
+        })
     }
 
     /// 这个 Agent 是父房间里还在的 Agent 成员，父房间也还在用。
@@ -269,6 +278,47 @@ impl PrivateRoomAgentAccessService {
                 AgentAccessFailureKind::NotFound
             };
             return Err(AgentAccessFailure::new(operation, kind));
+        }
+        let active = PrivateRoomLifecycleStatus::Active;
+        if sub_room.room().status() != active || gate.parent.room().status() != active {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::Conflict,
+            ));
+        }
+        Ok(sub_room)
+    }
+
+    /// 网络 Agent 看、回答这间子房间的敲门，移出这一间的 Agent 成员（2h-4）。管得了的有两种：它的
+    /// 合成主体管得了（[`manages_sub_room`]：它自己的房间下面每一间，合成主体是房主）；这一间是它在别人
+    /// 房间下面建的（建的人记它的合成主体），它还是这一间和父房间里已加入的 Agent 成员。别的说找不到，
+    /// 不露出藏起来的房间；这一间或者父房间归档了的说状态变了，和人那边一样。
+    pub(super) async fn agent_managed_sub_room(
+        &self,
+        actor: &PrivateRoomActor,
+        sub_room: PrivateRoomSnapshot,
+        operation: &'static str,
+    ) -> AgentAccessResult<PrivateRoomSnapshot> {
+        let gate = self.sub_room_gate(&sub_room, operation).await?;
+        let principal = actor.principal_id();
+        let manages = manages_sub_room(gate.parent.room(), sub_room.room(), principal)
+            || match gate
+                .created_by_agent
+                .filter(|_| gate.created_by == principal)
+            {
+                Some(creator) => {
+                    self.member_status(sub_room.catalog().id(), creator, operation)
+                        .await?
+                        == Some(PrivateRoomAgentMemberStatus::Joined)
+                        && self.in_parent(&gate, creator, operation).await?
+                }
+                None => false,
+            };
+        if !manages {
+            return Err(AgentAccessFailure::new(
+                operation,
+                AgentAccessFailureKind::NotFound,
+            ));
         }
         let active = PrivateRoomLifecycleStatus::Active;
         if sub_room.room().status() != active || gate.parent.room().status() != active {

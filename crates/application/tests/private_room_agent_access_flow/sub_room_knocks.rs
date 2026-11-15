@@ -50,6 +50,34 @@ fn family_of(
     access: RoomJoinMode,
     hidden: bool,
 ) -> Fixture {
+    family_with_door(parent, sub_room, access, hidden, owner(), None)
+}
+
+/// 和 [`family_of`] 一样，只是这一间记成 `created_by` 建的（`.1` 是替它记账的 Agent）。门不藏。
+fn family_made_by(
+    parent: PrivateRoom,
+    sub_room: PrivateRoom,
+    access: RoomJoinMode,
+    (created_by, created_by_agent): (PrincipalId, Option<AgentId>),
+) -> Fixture {
+    family_with_door(
+        parent,
+        sub_room,
+        access,
+        false,
+        created_by,
+        created_by_agent,
+    )
+}
+
+fn family_with_door(
+    parent: PrivateRoom,
+    sub_room: PrivateRoom,
+    access: RoomJoinMode,
+    hidden: bool,
+    created_by: PrincipalId,
+    created_by_agent: Option<AgentId>,
+) -> Fixture {
     let door = SubRoomDoor::new(access, hidden).expect("门有效");
     let link = SubRoomLink {
         catalog_id: catalog_id(),
@@ -59,8 +87,8 @@ fn family_of(
         hidden: door.hidden(),
         door_opened_at: None,
         end_to_end_encrypted: true,
-        created_by: owner(),
-        created_by_agent: None,
+        created_by,
+        created_by_agent,
         created_at: time(NOW - HOUR),
         archived: None,
     };
@@ -457,4 +485,201 @@ async fn 带它敲门的主体就是这一间里的人时_直接进_不记_agent
     assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
     assert_eq!(fixture.store.knock_status(agent_id()), None);
     assert!(fixture.matrix.events().is_empty());
+}
+
+// ---- 网络 Agent 管子房间（2h-4）
+
+/// 网络 Agent 的合成主体：它建的房间里是房主。
+fn network() -> PrincipalId {
+    PrincipalId::from_uuid(Uuid::from_u128(5))
+}
+
+/// 在别人房间下面建子房间的网络 Agent。
+fn creator() -> AgentId {
+    AgentId::from_uuid(Uuid::from_u128(31))
+}
+
+fn as_network(principal: PrincipalId) -> AnswerKnock {
+    AnswerKnock {
+        actor: network_actor(principal),
+        catalog_id: catalog_id(),
+        agent_id: agent_id(),
+    }
+}
+
+async fn waiting_for_network(
+    fixture: &Fixture,
+    principal: PrincipalId,
+) -> Result<Vec<AgentId>, AgentAccessFailureKind> {
+    fixture
+        .service
+        .waiting_knocks(InspectAgentAccess {
+            actor: network_actor(principal),
+            catalog_id: catalog_id(),
+        })
+        .await
+        .map(|knocks| knocks.into_iter().map(|knock| knock.agent_id).collect())
+        .map_err(AgentAccessFailure::kind)
+}
+
+/// 父房间里 `owner` 建的、`creator` 在下面建了一间的房间。`creator` 是两间房里已加入的 Agent 成员。
+async fn made_by_creator(access: RoomJoinMode) -> Fixture {
+    let fixture = family_made_by(
+        with_speaker(PrivateRoom::create(parent_id(), owner())),
+        active_room(),
+        access,
+        (network(), Some(creator())),
+    );
+    for room in [parent_id(), catalog_id()] {
+        fixture
+            .store
+            .admit_agent(
+                room,
+                creator(),
+                PrivateRoomPermissions::AGENT_MEMBER,
+                PrivateRoomAgentJoinedVia::Code,
+                time(NOW - HOUR),
+            )
+            .await
+            .unwrap();
+    }
+    fixture
+}
+
+#[tokio::test]
+async fn 网络_agent_管它自己房间下面的子房间_看_放行_移出() {
+    let fixture = family_made_by(
+        PrivateRoom::create(parent_id(), network()),
+        PrivateRoom::create(catalog_id(), network()),
+        RoomJoinMode::Request,
+        (outsider(), Some(agent_id())),
+    );
+    fixture.in_parent().await;
+    assert!(matches!(fixture.knock().await, Ok(KnockResult::Waiting(_))));
+
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Ok(vec![agent_id()]),
+        "合成主体是父房间的房主：谁建的都管得了"
+    );
+    let admitted = fixture
+        .service
+        .admit_knock(as_network(network()))
+        .await
+        .expect("放行");
+    assert_eq!(admitted.room.catalog_id, catalog_id());
+    assert_eq!(
+        fixture.store.status_in(catalog_id(), agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Joined)
+    );
+    fixture
+        .service
+        .remove_agent(RemoveAgentMember {
+            actor: network_actor(network()),
+            catalog_id: catalog_id(),
+            agent_id: agent_id(),
+        })
+        .await
+        .expect("移出");
+    assert_eq!(
+        fixture.store.status_in(catalog_id(), agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Removed)
+    );
+    assert_eq!(
+        waiting_for_network(&fixture, speaker()).await,
+        Err(AgentAccessFailureKind::NotFound),
+        "别的网络 Agent 当找不到"
+    );
+}
+
+#[tokio::test]
+async fn 网络_agent_管它在别人房间下面建的子房间_被移出以后管不了() {
+    let fixture = made_by_creator(RoomJoinMode::Request).await;
+    fixture.in_parent().await;
+    assert!(matches!(fixture.knock().await, Ok(KnockResult::Waiting(_))));
+
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Ok(vec![agent_id()])
+    );
+    fixture
+        .service
+        .decline_knock(as_network(network()))
+        .await
+        .expect("不让进");
+    assert_eq!(
+        fixture.store.knock_status(agent_id()),
+        Some(PrivateRoomAgentKnockStatus::Declined)
+    );
+    fixture
+        .service
+        .admit_knock(as_network(network()))
+        .await
+        .expect("不让进以后照样能按名字放行");
+
+    fixture
+        .store
+        .remove_agent(catalog_id(), creator(), time(NOW - 1_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Err(AgentAccessFailureKind::NotFound),
+        "建它的 Agent 不在这一间里了"
+    );
+}
+
+#[tokio::test]
+async fn 网络_agent_管不了别人建的子房间_父房间里被移出的也管不了() {
+    let fixture = family_made_by(
+        with_speaker(PrivateRoom::create(parent_id(), owner())),
+        active_room(),
+        RoomJoinMode::Request,
+        (owner(), None),
+    );
+    fixture
+        .store
+        .admit_agent(
+            catalog_id(),
+            creator(),
+            PrivateRoomPermissions::AGENT_MEMBER,
+            PrivateRoomAgentJoinedVia::Code,
+            time(NOW - HOUR),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Err(AgentAccessFailureKind::NotFound),
+        "在里面也不行：不是它建的"
+    );
+
+    let fixture = made_by_creator(RoomJoinMode::Request).await;
+    fixture
+        .store
+        .remove_agent(parent_id(), creator(), time(NOW - 1_000))
+        .await
+        .unwrap();
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Err(AgentAccessFailureKind::NotFound),
+        "父房间里被移出了"
+    );
+}
+
+#[tokio::test]
+async fn 网络_agent_管的子房间归档了说状态变了() {
+    let mut sub_room = PrivateRoom::create(catalog_id(), network());
+    sub_room.archive(network()).unwrap();
+    let fixture = family_made_by(
+        PrivateRoom::create(parent_id(), network()),
+        sub_room,
+        RoomJoinMode::Request,
+        (network(), None),
+    );
+
+    assert_eq!(
+        waiting_for_network(&fixture, network()).await,
+        Err(AgentAccessFailureKind::Conflict)
+    );
 }

@@ -44,6 +44,7 @@ mod role_changes;
 mod sub_room_accessible;
 mod sub_room_agent_creation;
 mod sub_room_agent_listing;
+mod sub_room_agent_managing;
 mod sub_room_agent_owner;
 mod sub_room_archive;
 mod sub_room_categories;
@@ -61,6 +62,7 @@ pub use sub_room_agent_creation::AgentSubRoomCreation;
 pub use sub_room_agent_listing::{
     AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms, ListAgentSubRooms,
 };
+pub use sub_room_agent_managing::{AgentSubRoomManagement, FindAgentManagedSubRoom};
 pub use sub_room_agent_owner::{AgentOwnerSeat, SubRoomAgentOwnerSeating};
 pub use sub_room_archive::{AgentSubRoomArchival, ArchiveAgentSubRoom};
 pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};
