@@ -1,6 +1,7 @@
 mod device;
 mod handlers;
 mod models;
+mod sub_room_managers;
 mod sub_room_members;
 mod sub_room_requests;
 mod sub_rooms;
@@ -143,6 +144,10 @@ pub(crate) fn router(state: PrivateRoomHttpState) -> Router {
         .route(
             "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/members/{principal_id}/unban",
             post(sub_room_members::unban),
+        )
+        .route(
+            "/private-rooms/{catalog_id}/sub-rooms/{sub_room_id}/managers/{principal_id}",
+            put(sub_room_managers::grant).delete(sub_room_managers::revoke),
         )
         .route(
             "/private-rooms/{catalog_id}/sub-room-policy",

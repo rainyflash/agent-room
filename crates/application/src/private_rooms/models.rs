@@ -274,6 +274,16 @@ pub struct GovernSubRoomMember {
     pub target: PrincipalId,
 }
 
+/// 设（`grant`）或者撤一位子房间管理员（`specs/redesign/room-roles.md` 的 R5，子房间第 2d-4 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeSubRoomManager {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub target: PrincipalId,
+    pub grant: bool,
+}
+
 /// 申请以后他在这一间的处境。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubRoomJoinState {

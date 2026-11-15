@@ -93,7 +93,7 @@ async fn 身份变动跟着房间一起存_读回来新的在前_没存成的不
     let latest = RoomRoleChangeLog::recent_role_changes(&repositories, catalog, 1)
         .await
         .expect("可读");
-    assert_eq!(latest, [all[0]]);
+    assert_eq!(latest, [all[0].clone()]);
 
     assert_exports(&repositories, catalog, owner, member).await;
 

@@ -10,13 +10,13 @@ use agent_room_application::{
     ports::{
         JoinRequestRecord, NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock,
         SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
-        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock,
-        SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
+        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
-    private_rooms::PrivateRoomMembershipStatus,
+    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SUB_ROOM_AUTO_ARCHIVE_DAYS,
@@ -199,22 +199,30 @@ impl SubRoomStore for PostgresRepositories {
     ) -> PortFuture<'a, RepositoryResult<bool>> {
         Box::pin(async move {
             let operation = "sub_room.admit";
-            let next = admission
-                .expected_version
-                .next()
-                .map_err(|error| map_domain_error(operation, &error))?;
-            if next != admission.room.version() {
-                return Err(RepositoryError::new(
-                    operation,
-                    RepositoryErrorKind::Constraint,
-                ));
-            }
+            ensure_next_version(admission.room, admission.expected_version, operation)?;
             let mut transaction = self
                 .pool()
                 .begin()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             let result = admit(&mut transaction, admission, operation).await;
+            finish(transaction, result, operation).await
+        })
+    }
+
+    fn change_sub_room_manager<'a>(
+        &'a self,
+        change: &'a SubRoomManagerChange<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>> {
+        Box::pin(async move {
+            let operation = "sub_room.manager.change";
+            ensure_next_version(change.room, change.expected_version, operation)?;
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let result = change_manager(&mut transaction, change, operation).await;
             finish(transaction, result, operation).await
         })
     }
@@ -527,24 +535,15 @@ async fn admit(
     admission: &SubRoomAdmission<'_>,
     operation: &'static str,
 ) -> RepositoryResult<bool> {
-    let in_parent: Option<bool> = sqlx::query_scalar(
-        r"SELECT true
-            FROM agent_room.private_room_membership AS member
-            JOIN agent_room.private_room_parent AS link
-              ON link.parent_catalog_entry_id = member.catalog_entry_id
-           WHERE link.catalog_entry_id = $1
-             AND member.catalog_entry_id = $2
-             AND member.principal_id = $3
-             AND member.membership_status = 'joined'
-             FOR SHARE OF member",
+    let in_parent = lock_parent_membership(
+        transaction,
+        admission.room.catalog_id(),
+        admission.parent_catalog_id,
+        admission.principal,
+        operation,
     )
-    .bind(admission.room.catalog_id().as_uuid())
-    .bind(admission.parent_catalog_id.as_uuid())
-    .bind(admission.principal.as_uuid())
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(|error| map_sqlx_error(operation, &error))?;
-    if in_parent != Some(true) {
+    .await?;
+    if !in_parent {
         return Ok(false);
     }
     save_private_room(
@@ -564,6 +563,116 @@ async fn admit(
     )
     .await?;
     Ok(true)
+}
+
+/// 设、撤一位子房间管理员。和把人记进来一样先锁他在父房间里的那条成员记录：同时把他移出父房间的
+/// 请求排在后面，它跟着清子房间时连管理员记录一起删；已经被移出的，这里什么都不写。身上的“管理”和
+/// 名单在同一个事务里改：父房间里一变、子房间照着重算权限时，“管理”看的是名单。
+async fn change_manager(
+    transaction: &mut Transaction<'_, Postgres>,
+    change: &SubRoomManagerChange<'_>,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let catalog_id = change.room.catalog_id();
+    let in_parent = lock_parent_membership(
+        transaction,
+        catalog_id,
+        change.parent_catalog_id,
+        change.principal,
+        operation,
+    )
+    .await?;
+    if !in_parent {
+        return Ok(false);
+    }
+    save_private_room(
+        transaction,
+        change.room,
+        change.expected_version,
+        change.at,
+        operation,
+    )
+    .await?;
+    let written = if change.grant {
+        sqlx::query(
+            r"INSERT INTO agent_room.private_room_sub_room_manager (
+                   catalog_entry_id, principal_id, granted_by_principal_id, granted_at
+               ) VALUES ($1, $2, $3, to_timestamp($4::double precision / 1000.0))
+               ON CONFLICT (catalog_entry_id, principal_id) DO NOTHING",
+        )
+        .bind(catalog_id.as_uuid())
+        .bind(change.principal.as_uuid())
+        .bind(change.changed_by.as_uuid())
+        .bind(change.at.value())
+        .execute(&mut **transaction)
+        .await
+    } else {
+        sqlx::query(
+            r"DELETE FROM agent_room.private_room_sub_room_manager
+               WHERE catalog_entry_id = $1 AND principal_id = $2",
+        )
+        .bind(catalog_id.as_uuid())
+        .bind(change.principal.as_uuid())
+        .execute(&mut **transaction)
+        .await
+    };
+    written.map_err(|error| map_sqlx_error(operation, &error))?;
+    insert_role_changes(
+        transaction,
+        catalog_id,
+        change.role_changes,
+        change.at,
+        operation,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// 存子房间之前先看一眼要存的是读到的下一版。
+fn ensure_next_version(
+    room: &PrivateRoom,
+    expected: AggregateVersion,
+    operation: &'static str,
+) -> RepositoryResult<()> {
+    let next = expected
+        .next()
+        .map_err(|error| map_domain_error(operation, &error))?;
+    if next == room.version() {
+        Ok(())
+    } else {
+        Err(RepositoryError::new(
+            operation,
+            RepositoryErrorKind::Constraint,
+        ))
+    }
+}
+
+/// 锁住他在父房间里的那条成员记录到这次存完，回他此刻是不是父房间里已加入的人。
+async fn lock_parent_membership(
+    transaction: &mut Transaction<'_, Postgres>,
+    sub_room: RoomCatalogId,
+    parent_catalog_id: RoomCatalogId,
+    principal: PrincipalId,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let in_parent: Option<bool> = sqlx::query_scalar(
+        r"SELECT true
+            FROM agent_room.private_room_membership AS member
+            JOIN agent_room.private_room_parent AS link
+              ON link.parent_catalog_entry_id = member.catalog_entry_id
+           WHERE link.catalog_entry_id = $1
+             AND member.catalog_entry_id = $2
+             AND member.principal_id = $3
+             AND member.membership_status = 'joined'
+             FOR SHARE OF member",
+    )
+    .bind(sub_room.as_uuid())
+    .bind(parent_catalog_id.as_uuid())
+    .bind(principal.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(in_parent == Some(true))
 }
 
 /// 记下一个申请进子房间的人。先锁他在父房间里的那条成员记录（和把人记进子房间同一个先后），再锁

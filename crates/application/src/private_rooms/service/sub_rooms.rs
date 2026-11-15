@@ -37,11 +37,11 @@ use crate::{
 
 use super::{
     super::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, GovernSubRoomMember,
-        InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind,
-        PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom,
-        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
-        SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
+        GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin,
+        ReviseSubRoom, SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView,
+        SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
     },
     PrivateRoomService, active_room_actor_matrix_user, ensure_active_actor, private_room_alias,
@@ -138,6 +138,12 @@ pub trait SubRoomUseCases: Send + Sync {
     fn unban_sub_room_member(
         &self,
         request: GovernSubRoomMember,
+    ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 设、撤一位子房间管理员。已经是那样的也算成功。
+    fn change_sub_room_manager(
+        &self,
+        request: ChangeSubRoomManager,
     ) -> PortFuture<'_, PrivateRoomResult<()>>;
 }
 
@@ -245,6 +251,13 @@ impl SubRoomUseCases for PrivateRoomService {
         request: GovernSubRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<()>> {
         Box::pin(self.unban_sub_room_member_internal(request))
+    }
+
+    fn change_sub_room_manager(
+        &self,
+        request: ChangeSubRoomManager,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        Box::pin(self.change_sub_room_manager_internal(request))
     }
 }
 

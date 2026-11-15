@@ -2,7 +2,9 @@
 
 use agent_room_application::{
     persistence::RepositoryResult,
-    ports::{PortFuture, RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord},
+    ports::{
+        PortFuture, RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
+    },
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
@@ -66,8 +68,17 @@ impl RoomRoleChangeLog for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomRoleChangeRecord>>> {
         Box::pin(async move {
             let operation = "private_room.role_changes.recent";
+            // 这间房自己的，加上它下面每间子房间里有人动手的（R5）。一间一间走索引
+            // （`private_room_role_change_by_room`），子房间最多一百间。
             let rows = sqlx::query(
-                r"SELECT change.id,
+                r"WITH room AS (
+                      SELECT $1::uuid AS catalog_entry_id, false AS sub_room
+                      UNION ALL
+                      SELECT link.catalog_entry_id, true
+                        FROM agent_room.private_room_parent AS link
+                       WHERE link.parent_catalog_entry_id = $1
+                  )
+                  SELECT change.id,
                          change.actor_principal_id,
                          change.target_principal_id,
                          change.previous_status,
@@ -77,9 +88,15 @@ impl RoomRoleChangeLog for PostgresRepositories {
                          change.next_owner,
                          change.next_permission_bits,
                          floor(extract(epoch FROM change.changed_at) * 1000)::bigint
-                             AS changed_at_ms
-                    FROM agent_room.private_room_role_change AS change
-                   WHERE change.catalog_entry_id = $1
+                             AS changed_at_ms,
+                         catalog.id AS sub_room_id,
+                         catalog.name AS sub_room_name
+                    FROM room
+                    JOIN agent_room.private_room_role_change AS change
+                      ON change.catalog_entry_id = room.catalog_entry_id
+                    LEFT JOIN agent_room.room_catalog_entry AS catalog
+                      ON room.sub_room AND catalog.id = room.catalog_entry_id
+                   WHERE NOT room.sub_room OR change.actor_principal_id IS NOT NULL
                    ORDER BY change.id DESC
                    LIMIT $2",
             )
@@ -106,6 +123,16 @@ fn decode_change(row: &PgRow, operation: &'static str) -> RepositoryResult<RoomR
     let next_owner: bool = decode_column(row, "next_owner", operation)?;
     let next_bits: i16 = decode_column(row, "next_permission_bits", operation)?;
     let changed_at: i64 = decode_column(row, "changed_at_ms", operation)?;
+    let sub_room_id: Option<uuid::Uuid> = decode_column(row, "sub_room_id", operation)?;
+    let sub_room_name: Option<String> = decode_column(row, "sub_room_name", operation)?;
+    let sub_room = match (sub_room_id, sub_room_name) {
+        (Some(id), Some(name)) => Some(RoomRoleChangeSubRoom {
+            catalog_id: RoomCatalogId::from_uuid(id),
+            name,
+        }),
+        (None, None) => None,
+        _ => return Err(corrupt_data(operation)),
+    };
     let previous = match (previous_status, previous_owner, previous_bits) {
         (Some(status), Some(owner), Some(bits)) => Some(standing(&status, owner, bits, operation)?),
         (None, None, None) => None,
@@ -119,6 +146,7 @@ fn decode_change(row: &PgRow, operation: &'static str) -> RepositoryResult<RoomR
         next: standing(&next_status, next_owner, next_bits, operation)?,
         changed_at: UtcMillis::new(changed_at)
             .map_err(|error| map_domain_error(operation, &error))?,
+        sub_room,
     })
 }
 

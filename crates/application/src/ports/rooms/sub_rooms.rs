@@ -148,6 +148,24 @@ pub struct SubRoomAdmission<'a> {
     pub role_changes: &'a [RoomRoleChange],
 }
 
+/// 设、撤一位子房间管理员要存的（`specs/redesign/room-roles.md` 的 R5）：给上或者拿掉了他的
+/// “管理”的子房间，和管理员名单上要加、要删的那一条。
+#[derive(Debug, Clone, Copy)]
+pub struct SubRoomManagerChange<'a> {
+    pub room: &'a PrivateRoom,
+    /// 改之前读到的版本。
+    pub expected_version: AggregateVersion,
+    pub parent_catalog_id: RoomCatalogId,
+    pub principal: PrincipalId,
+    /// 设（`true`）还是撤。
+    pub grant: bool,
+    /// 谁设、谁撤的。
+    pub changed_by: PrincipalId,
+    pub at: UtcMillis,
+    /// 这一次动了谁的身份，和房间在同一个事务里记下。
+    pub role_changes: &'a [RoomRoleChange],
+}
+
 /// 换门、勾或者去掉“不在名单里显示”：从哪样换成哪样。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SubRoomDoorChange {
@@ -255,6 +273,13 @@ pub trait SubRoomStore: Send + Sync {
     fn admit_to_sub_room<'a>(
         &'a self,
         admission: &'a SubRoomAdmission<'a>,
+    ) -> PortFuture<'a, RepositoryResult<bool>>;
+
+    /// 设、撤一位子房间管理员：存子房间，管理员名单上加上或者删掉他，身份变动一起记。和把人记进来
+    /// 一样，存之前在同一个事务里再看一眼他在父房间里还是不是已加入，不是就什么都不写、回 `false`。
+    fn change_sub_room_manager<'a>(
+        &'a self,
+        change: &'a SubRoomManagerChange<'a>,
     ) -> PortFuture<'a, RepositoryResult<bool>>;
 
     /// 改子房间的名字、用途和门：目录上的名字、用途，比重名用的键，门和“不在名单里显示”在同一个

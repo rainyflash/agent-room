@@ -1,15 +1,16 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
 //! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`），
-//! 请进来、移出和封禁（2d-3，在 `sub_room_member_tests.rs`）。
+//! 请进来、移出和封禁（2d-3，在 `sub_room_member_tests.rs`），子房间管理员（2d-4，在
+//! `sub_room_manager_tests.rs`）。
 //! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
     ports::{JoinRequestRecord, PendingJoinRequest, SubRoomEntry},
     private_rooms::{
-        AnswerSubRoomJoinRequest, ChangeSubRoomPolicy, CreateSubRoom, GovernSubRoomMember,
-        InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, SubRoomJoinState,
-        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
-        SubRoomView,
+        AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
+        GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, ReviseSubRoom,
+        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
+        SubRoomUseCases, SubRoomView,
     },
 };
 use agent_room_domain::{
@@ -20,6 +21,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_manager_tests.rs"]
+mod managers;
 #[path = "sub_room_member_tests.rs"]
 mod members;
 #[path = "sub_room_request_tests.rs"]
@@ -49,6 +52,8 @@ pub(super) struct FakeSubRooms {
     answered: Mutex<Vec<AnswerSubRoomJoinRequest>>,
     /// 请进来、移出、封禁、解封：哪一样，交过来的请求。
     governed: Mutex<Vec<(&'static str, GovernSubRoomMember)>>,
+    /// 设、撤子房间管理员。
+    managers_changed: Mutex<Vec<ChangeSubRoomManager>>,
     /// 设上时申请不用等，直接记成已加入（没有门了的、管这间房的）。
     joins_directly: Mutex<bool>,
     /// 设上时每个用例都回答它。
@@ -255,6 +260,15 @@ impl SubRoomUseCases for FakeSubRooms {
         request: GovernSubRoomMember,
     ) -> PortFuture<'_, PrivateRoomResult<()>> {
         self.govern("unban", request)
+    }
+
+    fn change_sub_room_manager(
+        &self,
+        request: ChangeSubRoomManager,
+    ) -> PortFuture<'_, PrivateRoomResult<()>> {
+        let result = self.refusal().map_or(Ok(()), Err);
+        self.managers_changed.lock().unwrap().push(request);
+        Box::pin(async move { result })
     }
 }
 
@@ -723,105 +737,113 @@ async fn 换门和隐藏_只带哪一项就只交哪一项_名字和用途不带
 }
 
 /// 子房间这边每一种拒绝回的状态和码。
-fn refusal_codes() -> [(SubRoomRefusal, StatusCode, &'static str); 18] {
-    [
-        (
-            SubRoomRefusal::ParentOnly,
-            StatusCode::CONFLICT,
-            "sub_room.parent_only",
-        ),
-        (
-            SubRoomRefusal::Nested,
-            StatusCode::CONFLICT,
-            "sub_room.nested",
-        ),
-        (
-            SubRoomRefusal::AdminsOnly,
-            StatusCode::FORBIDDEN,
-            "sub_room.admins_only",
-        ),
-        (
-            SubRoomRefusal::AgentsMayNotCreate,
-            StatusCode::FORBIDDEN,
-            "sub_room.agents_may_not_create",
-        ),
-        (
-            SubRoomRefusal::NameTaken,
-            StatusCode::CONFLICT,
-            "sub_room.name_taken",
-        ),
-        (
-            SubRoomRefusal::LimitReached,
-            StatusCode::CONFLICT,
-            "sub_room.limit_reached",
-        ),
-        (
-            SubRoomRefusal::RateLimited,
-            StatusCode::TOO_MANY_REQUESTS,
-            "sub_room.rate_limited",
-        ),
-        (
-            SubRoomRefusal::PolicyOwnerOnly,
-            StatusCode::FORBIDDEN,
-            "sub_room.owner_only",
-        ),
-        (
-            SubRoomRefusal::Archived,
-            StatusCode::CONFLICT,
-            "sub_room.archived",
-        ),
-        (
-            SubRoomRefusal::Banned,
-            StatusCode::FORBIDDEN,
-            "sub_room.banned",
-        ),
-        (
-            SubRoomRefusal::ApprovalRequired,
-            StatusCode::FORBIDDEN,
-            "sub_room.approval_required",
-        ),
-        (
-            SubRoomRefusal::InviteOnly,
-            StatusCode::FORBIDDEN,
-            "sub_room.invite_only",
-        ),
-        (
-            SubRoomRefusal::OwnerStays,
-            StatusCode::CONFLICT,
-            "sub_room.owner_stays",
-        ),
-        (
-            SubRoomRefusal::ManagersOnly,
-            StatusCode::FORBIDDEN,
-            "sub_room.managers_only",
-        ),
-        (
-            SubRoomRefusal::RecentlyRejected,
-            StatusCode::CONFLICT,
-            "sub_room.recently_rejected",
-        ),
-        (
-            SubRoomRefusal::NotInParent,
-            StatusCode::CONFLICT,
-            "sub_room.not_in_parent",
-        ),
-        (
-            SubRoomRefusal::TargetBanned,
-            StatusCode::CONFLICT,
-            "sub_room.target_banned",
-        ),
-        (
-            SubRoomRefusal::PeerManager,
-            StatusCode::FORBIDDEN,
-            "sub_room.peer_manager",
-        ),
-    ]
-}
+const REFUSAL_CODES: [(SubRoomRefusal, StatusCode, &str); 20] = [
+    (
+        SubRoomRefusal::ParentOnly,
+        StatusCode::CONFLICT,
+        "sub_room.parent_only",
+    ),
+    (
+        SubRoomRefusal::Nested,
+        StatusCode::CONFLICT,
+        "sub_room.nested",
+    ),
+    (
+        SubRoomRefusal::AdminsOnly,
+        StatusCode::FORBIDDEN,
+        "sub_room.admins_only",
+    ),
+    (
+        SubRoomRefusal::AgentsMayNotCreate,
+        StatusCode::FORBIDDEN,
+        "sub_room.agents_may_not_create",
+    ),
+    (
+        SubRoomRefusal::NameTaken,
+        StatusCode::CONFLICT,
+        "sub_room.name_taken",
+    ),
+    (
+        SubRoomRefusal::LimitReached,
+        StatusCode::CONFLICT,
+        "sub_room.limit_reached",
+    ),
+    (
+        SubRoomRefusal::RateLimited,
+        StatusCode::TOO_MANY_REQUESTS,
+        "sub_room.rate_limited",
+    ),
+    (
+        SubRoomRefusal::PolicyOwnerOnly,
+        StatusCode::FORBIDDEN,
+        "sub_room.owner_only",
+    ),
+    (
+        SubRoomRefusal::Archived,
+        StatusCode::CONFLICT,
+        "sub_room.archived",
+    ),
+    (
+        SubRoomRefusal::Banned,
+        StatusCode::FORBIDDEN,
+        "sub_room.banned",
+    ),
+    (
+        SubRoomRefusal::ApprovalRequired,
+        StatusCode::FORBIDDEN,
+        "sub_room.approval_required",
+    ),
+    (
+        SubRoomRefusal::InviteOnly,
+        StatusCode::FORBIDDEN,
+        "sub_room.invite_only",
+    ),
+    (
+        SubRoomRefusal::OwnerStays,
+        StatusCode::CONFLICT,
+        "sub_room.owner_stays",
+    ),
+    (
+        SubRoomRefusal::ManagersOnly,
+        StatusCode::FORBIDDEN,
+        "sub_room.managers_only",
+    ),
+    (
+        SubRoomRefusal::RecentlyRejected,
+        StatusCode::CONFLICT,
+        "sub_room.recently_rejected",
+    ),
+    (
+        SubRoomRefusal::NotInParent,
+        StatusCode::CONFLICT,
+        "sub_room.not_in_parent",
+    ),
+    (
+        SubRoomRefusal::TargetBanned,
+        StatusCode::CONFLICT,
+        "sub_room.target_banned",
+    ),
+    (
+        SubRoomRefusal::PeerManager,
+        StatusCode::FORBIDDEN,
+        "sub_room.peer_manager",
+    ),
+    (
+        SubRoomRefusal::TargetNotInside,
+        StatusCode::CONFLICT,
+        "sub_room.target_not_inside",
+    ),
+    (
+        SubRoomRefusal::ManagedByParent,
+        StatusCode::CONFLICT,
+        "sub_room.managed_by_parent",
+    ),
+];
 
 #[tokio::test]
 async fn 子房间这边被拒各有各的码_网页好说清楚() {
     let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms");
-    for (refusal, status, code) in refusal_codes() {
+    for (refusal, status, code) in REFUSAL_CODES {
         let sub_rooms = Arc::new(FakeSubRooms::default());
         *sub_rooms.failure.lock().unwrap() = Some(PrivateRoomFailure::new(
             "test",

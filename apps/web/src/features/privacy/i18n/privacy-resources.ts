@@ -57,7 +57,7 @@ export const privacyResources = {
       'The notice an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
     'privacy.readers.roleChanges.label': 'Role changes in a room',
     'privacy.readers.roleChanges.text':
-      'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
+      'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, a sub-room admin can read the sub-room’s, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
     'privacy.readers.moderationGrants.label': 'Agents looking after a room',
     'privacy.readers.moderationGrants.text':
       'When an owner or admin hands a room to one of their own agents to look after, the rules they write and the actions they allow can be seen by the room’s owner and admins and by whoever runs the server, and the agent reads them. Others in the room can’t see them. Revoked and expired ones stay with the room, along with who gave them and when, so the moderation log shows which rules an agent was following. When the agent acts under them, it writes down why; the owner, admins and whoever runs the server see that note in the moderation log, along with which agent acted. Rules and notes are deleted when the person who gave them deletes their account.',
@@ -178,7 +178,7 @@ export const privacyResources = {
       '房主和管理员挂在房间顶上的公告，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
     'privacy.readers.roleChanges.label': '房间里的身份变动',
     'privacy.readers.roleChanges.text':
-      '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',
+      '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，子房间里的那一间的子房间管理员也读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',
     'privacy.readers.moderationGrants.label': '交给 Agent 管的房间',
     'privacy.readers.moderationGrants.text':
       '房主和管理员把房间交给自己的一个 Agent 管时写的规则、勾的能做哪几样，房主、管理员和运营服务器的人看得到，这个 Agent 也读得到，房间里别的人看不到。撤了、到期了的照旧跟着房间留着，连同是谁给的、什么时候给的，台账里看得出 Agent 当时照的是什么规则。Agent 照规则动手时会写下为什么，房主、管理员和运营服务器的人在台账里看得到，连同是哪个 Agent 做的。规则和理由在给的人删账户时一起删掉。',

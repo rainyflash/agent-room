@@ -10,6 +10,7 @@ import {
   type RoomRoleChange,
   type RoomRoleChangeGateway,
 } from '@/features/private-rooms/domain/room-role-changes';
+import type { RoomRole } from '@/features/private-rooms/domain/room-roles';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { formatDateTime } from '@/shared/i18n/formatters';
 
@@ -72,7 +73,11 @@ export function RoomRoleChanges({ catalogId, gateway, nameOf }: RoomRoleChangesP
                 {roleChangeFacts(change).map((fact) => (
                   // 一条记录里同一种事只有一件，开关按是哪一个分。
                   <p key={fact.kind === 'switch' ? fact.capability : fact.kind}>
-                    <FactSentence fact={fact} name={nameOf(change.targetPrincipalId)} />
+                    <FactSentence
+                      fact={fact}
+                      inSubRoom={change.subRoom !== undefined}
+                      name={nameOf(change.targetPrincipalId)}
+                    />
                   </p>
                 ))}
                 <small>{byline(change)}</small>
@@ -91,31 +96,38 @@ export function RoomRoleChanges({ catalogId, gateway, nameOf }: RoomRoleChangesP
 
   function byline(change: RoomRoleChange): string {
     const time = formatDateTime(change.changedAtUnixMs, i18n.resolvedLanguage);
-    return change.actorPrincipalId === undefined
-      ? time
-      : t('privateRooms.roleChanges.by', { actor: nameOf(change.actorPrincipalId), time });
+    const who =
+      change.actorPrincipalId === undefined
+        ? time
+        : t('privateRooms.roleChanges.by', { actor: nameOf(change.actorPrincipalId), time });
+    return change.subRoom === undefined
+      ? who
+      : `${who} · ${t('privateRooms.roleChanges.inSubRoom', { name: change.subRoom.name })}`;
   }
 }
 
-function FactSentence({ fact, name }: { readonly fact: RoleChangeFact; readonly name: string }) {
+function FactSentence({
+  fact,
+  inSubRoom,
+  name,
+}: {
+  readonly fact: RoleChangeFact;
+  /** 子房间里身上有“管理”的是子房间管理员，不是整间房的管理员。 */
+  readonly inSubRoom: boolean;
+  readonly name: string;
+}) {
   const { t } = useTranslation();
+  const role = (value: RoomRole): string =>
+    inSubRoom && value === 'admin'
+      ? t('privateRooms.roleChanges.subRoomAdmin')
+      : t(`privateRooms.role.${value}`);
   switch (fact.kind) {
     case 'role':
-      return t('privateRooms.roleChanges.role', {
-        from: t(`privateRooms.role.${fact.from}`),
-        name,
-        to: t(`privateRooms.role.${fact.to}`),
-      });
+      return t('privateRooms.roleChanges.role', { from: role(fact.from), name, to: role(fact.to) });
     case 'entered':
-      return t('privateRooms.roleChanges.entered', {
-        name,
-        role: t(`privateRooms.role.${fact.as}`),
-      });
+      return t('privateRooms.roleChanges.entered', { name, role: role(fact.as) });
     case 'exited':
-      return t(`privateRooms.roleChanges.exited.${fact.how}`, {
-        name,
-        role: t(`privateRooms.role.${fact.from}`),
-      });
+      return t(`privateRooms.roleChanges.exited.${fact.how}`, { name, role: role(fact.from) });
     case 'switch':
       return t(`privateRooms.roleChanges.${fact.capability}.${fact.on ? 'on' : 'off'}`, { name });
     case 'permissions':

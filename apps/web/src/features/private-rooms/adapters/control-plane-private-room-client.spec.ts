@@ -123,7 +123,7 @@ describe('ControlPlanePrivateRoomClient', () => {
     });
   });
 
-  it('身份变动记录：GET 单独的接口；多出来的字段读得过去，状态不认识的不收', async () => {
+  it('身份变动记录：GET 单独的接口；子房间的写着哪一间，多出来的字段读得过去，状态不认识的不收', async () => {
     const change = {
       actorPrincipalId: ROOM.ownerPrincipalId,
       changedAtUnixMs: 1_700_000_000_000,
@@ -140,9 +140,16 @@ describe('ControlPlanePrivateRoomClient', () => {
       },
       targetPrincipalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e4a',
     };
+    const inRelease = {
+      ...change,
+      id: 6,
+      subRoom: { catalogId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49', name: 'Release' },
+    };
     const fetch = vi
       .fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(Response.json({ changes: [{ ...change, subRoom: 'later' }] }))
+      .mockResolvedValueOnce(
+        Response.json({ changes: [{ ...change, later: 'added by a newer server' }, inRelease] }),
+      )
       .mockResolvedValueOnce(
         Response.json({ changes: [{ ...change, next: { ...change.next, status: 'left' } }] }),
       );
@@ -151,7 +158,10 @@ describe('ControlPlanePrivateRoomClient', () => {
       fetch,
     });
 
-    expect(await client.roleChanges(ROOM.catalogId)).toEqual({ ok: true, value: [change] });
+    expect(await client.roleChanges(ROOM.catalogId)).toEqual({
+      ok: true,
+      value: [change, inRelease],
+    });
     expect(fetch).toHaveBeenCalledWith(
       new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/role-changes`),
       expect.objectContaining({ credentials: 'include', method: 'GET' }),

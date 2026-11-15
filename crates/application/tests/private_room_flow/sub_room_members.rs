@@ -281,15 +281,11 @@ async fn 谁动得了谁_房主动不了_父房间的管理员只有房主动得
     );
     assert!(rooms.events().is_empty(), "什么都没动");
 
-    // 再有一位子房间管理员（设子房间管理员的入口在 2d-4，这里直接改存储）。
-    rooms.store.change(20, |room| {
-        room.update_permissions(
-            principal_id(OWNER),
-            principal_id(VIEWER),
-            permissions(&[PrivateRoomCapability::View, PrivateRoomCapability::Manage]),
-        )
-        .expect("房主能设管理员");
-    });
+    // 再有一位子房间管理员。
+    rooms
+        .set_manager(MEMBER, VIEWER, true)
+        .await
+        .expect("子房间管理员能设");
     assert_eq!(
         refusal(rooms.remove(VIEWER, 20, MEMBER).await),
         sub_room(SubRoomRefusal::PeerManager)

@@ -134,6 +134,27 @@ describe('成员一节最下面的“身份变动”', () => {
     expect(screen.queryByText(/latest 100/u)).toBeNull();
   });
 
+  it('子房间里的写着是哪一间，那里的“管理”叫子房间管理员', async () => {
+    const inRelease: RoomRoleChange = {
+      actorPrincipalId: ADA,
+      changedAtUnixMs: WHEN,
+      id: 9,
+      next: standing(['view', 'speak', 'manage']),
+      previous: standing(member),
+      subRoom: { catalogId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49', name: 'Release' },
+      targetPrincipalId: GRACE,
+    };
+    renderChanges(() => Promise.resolve(ok([inRelease])));
+    open();
+
+    const item = within(await screen.findByRole('list')).getByRole('listitem');
+    expect(item.querySelector('p')?.textContent).toBe('Grace went from Member to Sub-room admin');
+    const time = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+    expect(item.querySelector('small')?.textContent).toBe(
+      `By Ada · ${time.format(WHEN)} · in the sub-room Release`,
+    );
+  });
+
   it('一条也没有时说一句；满一百条时说更早的不在这里', async () => {
     const first = renderChanges(() => Promise.resolve(ok([])));
     open();

@@ -325,6 +325,50 @@ pub fn authorize_sub_room_governance(
     Ok(())
 }
 
+/// 为什么设、撤不了这位子房间管理员（`specs/redesign/room-roles.md` 的 R5）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubRoomManagerRefusal {
+    /// 管不了这一间。
+    ManagersOnly,
+    /// 对象不是这一间里已加入的人：子房间管理员得在里面。
+    NotInside,
+    /// 对象是父房间的房主或管理员：他们本来就管每一间，不用设，也撤不掉。
+    ParentRuns,
+    /// 子房间管理员撤同一间的另一位：撤不了，要父房间的房主或管理员来。自己不当了可以。
+    PeerManager,
+}
+
+/// 能不能设（`grant`）或者撤一位子房间管理员。管得了这一间的人都能设；撤别人要父房间的房主或
+/// 管理员，子房间管理员只能撤自己（和“管理员之间谁也动不了谁”一个道理）。
+///
+/// # Errors
+///
+/// 设、撤不了时返回原因。
+pub fn authorize_sub_room_manager_change(
+    parent: &PrivateRoom,
+    sub_room: &PrivateRoom,
+    actor: PrincipalId,
+    target: PrincipalId,
+    grant: bool,
+) -> Result<(), SubRoomManagerRefusal> {
+    if !manages_sub_room(parent, sub_room, actor) {
+        return Err(SubRoomManagerRefusal::ManagersOnly);
+    }
+    let inside = sub_room
+        .member(target)
+        .is_some_and(PrivateRoomMember::has_joined);
+    if !inside {
+        return Err(SubRoomManagerRefusal::NotInside);
+    }
+    if runs_parent_room(parent, target) || target == sub_room.owner_principal_id() {
+        return Err(SubRoomManagerRefusal::ParentRuns);
+    }
+    if !grant && actor != target && !runs_parent_room(parent, actor) {
+        return Err(SubRoomManagerRefusal::PeerManager);
+    }
+    Ok(())
+}
+
 /// 父房间的房主和管理员：每一间子房间他们都看得到、进得去、管得了。
 #[must_use]
 pub fn runs_parent_room(parent: &PrivateRoom, principal: PrincipalId) -> bool {
@@ -928,6 +972,71 @@ mod tests {
         assert_eq!(check(parent.owner, parent.member), Ok(()));
         // 不在父房间里了的人当普通人看，谁管得了这一间谁就动得了。
         assert_eq!(check(parent.member, parent.invited), Ok(()));
+    }
+
+    #[test]
+    fn 设子房间管理员_管这一间的都能设_撤别人要父房间的房主或管理员_自己不当了可以() {
+        let parent = parent();
+        let mut sub_room = new_sub_room(catalog(), &parent.room, parent.member).expect("成员能建");
+        sub_room
+            .admit(parent.viewer, permissions(&[PrivateRoomCapability::View]))
+            .expect("进来");
+        let change = |room: &PrivateRoom, actor, target, grant| {
+            authorize_sub_room_manager_change(&parent.room, room, actor, target, grant)
+        };
+
+        // 建的人是这一间的管理员，能设别人；父房间的房主和管理员没进来也能设。
+        for actor in [parent.member, parent.owner, parent.admin] {
+            assert_eq!(change(&sub_room, actor, parent.viewer, true), Ok(()));
+        }
+        assert_eq!(
+            change(&sub_room, parent.viewer, parent.member, false),
+            Err(SubRoomManagerRefusal::ManagersOnly)
+        );
+        assert_eq!(
+            change(&sub_room, parent.member, parent.invited, true),
+            Err(SubRoomManagerRefusal::NotInside),
+            "得先进这一间"
+        );
+        assert_eq!(
+            change(&sub_room, parent.member, parent.admin, true),
+            Err(SubRoomManagerRefusal::NotInside),
+            "没进来的父房间管理员先算没进来"
+        );
+        assert_eq!(
+            change(&sub_room, parent.member, parent.owner, true),
+            Err(SubRoomManagerRefusal::ParentRuns),
+            "房主在每一间里，本来就管"
+        );
+        sub_room
+            .admit(parent.admin, permissions(&SPEAKER))
+            .expect("父房间的管理员进来");
+        assert_eq!(
+            change(&sub_room, parent.member, parent.admin, true),
+            Err(SubRoomManagerRefusal::ParentRuns),
+            "父房间的管理员本来就管每一间"
+        );
+        assert_eq!(
+            change(&sub_room, parent.admin, parent.owner, false),
+            Err(SubRoomManagerRefusal::ParentRuns)
+        );
+
+        // 撤：子房间管理员只能撤自己，父房间的房主和管理员撤得了别人。
+        let mut two_managers = sub_room.clone();
+        let manager = permissions(&[PrivateRoomCapability::View, PrivateRoomCapability::Manage]);
+        two_managers
+            .update_permissions(parent.owner, parent.viewer, manager)
+            .expect("房主能给");
+        let revoke = |actor, target| {
+            authorize_sub_room_manager_change(&parent.room, &two_managers, actor, target, false)
+        };
+        assert_eq!(
+            revoke(parent.viewer, parent.member),
+            Err(SubRoomManagerRefusal::PeerManager)
+        );
+        assert_eq!(revoke(parent.viewer, parent.viewer), Ok(()), "自己不当了");
+        assert_eq!(revoke(parent.admin, parent.member), Ok(()));
+        assert_eq!(revoke(parent.owner, parent.viewer), Ok(()));
     }
 
     #[test]
