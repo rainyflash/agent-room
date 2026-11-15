@@ -1,0 +1,90 @@
+/* 左栏里的子房间：按分类分组，分类能收起（specs/redesign/sub-rooms.md“网页”）。 */
+.sub-room-places {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 2px 8px 8px;
+}
+.sub-room-places__rooms {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sub-room-places__heading {
+  margin: 0;
+  font-size: inherit;
+}
+.sub-room-places__category {
+  display: flex;
+  width: 100%;
+  min-height: 28px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: left;
+}
+.sub-room-places__category:hover {
+  color: var(--color-ink);
+}
+.sub-room-places__category > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+.sub-room-places__category[aria-expanded='false'] > svg {
+  transform: rotate(-90deg);
+}
+.sub-room-places__room {
+  font-weight: 400;
+  text-decoration: none;
+}
+.sub-room-places__room[data-unread] {
+  font-weight: 600;
+}
+.sub-room-places__room > .ar-room-glyph {
+  color: var(--ar-muted);
+}
+.sub-room-places__name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sub-room-places__count,
+.sub-room-places__mention {
+  flex: 0 0 auto;
+  font-size: 0.71875rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.sub-room-places__count {
+  color: var(--ar-muted);
+  font-weight: 500;
+}
+.sub-room-places__mention {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  place-items: center;
+  border-radius: var(--ar-pill);
+  background: var(--ar-badge);
+  color: var(--ar-on-badge);
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sub-room-places__category > svg {
+    transition: none;
+  }
+}
