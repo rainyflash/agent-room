@@ -39,15 +39,15 @@ pub use listing::{
     PrivateRoomListingUseCases, UpdateListing,
 };
 pub use models::{
-    AnswerSubRoomJoinRequest, ArchivePrivateRoom, ArchiveSubRoom, ChangePrivateRoomPermissions,
-    ChangeSubRoomManager, ChangeSubRoomPolicy, CreatePrivateRoom, CreateSubRoom,
-    CreateSubRoomCategory, DeleteSubRoomCategory, GovernPrivateRoomMember, GovernSubRoomMember,
-    InspectPrivateRoom, InspectSubRoomPolicy, InviteByLink, InvitePrivateRoomMember,
-    ListPrivateRooms, ListPrivateRoomsForAccount, ListSubRooms, PrivateRoomActor,
-    PrivateRoomCreatorAgent, PrivateRoomInvitation, PrivateRoomMembershipAction, PrivateRoomOrigin,
-    RenamePrivateRoom, RequestSubRoomJoin, RestoreSubRoom, ReviseSubRoom, ReviseSubRoomCategory,
-    SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomView,
-    TransferPrivateRoomOwnership,
+    AgentSubRoomCreated, AnswerSubRoomJoinRequest, ArchivePrivateRoom, ArchiveSubRoom,
+    ChangePrivateRoomPermissions, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateAgentSubRoom,
+    CreatePrivateRoom, CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory,
+    GovernPrivateRoomMember, GovernSubRoomMember, InspectPrivateRoom, InspectSubRoomPolicy,
+    InviteByLink, InvitePrivateRoomMember, ListPrivateRooms, ListPrivateRoomsForAccount,
+    ListSubRooms, PrivateRoomActor, PrivateRoomCreatorAgent, PrivateRoomInvitation,
+    PrivateRoomMembershipAction, PrivateRoomOrigin, RenamePrivateRoom, RequestSubRoomJoin,
+    RestoreSubRoom, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState, SubRoomList,
+    SubRoomMembershipAction, SubRoomPolicyView, SubRoomView, TransferPrivateRoomOwnership,
 };
 pub use moderation_grants::{
     GrantRoomModeration, ListRoomModerationGrants, ModerationGrantFailure,

@@ -9,8 +9,8 @@ use agent_room_application::{
         SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
     },
     private_rooms::{
-        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, ReviseSubRoom,
-        ReviseSubRoomCategory,
+        CreateAgentSubRoom, CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory,
+        PrivateRoomActor, ReviseSubRoom, ReviseSubRoomCategory,
     },
 };
 use agent_room_domain::{ids::SubRoomCategoryId, sub_room_categories::MAXIMUM_SUB_ROOM_CATEGORIES};
@@ -601,4 +601,76 @@ async fn 管得了这一间的人能挪分类_能挪回未分类_挪进没有的
         .expect("只改名");
     assert_eq!(renamed.catalog().name(), "shipping");
     assert_eq!(rooms.category_of(VIEWER, 20).await, None, "没提分类就不动");
+}
+
+#[tokio::test]
+async fn agent_替主人建子房间_分类按名字找_不分大小写_没有这个名字的放进未分类_不替它建() {
+    let rooms = Rooms::new();
+    rooms
+        .create_category(ADMIN, 60, "Release")
+        .await
+        .expect("建了分类");
+    let agent = agent_id(71);
+    rooms.agents.own(principal_id(MEMBER), agent);
+    let by_agent = |catalog: u128, category: Option<&str>| CreateAgentSubRoom {
+        actor: PrivateRoomActor::Device(device(principal_id(MEMBER), "@member:matrix.test")),
+        parent_catalog_id: catalog_id(PARENT),
+        catalog_id: catalog_id(catalog),
+        name: format!("ship-{catalog}"),
+        access: RoomJoinMode::Request,
+        category: category.map(str::to_owned),
+        created_by_agent: agent,
+    };
+
+    let placed = rooms
+        .service
+        .create_agent_sub_room(by_agent(20, Some("  release ")))
+        .await
+        .expect("Agent 替主人建");
+    assert_eq!(placed.room.catalog().id(), catalog_id(20));
+    assert_eq!(placed.room.parent_catalog_id(), Some(catalog_id(PARENT)));
+    assert_eq!(placed.parent_name, "Project");
+    assert_eq!(
+        placed.category.as_deref(),
+        Some("Release"),
+        "照分类本来的写法"
+    );
+    assert!(!placed.category_missing);
+    assert_eq!(rooms.category_of(VIEWER, 20).await, Some(category_id(60)));
+    let link = rooms.store.link(20);
+    assert_eq!(link.link.access, RoomJoinMode::Request);
+    assert!(!link.link.hidden);
+    assert_eq!(link.link.created_by_agent, Some(agent));
+
+    let missing = rooms
+        .service
+        .create_agent_sub_room(by_agent(21, Some("Design")))
+        .await
+        .expect("没有这个分类照样建");
+    assert_eq!(missing.category, None);
+    assert!(missing.category_missing);
+    assert_eq!(rooms.category_of(VIEWER, 21).await, None, "放进未分类");
+
+    let plain = rooms
+        .service
+        .create_agent_sub_room(by_agent(22, None))
+        .await
+        .expect("不提分类");
+    assert_eq!(plain.category, None);
+    assert!(!plain.category_missing, "没要分类就不说没找到");
+
+    assert_eq!(
+        refusal(
+            rooms
+                .service
+                .create_agent_sub_room(CreateAgentSubRoom {
+                    created_by_agent: agent_id(72),
+                    ..by_agent(23, None)
+                })
+                .await
+                .map(|created| created.room)
+        ),
+        PrivateRoomFailureKind::Forbidden,
+        "不是主人名下的 Agent 建不了，和网页那条路一样"
+    );
 }

@@ -511,7 +511,10 @@
      - 2f-2b-1 父房间里的 Agent 成员被移出时子房间里也移出（带迁移）；
      - 2f-2b-2 只有 Agent 成员在的子房间算进禁言要压的那几间；凭口令进了父房间的本机 Agent 自己进没有门的子房间。
      - 原来还有一样“子房间归档、换成不收敲门的门时在等的敲门作废”，不做，见“状态”。
-7. **2g 本机 Agent 这一路**：IPC 4.7、本机 MCP 和命令行的 `parent`、`access`、`category`。
+7. **2g 本机 Agent 这一路**：IPC 4.7、本机 MCP 和命令行的 `parent`、`access`、`category`。拆成：
+   - 2g-1 控制面：设备签名的建房地址（`/devices/current/private-rooms`）带上 `parentRoomId` 建子房间，收 `access` 和分类的名字（`category`），回答带父房间和放进的分类。
+   - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、进门和建房的回答带 `parent`；Bridge 同时认 4.4 到 4.7。
+   - 2g-3 本机 MCP 和命令行：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去时说清楚；接入说明、`agents.md`、命令行 `guide` 那一小段。
 8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
 10. **2j 自动归档**：记最近说话的时间、每小时一轮、房间设置里的开关。可以晚一版。
@@ -682,3 +685,8 @@
   - 本机 Agent 进子房间时，先照 2f-1a 看主人带不带得了它；主人带不了（不在父房间里、在里面说不了话），再看它自己是不是父房间里还在的 Agent 成员（`SubRoomAgentMemberSeating`，口令服务那边实现，和网络 Agent 敲门共用 `sub_room_agent_knock`）：没有门的直接记成这一间的 Agent 成员（照样记成敲门进来的），再照常进聊天服务器上的房间、按主人的禁言给不给发言级别；要等放行的回 403 `sub_room.agent_not_admitted`，什么都不记、也不留敲门，管理员按名字放行以后它再进。主人有门能申请时照旧回 `sub_room.owner_not_inside`。
   - 主人在这一间里被封禁着的，它不能自己进：封禁连人带他的 Agent 一起算，它没进来过就没有被一起移出的记录，不挡的话它绕过了封禁。
   - 给 Bridge 的房间列表照旧只按账号列：主人不在父房间里时，凭口令进了父房间的 Agent 在列表里看不到父房间和它下面的子房间，要拿房间号进。本机这一路的子房间参数放在 2g。
+- 2026-11-15 2g 拆成三步（见“分步交付”）。2g-1 做完：本机 Agent 替主人建子房间。没有迁移，只有控制面。
+  - 还是设备签名的建房地址 `POST /devices/current/private-rooms`，带上 `parentRoomId` 建的就是那间房下面的子房间，没有另开地址：Bridge 只多带几项。另收 `access`（`open`、`request`、`invite_only`，不带是 `open`）和 `category`（分类的名字，照分类名字的规矩：不空、两头不带空白、不太长）。这两项只有建子房间时能带，建整间房时带了回 400 `private_room.invalid_creation_body`；子房间不收用途和隐藏，要的话主人在网页上改。
+  - 规矩和人在网页上建一样（新的用例 `create_agent_sub_room` 里面调的就是建子房间那一段）：主人得是父房间里能建的人，房间设置得让 Agent 建，Agent 得是主人名下还在用的；建不了的照子房间的码说（`sub_room.agents_may_not_create` 等）。
+  - 分类按名字找，不分大小写、不看两头的空白。没有这个名字的放进“未分类”，回答里带 `categoryMissing: true`，不替它新建分类：分类是管房间的人排的。
+  - 回答在原来那三项（`catalogId`、`matrixRoomId`、`name`）之外，子房间另带 `parent`（`catalogId`、`name`）和放进的分类的名字 `category`；建整间房时不写这几项，已经装着的 Bridge 读到的和以前一样。同一个房间号重发拿回的是同一间，分类照这一刻的名单再找一遍（重发不比分类）。

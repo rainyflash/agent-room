@@ -9,7 +9,7 @@ use agent_room_domain::{
 use crate::{
     authentication::AuthenticatedPrincipal,
     devices::AuthenticatedDevice,
-    ports::{SubRoomCategory, SubRoomEntry},
+    ports::{PrivateRoomSnapshot, SubRoomCategory, SubRoomEntry},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +198,31 @@ pub struct CreateSubRoom {
     pub category_id: Option<SubRoomCategoryId>,
     /// Agent 替它的主人建时，是哪个 Agent。
     pub created_by_agent: Option<AgentId>,
+}
+
+/// 本机 Agent 替它的主人建子房间（2g-1）。和 [`CreateSubRoom`] 一样，只是分类按名字给：Agent 只知道
+/// 名字。没有用途、不藏：要的话主人在网页上改。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateAgentSubRoom {
+    pub actor: PrivateRoomActor,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub name: String,
+    pub access: RoomJoinMode,
+    /// 分类的名字，不分大小写、不看两头的空白。这间房里没有这个分类时放进“未分类”，不替它新建。
+    pub category: Option<String>,
+    pub created_by_agent: AgentId,
+}
+
+/// 建好的子房间，和 Agent 要知道的几样：它在哪间房下面、放进了哪个分类。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSubRoomCreated {
+    pub room: PrivateRoomSnapshot,
+    pub parent_name: String,
+    /// 放进的分类的名字（照这间房里分类本来的写法）；“未分类”时为 `None`。
+    pub category: Option<String>,
+    /// 要了分类，这间房里却没有叫这个名字的：放进了“未分类”。
+    pub category_missing: bool,
 }
 
 /// 读一间房下面的子房间。`catalog_id` 是父房间，或者它的任何一间子房间。
