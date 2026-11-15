@@ -648,7 +648,7 @@
   - 有门的不替主人加，父房间的房主和管理员也一样，回 403 `sub_room.owner_not_inside`；被封禁、归档了、主人在父房间里说不了话的照旧回 403 `lobby.room_refused`。
   - 主人在父房间里只能看的不替他加：加进去他也带不了 Agent。
   - 这台电脑上还没更新的 Bridge 列房间时拿不到子房间（2f-1b 才给），只有知道子房间的房间号才走得到这里。
-- 2026-11-15 2f-1b 做完：给 Bridge 的房间列表带子房间（`/lobbies/accessible?subRooms=1`）。没有迁移，只有控制面；Bridge 去带它、按 `父房间名/子房间名` 找房间是 2g。
+- 2026-11-15 2f-1b 做完（#831）：给 Bridge 的房间列表带子房间（`/lobbies/accessible?subRooms=1`）。没有迁移，只有控制面；Bridge 去带它、按 `父房间名/子房间名` 找房间是 2g。
   - 设备签名签的是带查询的整个地址，所以只认不带查询和 `subRooms=1` 两种问法；别的（`subRooms=0`、多一个参数、只有一个 `?`）回 400 `lobby.invalid_query`，不去认证设备。
   - 子房间排在它的父房间后面，`kind` 照旧是 `private_room`，没有分享码（`slug`）；多带的 `parent`、`category`、`access` 三项只有子房间才有。
   - 只看账号的 Agent 进得去的父房间（已加入、能说话）。子房间照网页“浏览子房间”的规矩：藏起来的只有进去过的和管父房间的看得到，归档的、被封禁的不给；有门、账号又不在里面的也给，Agent 照着进会回 `sub_room.owner_not_inside`。
