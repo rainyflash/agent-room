@@ -515,8 +515,8 @@
    - 2g-1 控制面：设备签名的建房地址（`/devices/current/private-rooms`）带上 `parentRoomId` 建子房间，收 `access` 和分类的名字（`category`），回答带父房间和放进的分类。
    - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、建房的回答带 `parent`、进不去时分开报；按名字找子房间写 `父房间名/子房间名`；Bridge 同时认 4.4 到 4.7。
    - 2g-3a 本机 MCP：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去、建不成时说清楚。
-   - 2g-3b 命令行：`create-room --parent`、`rooms --parent`，进不去时说清楚；接入说明、`agents.md`、命令行 `guide` 那一小段。
-8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间。
+   - 2g-3b 命令行：`create-room --parent`、`rooms --parent`，进不去时说清楚；命令行 `guide` 那一小段（接入说明和 `agents.md` 的挪到 2h）。
+8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间；接入说明和 `agents.md` 的那一小段（从 2g-3 挪过来）。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
 10. **2j 自动归档**：记最近说话的时间、每小时一轮、房间设置里的开关。可以晚一版。
 11. **2k 无头验收**（只在派发 `suite=all` 时跑）：人在网页上建子房间、放进分类；本机 Agent 按名字进来、主人这边左栏出现；网络 Agent 建一个要批准的、别的 Agent 敲门、它放行以后加密收发；人申请、管理员批准；归档以后说不了话、恢复以后接着说；把人移出父房间，他和他的 Agent 在子房间里都出去。
@@ -707,3 +707,11 @@
   - 和设计不一样的两处：
     - 设计说列子房间时写“自己在不在里面”，这里给的是账户在不在里面：Bridge 的房间列表是按账号列的，Agent 自己在哪些房间照旧看诊断里的 `rooms`。
     - 归档的子房间不列，没有 `archived`：Bridge 问能进的房间时控制面不给归档的，要列就得另加接口。Agent 用得上再做。
+- 2026-11-15 2g-3b 做完（#838）：命令行。
+  - `create-room <名字> --parent <房间名或房间号> [--access open|request|invite_only] [--category <分类名>]` 建子房间，父房间按 `join --room` 那一套找；本机核对和 MCP 一样，不合规的不去建、也不存人物。子房间没有口令，建好不去拿；分类没找到时带 `categoryMissing` 和一句说明。
+  - `rooms` 默认不列子房间，`rooms --parent <房间>` 才列那间房下面的；`--parent` 不能和 `--public`、`--search`、`--cursor` 一起用。`join --room` 找不到房间时报的“能进的房间”也只列整间的。
+  - 档案里子房间按 `父房间名/子房间名` 记（`created_room` 和又进的房间的名字），`--room` 也照它找，不分大小写、斜杠两边的空白不算。和 MCP 按“父房间号/名字”记不一样：档案里记房间的结构不收不认识的字段，加一项的话旧版命令行读不出档案。代价是父房间改了名以后再说一次同一个名字，会当成新的去建，控制面回 `sub_room_name_taken`，提示照着叫它按“父房间名/子房间名”进。
+  - 进不去的两个、建不成的五个、本机核对不过的两个错误码，命令行各有一句提示（`output.rs`）。
+  - `guide` 多一段 `subRooms`：一件事开一个子房间、只进跟手上的事有关的、有门的别硬闯、做完了跟主人说一声可以归档；`commands` 里加了 `rooms --parent` 和 `create-room --parent`。
+  - 和设计不一样的一处：接入说明（接入对话框给 Agent 的话）和 `agents.md` 的那一小段挪到 2h。网络 Agent 要到 2h 才能用子房间，三种接入共用的说法现在写上去，网络 Agent 照着做会碰壁。
+  - 房间的“地址”（整间的是名字，子房间是 `父房间名/子房间名`）放在 `IpcRoomSummary::address`，MCP 和命令行共用；子房间那两句说法（人怎么找到它、分类没找到）挪到 `agent_room_agent_client::rooms`。

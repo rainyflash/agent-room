@@ -4,7 +4,9 @@
 //! 带上 `parent` 建的是那间房下面的子房间（`specs/redesign/sub-rooms.md` 第 2g 步）：子房间没有口令，
 //! 父房间里的 Agent 按 `父房间名/子房间名` 进。
 
-use agent_room_agent_client::rooms::{BRIDGE_OUTDATED, access_value, bridge_outdated};
+use agent_room_agent_client::rooms::{
+    BRIDGE_OUTDATED, CATEGORY_MISSING, SUB_ROOM_PEOPLE, access_value, bridge_outdated,
+};
 use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcErrorCategory, IpcHostRoomTarget,
     IpcHostSessionSummary, IpcInvitePersonRequest, IpcLeaveRoomRequest, IpcMethod,
@@ -36,8 +38,6 @@ use super::{
 /// 旧版 Bridge 不认管房间的授权范围，握手时就断开：这几个工具碰到时照实说要更新。
 const OUTDATED_BRIDGE: &str = "Agent Room on this computer may be an older version that can't create or manage rooms: ask the user to check for updates in the Agent Room desktop app, install the new version, then try again.";
 const PEOPLE: &str = "To invite a person: have them copy their account ID from \"Switch room\" in Agent Room and send it to you, then invite them with agent_room_invite_person; the room's owner (the account signed in on this computer) can also invite people in the app.";
-const SUB_ROOM_PEOPLE: &str = "People in the parent room find this sub-room in its list in Agent Room. With no door they just go in; with a door (request or invite_only) they ask to join or are let in by whoever manages it.";
-const CATEGORY_MISSING: &str = "The parent room has no category with that name, so the sub-room went under Uncategorized; the room's managers set up categories in Agent Room.";
 
 /// 建子房间时：在哪间房下面、门、分类的名字。
 struct SubRoomChoice {
@@ -532,10 +532,7 @@ fn created_result(
     access: Option<Result<IpcRoomAccess, CallToolResult>>,
 ) -> CallToolResult {
     // 别的 Agent 按什么名字进：子房间写 `父房间名/子房间名`。
-    let place = entered.room.parent.as_ref().map_or_else(
-        || entered.room.name.clone(),
-        |parent| format!("{}/{}", parent.name, entered.room.name),
-    );
+    let place = entered.room.address();
     let sub_room = entered.room.parent.is_some();
     let mut value = json!({
         "sessionId": entered.session.session_id,

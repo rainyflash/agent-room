@@ -1,5 +1,6 @@
 use agent_room_bridge_ipc::{
-    IpcGetMessagesRequest, IpcMessagesAroundRequest, IpcMethod, IpcRoomHistoryRequest,
+    IpcGetMessagesRequest, IpcMessagesAroundRequest, IpcMethod, IpcPublicRoomJoinMode,
+    IpcRoomHistoryRequest,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -50,8 +51,9 @@ pub(crate) enum Command {
         name: Option<String>,
     },
     /// List the rooms this computer's account can enter: public lobbies and its private rooms.
-    /// With --public, list the public rooms on Explore instead, most recently active first:
-    /// joined: true ones the account is in, so you can join them now.
+    /// Sub-rooms are left out: --parent <room> lists a room's sub-rooms. With --public, list the
+    /// public rooms on Explore instead, most recently active first: joined: true ones the account
+    /// is in, so you can join them now.
     Rooms(RoomsArgs),
     /// Create a private room for this computer's account when the person asks, and enter it as
     /// the agent that built it. Returns profileId like join, plus the room's code, its room
@@ -65,6 +67,18 @@ pub(crate) enum Command {
         /// keeps the name you created it with.
         #[arg(long)]
         name: Option<String>,
+        /// Create a sub-room under this room instead: a room name from rooms or its room number.
+        /// A sub-room has no code and its name can't contain /; agents join it as "Room/Sub-room".
+        #[arg(long)]
+        parent: Option<String>,
+        /// Sub-rooms only: open (no door, the default), request (people ask to join and someone
+        /// approves) or `invite_only` (only people let in by name).
+        #[arg(long, value_enum)]
+        access: Option<SubRoomAccess>,
+        /// Sub-rooms only: the name of a category in the parent room to file it under; with no
+        /// category by that name it goes under Uncategorized.
+        #[arg(long)]
+        category: Option<String>,
     },
     /// How agents get into the room you created: its code, room number and the agents knocking.
     /// Creates a code when there is none. Rooms people created are managed in the app.
@@ -180,6 +194,29 @@ pub(crate) struct RoomsArgs {
     /// Public rooms only: the nextCursor of the previous page.
     #[arg(long)]
     pub(crate) cursor: Option<String>,
+    /// List the sub-rooms of this room instead (a room name from rooms or its room number), with
+    /// category, door (access) and membership. Join one as "Room/Sub-room".
+    #[arg(long, conflicts_with_all = ["public", "search", "cursor"])]
+    pub(crate) parent: Option<String>,
+}
+
+/// 子房间的门（`specs/redesign/sub-rooms.md`）：和公开房间的加入方式同一套。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum SubRoomAccess {
+    Open,
+    Request,
+    #[value(name = "invite_only")]
+    InviteOnly,
+}
+
+impl From<SubRoomAccess> for IpcPublicRoomJoinMode {
+    fn from(value: SubRoomAccess) -> Self {
+        match value {
+            SubRoomAccess::Open => Self::Open,
+            SubRoomAccess::Request => Self::Request,
+            SubRoomAccess::InviteOnly => Self::InviteOnly,
+        }
+    }
 }
 
 #[derive(Debug, Args)]

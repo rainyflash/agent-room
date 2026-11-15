@@ -88,8 +88,21 @@ async fn run(cli: Cli) -> CliResult<()> {
     let backend = launching_desktop_when_absent(local, &data_root, &service);
     let backend = backend.as_ref();
     // 建房自己挑人物：同一任务同名回到建过的那间，带 --profile 是重试那一次。
-    if let Command::CreateRoom { room, name } = cli.command {
-        let creation = rooms::Creation { room, name };
+    if let Command::CreateRoom {
+        room,
+        name,
+        parent,
+        access,
+        category,
+    } = cli.command
+    {
+        let creation = rooms::Creation {
+            room,
+            name,
+            parent,
+            access: access.map(Into::into),
+            category,
+        };
         let task_id = profile::host_task_id()?;
         let created = rooms::create(
             backend,
@@ -130,7 +143,7 @@ async fn run_command(
             Err(CliFailure::validation("cli.profile.required"))
         }
         Command::Guide => success(access::guide()),
-        Command::Rooms(args) => success(call(backend, rooms_method(args)).await?),
+        Command::Rooms(args) => success(list_rooms(backend, args).await?),
         command @ (Command::CreateRoom { .. }
         | Command::Access(_)
         | Command::Admit(_)
@@ -321,12 +334,22 @@ pub(crate) fn scoped(session_id: String, method: IpcMethod) -> IpcMethod {
     }
 }
 
+/// `rooms`：按选项问 Bridge，再把子房间挑出来（`rooms::list`）。
+async fn list_rooms(
+    backend: &dyn BridgeToolClient,
+    args: cli::RoomsArgs,
+) -> CliResult<IpcResponse> {
+    let parent = args.parent.clone();
+    rooms::list(backend, rooms_method(args), parent.as_deref()).await
+}
+
 /// 不带选项列账号能进的房间；`--public`（或者带了 `--search`、`--cursor`）翻发现页的公开房间。
 fn rooms_method(args: cli::RoomsArgs) -> IpcMethod {
     let cli::RoomsArgs {
         public,
         search,
         cursor,
+        parent: _,
     } = args;
     if public || search.is_some() || cursor.is_some() {
         IpcMethod::ListPublicRooms(IpcListPublicRoomsRequest { search, cursor })
@@ -491,6 +514,40 @@ mod tests {
                 cursor: Some("24".into()),
             })
         );
+        // 子房间在能进的房间里挑出来；和翻公开房间不能一起用。
+        assert_eq!(
+            method(&["rooms", "--parent", "Project"]),
+            IpcMethod::ListRooms
+        );
+        let mixed = ["agent-room", "rooms", "--parent", "Project", "--public"];
+        assert!(cli::Cli::try_parse_from(mixed).is_err());
+    }
+
+    #[test]
+    fn create_room_的门只认三种写法() {
+        let parsed = |access: &str| {
+            cli::Cli::try_parse_from([
+                "agent-room",
+                "create-room",
+                "Release",
+                "--parent",
+                "Project",
+                "--access",
+                access,
+            ])
+        };
+        let Ok(cli::Cli {
+            command:
+                cli::Command::CreateRoom {
+                    access: Some(cli::SubRoomAccess::InviteOnly),
+                    ..
+                },
+            ..
+        }) = parsed("invite_only")
+        else {
+            panic!("invite_only 认得");
+        };
+        assert!(parsed("invite-only").is_err());
     }
 
     #[test]

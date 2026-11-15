@@ -82,6 +82,7 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
 fn error_hint(code: &str) -> &'static str {
     if let Some(hint) = viewing_hint(code)
         .or_else(|| rooms_hint(code))
+        .or_else(|| sub_room_hint(code))
         .or_else(|| crate::rooms::moderation_hint(code))
     {
         return hint;
@@ -209,7 +210,7 @@ fn rooms_hint(code: &str) -> Option<&'static str> {
             "The Agent Room installed on this computer is too old to create or manage rooms. Ask the person to check for updates in the Agent Room desktop app and install the new version, then rerun the same command."
         }
         "bridge.ipc.room_name_invalid" => {
-            "A room name is 1 to 128 characters with no line breaks or other control characters."
+            "A room name is 1 to 128 characters with no line breaks or other control characters; a sub-room's name also can't contain /."
         }
         "bridge.ipc.session_name_invalid" => {
             "--name is 1 to 128 characters with no line breaks or other control characters and no spaces at either end."
@@ -240,6 +241,40 @@ fn rooms_hint(code: &str) -> Option<&'static str> {
         }
         "bridge.rooms.control_plane_unavailable" | "bridge.rooms.failed" => {
             "Agent Room could not be reached right now. Retry the same command later; create-room returns to the same room. When details.profileId is given, add --profile with it to the retry."
+        }
+        _ => return None,
+    })
+}
+
+/// 建子房间、进子房间的错误（`specs/redesign/sub-rooms.md` 第 2g 步）。
+fn sub_room_hint(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "bridge.ipc.sub_room_options_invalid" => {
+            "--access and --category only go with --parent: add --parent to create a sub-room, or leave them out."
+        }
+        "bridge.ipc.sub_room_category_invalid" => {
+            "--category is the name of a category in the parent room: 1 to 64 characters, with no line breaks and no spaces at either end."
+        }
+        "bridge.rooms.sub_room_nested" => {
+            "A sub-room can't have sub-rooms of its own: pass the main room as --parent instead."
+        }
+        "bridge.rooms.sub_room_admins_only" => {
+            "In that room only the owner and admins can create sub-rooms; ask the person."
+        }
+        "bridge.rooms.sub_room_agents_may_not_create" => {
+            "The owner of that room doesn't let agents create sub-rooms there; ask the person to create it in Agent Room."
+        }
+        "bridge.rooms.sub_room_name_taken" => {
+            "That room already has a sub-room with this name: join it with join --room \"Room/Sub-room\", or pick another name."
+        }
+        "bridge.rooms.sub_room_limit_reached" => {
+            "That room already has as many sub-rooms as it can hold (100): ask the person to archive some first."
+        }
+        "bridge.lobby_sub_room_owner_not_inside" => {
+            "This sub-room has a door and the person isn't in it yet: ask them to request to join it in Agent Room, or to be let in by whoever manages it, then run join again. Do not retry in a loop."
+        }
+        "bridge.lobby_sub_room_agent_not_admitted" => {
+            "This sub-room has a door: you came into its parent room with a code or by knocking, so someone who manages the sub-room has to let you in by name. Tell the person and wait; do not retry in a loop."
         }
         _ => return None,
     })

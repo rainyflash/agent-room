@@ -1,8 +1,12 @@
 //! 建房间、管房间（`specs/agent-rooms/design.md` 第 3 步）：替这台电脑的账号建私人房间，管 Agent
 //! 建的房间怎么进。人建的房间由人在应用里管，控制面把关。
+//!
+//! 带 `--parent` 建的是那间房下面的子房间（`specs/redesign/sub-rooms.md` 第 2g 步）：子房间没有
+//! 口令，档案里按 `父房间名/子房间名` 记，别的 Agent 也按这个名字进。
 
 use crate::{
-    access::{connect, enter_room, open_store},
+    access::{connect, enter_room, open_store, pick_room},
+    call,
     cli::{AccessArgs, AgentArgs, Command, InviteArgs},
     output::{CliFailure as Failure, CliResult as Result, success},
     profile::{EnteredRoom, Invitation, Profile, ProfileStore, RoomTarget, default_display_name},
@@ -10,12 +14,12 @@ use crate::{
 };
 use agent_room_agent_client::{
     BridgeToolClient,
-    rooms::{BRIDGE_OUTDATED, access_value, bridge_outdated},
+    rooms::{BRIDGE_OUTDATED, CATEGORY_MISSING, SUB_ROOM_PEOPLE, access_value, bridge_outdated},
 };
 use agent_room_bridge_ipc::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcErrorCategory, IpcInvitePersonRequest,
-    IpcMethod, IpcRemoveAgentRequest, IpcResponse, IpcRoomAccess, IpcRoomAccessAction,
-    IpcRoomAccessRequest, IpcRoomCode, IpcRoomSummary, IpcSelfSummary,
+    IpcMethod, IpcPublicRoomJoinMode, IpcRemoveAgentRequest, IpcResponse, IpcRoomAccess,
+    IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomSummary, IpcSelfSummary,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -28,10 +32,52 @@ pub(crate) use moderation::hint as moderation_hint;
 
 const PEOPLE: &str = "To bring a person in, ask them to copy their account ID from \"Switch room\" in Agent Room and send it to you, then run invite <account ID>. The room's owner (the account signed in on this computer) can also invite people in the app.";
 
-/// `create-room` 要的：房间名和 Agent 在房间里的名字。
+/// `create-room` 要的：房间名和 Agent 在房间里的名字；建子房间时另有父房间、门和分类。
 pub(crate) struct Creation {
     pub(crate) room: String,
     pub(crate) name: Option<String>,
+    /// 父房间：房间名或房间号。
+    pub(crate) parent: Option<String>,
+    pub(crate) access: Option<IpcPublicRoomJoinMode>,
+    pub(crate) category: Option<String>,
+}
+
+/// 子房间放在哪间房下面、门和分类的名字。
+struct SubRoom {
+    parent: IpcRoomSummary,
+    access: Option<IpcPublicRoomJoinMode>,
+    category: Option<String>,
+}
+
+/// `rooms`：子房间不混在列表里（一间房下面可能有上百间，同名的也多），带 `--parent` 才列那间房
+/// 下面的。翻公开房间的回答原样给。
+pub(crate) async fn list(
+    backend: &dyn BridgeToolClient,
+    method: IpcMethod,
+    parent: Option<&str>,
+) -> Result<IpcResponse> {
+    let response = call(backend, method).await?;
+    let IpcResponse::Rooms { rooms } = response else {
+        return Ok(response);
+    };
+    let rooms = match parent.map(str::trim).filter(|parent| !parent.is_empty()) {
+        Some(parent) => {
+            let parent = pick_room(&rooms, parent)?.catalog_id.clone();
+            rooms
+                .into_iter()
+                .filter(|room| {
+                    room.parent
+                        .as_ref()
+                        .is_some_and(|room_parent| room_parent.catalog_id == parent)
+                })
+                .collect()
+        }
+        None => rooms
+            .into_iter()
+            .filter(|room| room.parent.is_none())
+            .collect(),
+    };
+    Ok(IpcResponse::Rooms { rooms })
 }
 
 /// 建房间并进去。同一任务用同一个房间名再建就回到那间，建房的人物也不换：
@@ -46,11 +92,37 @@ pub(crate) async fn create(
     creation: Creation,
 ) -> Result<Value> {
     let room_name = creation.room.trim();
-    check_creation(room_name, creation.name.as_deref())?;
+    let parent = creation
+        .parent
+        .as_deref()
+        .map(str::trim)
+        .filter(|parent| !parent.is_empty());
+    check_creation(
+        room_name,
+        creation.name.as_deref(),
+        parent.is_some(),
+        creation.access,
+        creation.category.as_deref(),
+    )?;
+    let sub_room = match parent {
+        Some(parent) => Some(SubRoom {
+            parent: parent_room(backend, parent).await?,
+            access: creation.access,
+            category: creation.category.clone(),
+        }),
+        None => None,
+    };
+    // 档案里按别的 Agent 进它时用的名字记：子房间是 `父房间名/子房间名`。同一任务在同一间房下面
+    // 用同一个名字再建就回到它；整间的房间和别的房间下面的同名子房间是另外的。
+    let label = sub_room.as_ref().map_or_else(
+        || room_name.to_owned(),
+        |sub_room| format!("{}/{room_name}", sub_room.parent.name),
+    );
+    let label = label.as_str();
     let bound = |find: &dyn Fn(&str) -> Option<String>| task_id.as_deref().and_then(find);
     let key = selected
         .clone()
-        .or_else(|| bound(&|task| ProfileStore::find_created(root, service, task, room_name)))
+        .or_else(|| bound(&|task| ProfileStore::find_created(root, service, task, label)))
         .or_else(|| {
             bound(&|task| ProfileStore::latest_bound(root, service, task, creation.name.as_deref()))
         })
@@ -59,27 +131,26 @@ pub(crate) async fn create(
     let mut profile = match store.load()? {
         Some(profile) => profile,
         None if selected.is_some() => return Err(Failure::validation("cli.profile.not_found")),
-        None => creating(
-            key.clone(),
-            room_name,
-            creation.name,
-            service,
-            task_id.clone(),
-        )?,
+        None => creating(key.clone(), label, creation.name, service, task_id.clone())?,
     };
     profile.validate_binding(service, task_id.as_deref())?;
     // 已有的 Agent 来建：房间 ID 现在就定下，和房间名一起记进档案。
-    if profile.created_room.as_deref() != Some(room_name) && profile.created(room_name).is_none() {
+    if profile.created_room.as_deref() != Some(label) && profile.created(label).is_none() {
         profile.remember(EnteredRoom {
             catalog_id: uuid::Uuid::now_v7().to_string(),
             room_id: None,
-            name: Some(room_name.to_owned()),
+            name: Some(label.to_owned()),
             created: true,
         });
     }
     // 先记下再去建：结果没回来时重试，回到同一间、同一个人物。
     store.save(&profile)?;
-    let entered = enter_created(backend, &store, &mut profile, room_name)
+    let created = Created {
+        label,
+        name: room_name,
+        sub_room: sub_room.as_ref(),
+    };
+    let entered = enter_created(backend, &store, &mut profile, &created)
         .await
         .map_err(|mut error| {
             // 没有宿主任务时找不回这个人物，得带着 --profile 重试。
@@ -89,16 +160,31 @@ pub(crate) async fn create(
     Ok(entered.value(&key))
 }
 
-/// 房间名和显示名先按 IPC 的规矩在本机核对，不合规的不存成人物。
-fn check_creation(room: &str, name: Option<&str>) -> Result<()> {
+/// `--parent` 说的房间：在账号能进的房间里找，找不到、有两间同名的和 `join --room` 一样报。
+async fn parent_room(backend: &dyn BridgeToolClient, wanted: &str) -> Result<IpcRoomSummary> {
+    let IpcResponse::Rooms { rooms } = call(backend, IpcMethod::ListRooms).await? else {
+        return Err(Failure::local("cli.response_invalid"));
+    };
+    pick_room(&rooms, wanted).cloned()
+}
+
+/// 房间名、显示名、门和分类先按 IPC 的规矩在本机核对，不合规的不存成人物。父房间这时还没找，
+/// 拿一个占位的房间号核对。
+fn check_creation(
+    room: &str,
+    name: Option<&str>,
+    under_parent: bool,
+    access: Option<IpcPublicRoomJoinMode>,
+    category: Option<&str>,
+) -> Result<()> {
     let probe = IpcCreateRoomRequest {
         catalog_id: uuid::Uuid::now_v7().to_string(),
         name: room.to_owned(),
         session_key: uuid::Uuid::now_v7().to_string(),
         display_name: name.map_or_else(default_display_name, str::to_owned),
-        parent_catalog_id: None,
-        access: None,
-        category: None,
+        parent_catalog_id: under_parent.then(|| uuid::Uuid::now_v7().to_string()),
+        access,
+        category: category.map(str::to_owned),
     };
     IpcMethod::CreateRoom(probe)
         .validate()
@@ -125,33 +211,50 @@ fn creating(
     Ok(profile)
 }
 
+/// 要建的房间：档案里记的名字（子房间是 `父房间名/子房间名`）、房间自己的名字和子房间的去处。
+struct Created<'a> {
+    label: &'a str,
+    name: &'a str,
+    sub_room: Option<&'a SubRoom>,
+}
+
 /// 建好、进去了的房间。
 struct Entered {
     identity: IpcSelfSummary,
     room: IpcRoomSummary,
-    access: Result<IpcRoomAccess>,
+    /// 口令；子房间没有口令，是 `None`。
+    access: Option<Result<IpcRoomAccess>>,
+    category_missing: bool,
 }
 
 impl Entered {
     fn value(self, key: &str) -> Value {
         let name = &self.room.name;
+        let place = self.room.address();
         let mut value = json!({
             "profileId": key,
             "identity": self.identity,
             // 别人看到的名字，带服务器加的四位编号。
             "displayName": self.identity.agent.display_name,
             "room": self.room,
-            "localAgents": format!("Other agents on this computer (same account) get in with join --room \"{name}\"; agents using MCP call agent_room_join with the room name."),
-            "people": PEOPLE,
+            "localAgents": format!("Other agents on this computer (same account) get in with join --room \"{place}\"; agents using MCP call agent_room_join with room \"{place}\"."),
+            "people": if self.access.is_some() { PEOPLE } else { SUB_ROOM_PEOPLE },
         });
+        if self.category_missing {
+            value["categoryMissing"] = true.into();
+            value["categoryNote"] = CATEGORY_MISSING.into();
+        }
         let next = match self.access {
-            Ok(access) => {
+            None => format!(
+                "The sub-room is ready and you are in it. Tell the person which room it is under; other agents of this account in that room join it by name (localAgents). Then keep listening until the person says stop: --profile {key} listen in the background, or --profile {key} read in a loop."
+            ),
+            Some(Ok(access)) => {
                 value["access"] = access_value(&access, Some(name));
                 format!(
                     "The room is ready and you are in it. Give the person access.share in their language (zh or en) to pass on to other agents, then keep listening until the person says stop: --profile {key} listen in the background, or --profile {key} read in a loop."
                 )
             }
-            Err(error) => {
+            Some(Err(error)) => {
                 value["accessError"] = json!(error);
                 format!(
                     "The room is ready and you are in it, but its code could not be fetched this time: run --profile {key} access later."
@@ -163,34 +266,37 @@ impl Entered {
     }
 }
 
-/// 请 Bridge 建房（房间 ID 一样就是同一次），照常开会话进去，就绪了顺手看一次口令。
-/// 已有的 Agent 建的房间，开好会话以后再进。
+/// 请 Bridge 建房（房间 ID 一样就是同一次），照常开会话进去，就绪了顺手看一次口令（子房间没有
+/// 口令，不看）。已有的 Agent 建的房间，开好会话以后再进。
 async fn enter_created(
     backend: &dyn BridgeToolClient,
     store: &ProfileStore,
     profile: &mut Profile,
-    room: &str,
+    created: &Created<'_>,
 ) -> Result<Entered> {
-    let home = profile.created_room.as_deref() == Some(room);
+    let home = profile.created_room.as_deref() == Some(created.label);
     let catalog_id = if home {
         profile.invitation.catalog_id.clone()
     } else {
         profile
-            .created(room)
+            .created(created.label)
             .map(|created| created.catalog_id.clone())
     }
     .ok_or_else(|| Failure::local("cli.profile.corrupt"))?;
+    let sub_room = created.sub_room;
     let request = IpcCreateRoomRequest {
         catalog_id: catalog_id.clone(),
-        name: room.to_owned(),
+        name: created.name.to_owned(),
         session_key: profile.invitation.session_key.clone(),
         display_name: profile.invitation.display_name.clone(),
-        parent_catalog_id: None,
-        access: None,
-        category: None,
+        parent_catalog_id: sub_room.map(|sub_room| sub_room.parent.catalog_id.clone()),
+        access: sub_room.and_then(|sub_room| sub_room.access),
+        category: sub_room.and_then(|sub_room| sub_room.category.clone()),
     };
-    let IpcResponse::CreatedRoom { room, .. } =
-        room_call(backend, IpcMethod::CreateRoom(request)).await?
+    let IpcResponse::CreatedRoom {
+        room,
+        category_missing,
+    } = room_call(backend, IpcMethod::CreateRoom(request)).await?
     else {
         return Err(Failure::local("cli.response_invalid"));
     };
@@ -209,16 +315,22 @@ async fn enter_created(
         let target = RoomTarget {
             catalog_id: Some(catalog_id.clone()),
             room_id: room.matrix_room_id.clone(),
-            name: Some(room.name.clone()),
+            name: Some(created.label.to_owned()),
         };
         enter_room(backend, store, profile, target, true).await?;
         Some(catalog_id)
     };
-    let access = room_access(backend, session, IpcRoomAccessAction::Show, managed).await;
+    // 子房间没有口令：别的 Agent 按 `父房间名/子房间名` 进。
+    let access = if room.parent.is_some() {
+        None
+    } else {
+        Some(room_access(backend, session, IpcRoomAccessAction::Show, managed).await)
+    };
     Ok(Entered {
         identity,
         room,
         access,
+        category_missing,
     })
 }
 
