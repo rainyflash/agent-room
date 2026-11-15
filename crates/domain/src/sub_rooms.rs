@@ -188,6 +188,72 @@ pub fn new_sub_room(
     )
 }
 
+/// 子房间的门（界面上叫“谁能进”）和“不在名单里显示”。没有门就是 [`RoomJoinMode::Open`]：父房间里
+/// 的人点一下就进。门只对父房间里面的人开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubRoomDoor {
+    access: RoomJoinMode,
+    hidden: bool,
+}
+
+impl SubRoomDoor {
+    /// 新建的子房间默认没有门。
+    pub const NONE: Self = Self {
+        access: RoomJoinMode::Open,
+        hidden: false,
+    };
+
+    /// # Errors
+    ///
+    /// 没有门的子房间勾了“不在名单里显示”时返回错误：谁都进得来的房间藏不住。
+    pub const fn new(access: RoomJoinMode, hidden: bool) -> DomainResult<Self> {
+        if hidden && matches!(access, RoomJoinMode::Open) {
+            return Err(DomainError::Validation {
+                field: "sub_room_hidden",
+                reason: "没有门的子房间不能不在名单里显示",
+            });
+        }
+        Ok(Self { access, hidden })
+    }
+
+    #[must_use]
+    pub const fn access(self) -> RoomJoinMode {
+        self.access
+    }
+
+    #[must_use]
+    pub const fn hidden(self) -> bool {
+        self.hidden
+    }
+
+    /// 有门的子房间一律加密。
+    #[must_use]
+    pub const fn has_door(self) -> bool {
+        !matches!(self.access, RoomJoinMode::Open)
+    }
+
+    /// 换门、勾或者去掉“不在名单里显示”。没带的那一项不动；拆门的时候没提隐藏的，隐藏跟着去掉。
+    ///
+    /// # Errors
+    ///
+    /// 换完是“没有门、又不在名单里显示”时返回错误。
+    pub const fn changed(
+        self,
+        access: Option<RoomJoinMode>,
+        hidden: Option<bool>,
+    ) -> DomainResult<Self> {
+        let access = match access {
+            Some(access) => access,
+            None => self.access,
+        };
+        let hidden = match hidden {
+            Some(hidden) => hidden,
+            None => self.hidden && !matches!(access, RoomJoinMode::Open),
+        };
+        Self::new(access, hidden)
+    }
+}
+
 /// 为什么进不了这间子房间。分开说，回答里要写清原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubRoomEntryRefusal {
@@ -648,6 +714,48 @@ mod tests {
         assert_eq!(
             authorize_sub_room_join(&closed, &sub_room, parent.viewer, RoomJoinMode::Open),
             Err(SubRoomEntryRefusal::Archived)
+        );
+    }
+
+    #[test]
+    fn 门_没有门的不能藏_拆门的时候隐藏跟着去掉_没带的那一项不动() {
+        assert_eq!(SubRoomDoor::NONE.access(), RoomJoinMode::Open);
+        assert!(!SubRoomDoor::NONE.has_door());
+        assert!(SubRoomDoor::new(RoomJoinMode::Open, true).is_err());
+        let hidden = SubRoomDoor::new(RoomJoinMode::Request, true).expect("有门的能藏");
+        assert!(hidden.has_door() && hidden.hidden());
+        assert!(
+            SubRoomDoor::new(RoomJoinMode::InviteOnly, false)
+                .expect("只能请进来")
+                .has_door()
+        );
+
+        // 没带的不动。
+        assert_eq!(hidden.changed(None, None), Ok(hidden));
+        let invite_only = hidden
+            .changed(Some(RoomJoinMode::InviteOnly), None)
+            .expect("换一种门");
+        assert_eq!(invite_only.access(), RoomJoinMode::InviteOnly);
+        assert!(invite_only.hidden(), "换一种门不动隐藏");
+        let shown = hidden.changed(None, Some(false)).expect("去掉隐藏");
+        assert_eq!(shown.access(), RoomJoinMode::Request);
+        assert!(!shown.hidden());
+
+        // 拆门：没提隐藏的跟着去掉；明说还要藏的拒绝。
+        assert_eq!(
+            hidden.changed(Some(RoomJoinMode::Open), None),
+            Ok(SubRoomDoor::NONE)
+        );
+        assert!(
+            hidden
+                .changed(Some(RoomJoinMode::Open), Some(true))
+                .is_err()
+        );
+        // 没有门的单勾隐藏也拒绝；装门的同时勾可以。
+        assert!(SubRoomDoor::NONE.changed(None, Some(true)).is_err());
+        assert_eq!(
+            SubRoomDoor::NONE.changed(Some(RoomJoinMode::Request), Some(true)),
+            Ok(hidden)
         );
     }
 

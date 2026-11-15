@@ -1,6 +1,6 @@
 //! 子房间（`specs/redesign/sub-rooms.md` 第 2a 步）：在一间房下面建子房间、读名单，和一间房里
-//! 子房间的三项设置（`specs/redesign/room-roles.md` R4）。人加入、退出和改名（2b）在旁边的
-//! `sub_room_membership`。
+//! 子房间的三项设置（`specs/redesign/room-roles.md` R4）。人加入、退出、改名和换门（2b、2d）在
+//! 旁边的 `sub_room_membership`。
 //!
 //! 子房间自己是一间私人房间，建 Matrix 房间、存成员都走私人房间那一套；多出来的是它挂在谁下面、
 //! 谁建的、谁在管。口令、邀请链接、公开、往外请人这些只有父房间有，各自的用例读到房间以后先看
@@ -16,9 +16,10 @@ use agent_room_domain::{
         RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus, RoomCatalogVisibility,
     },
     sub_rooms::{
-        SubRoomCreationRefusal, SubRoomPolicy, authorize_sub_room_creation, new_sub_room,
-        runs_parent_room, sub_room_name_key, validate_sub_room_name,
+        SubRoomCreationRefusal, SubRoomDoor, SubRoomPolicy, authorize_sub_room_creation,
+        new_sub_room, runs_parent_room, sub_room_name_key, validate_sub_room_name,
     },
+    time::UtcMillis,
     version::AggregateVersion,
 };
 
@@ -80,7 +81,7 @@ pub trait SubRoomUseCases: Send + Sync {
         request: SubRoomMembershipAction,
     ) -> PortFuture<'_, PrivateRoomResult<()>>;
 
-    /// 改子房间的名字、用途。管得了这一间的人能改。
+    /// 改子房间的名字、用途、门和“不在名单里显示”。管得了这一间的人能改。
     fn revise_sub_room(
         &self,
         request: ReviseSubRoom,
@@ -156,6 +157,8 @@ impl PrivateRoomService {
         let creator_matrix_user = active_room_actor_matrix_user(&request.actor, now, OPERATION)?;
         self.ensure_sub_room_creator(&request, OPERATION).await?;
         validate_sub_room_name(&request.name).map_err(|error| domain(OPERATION, &error))?;
+        let door = SubRoomDoor::new(request.access, request.hidden)
+            .map_err(|error| domain(OPERATION, &error))?;
         let creator = request.actor.principal_id();
         let parent = self
             .load_as_member(request.parent_catalog_id, creator, OPERATION)
@@ -171,6 +174,8 @@ impl PrivateRoomService {
         let facts = self
             .authorized_parent_facts(&request, &parent, OPERATION)
             .await?;
+        // 有门的一律加密；没有门的跟父房间。
+        let encrypted = facts.end_to_end_encrypted || door.has_door();
 
         // 目录的规则和重名、上限先查：查不过的别等 Matrix 房间建好了才发现。
         let catalog = sub_room_catalog(&request, &parent, OPERATION)?;
@@ -192,7 +197,7 @@ impl PrivateRoomService {
                 &parent,
                 &room,
                 creator_matrix_user,
-                facts.end_to_end_encrypted,
+                encrypted,
                 OPERATION,
             )
             .await?;
@@ -214,25 +219,7 @@ impl PrivateRoomService {
                 OPERATION,
             )?
             .under(request.parent_catalog_id);
-        let owner = parent.room().owner_principal_id();
-        let sub_room = NewSubRoom {
-            snapshot,
-            parent_catalog_id: request.parent_catalog_id,
-            parent_version: parent.room().version(),
-            name_key: check.name_key,
-            access: RoomJoinMode::Open,
-            hidden: false,
-            created_by: creator,
-            created_by_agent: request.created_by_agent,
-            // 房主本来就管每一间，不用再记成这一间的管理员。
-            managers: if creator == owner {
-                Vec::new()
-            } else {
-                vec![creator]
-            },
-            end_to_end_encrypted: facts.end_to_end_encrypted,
-            created_at: now,
-        };
+        let sub_room = new_sub_room_record(&request, &parent, snapshot, door, encrypted, now);
         let stored = self.store_sub_room(&request, sub_room, OPERATION).await?;
         self.hold_fresh_mutes(&request, &matrix_room_id, &prepared.speakers, OPERATION)
             .await?;
@@ -376,8 +363,8 @@ impl PrivateRoomService {
         }
     }
 
-    /// 同一个房间号已经建过：得是同一间房下面、同一个人（同一个 Agent）建的、名字和用途一样，
-    /// 不然是另一个请求撞了号。
+    /// 同一个房间号已经建过：得是同一间房下面、同一个人（同一个 Agent）建的，名字、用途和门都
+    /// 一样，不然是另一个请求撞了号。
     async fn ensure_same_sub_room(
         &self,
         request: &CreateSubRoom,
@@ -395,6 +382,8 @@ impl PrivateRoomService {
             && link.is_some_and(|link| {
                 link.created_by == request.actor.principal_id()
                     && link.created_by_agent == request.created_by_agent
+                    && link.access == request.access
+                    && link.hidden == request.hidden
             });
         if same {
             Ok(existing)
@@ -403,7 +392,8 @@ impl PrivateRoomService {
         }
     }
 
-    /// Matrix 上的子房间：邀请父房间的房主和建的人，加密跟父房间，保留期也跟父房间。
+    /// Matrix 上的子房间：邀请父房间的房主和建的人，保留期跟父房间；加不加密由调用方说（有门的
+    /// 一律加密，没有门的跟父房间）。
     async fn prepare_sub_room(
         &self,
         request: &CreateSubRoom,
@@ -667,6 +657,36 @@ pub(super) fn ensure_parent_room(
         ensure_not_sub_room(snapshot, operation)
     } else {
         Ok(())
+    }
+}
+
+/// 要存的这一间：挂在谁下面、谁建的、谁在管、什么门。
+fn new_sub_room_record(
+    request: &CreateSubRoom,
+    parent: &PrivateRoomSnapshot,
+    snapshot: PrivateRoomSnapshot,
+    door: SubRoomDoor,
+    end_to_end_encrypted: bool,
+    created_at: UtcMillis,
+) -> NewSubRoom {
+    let creator = request.actor.principal_id();
+    NewSubRoom {
+        snapshot,
+        parent_catalog_id: request.parent_catalog_id,
+        parent_version: parent.room().version(),
+        name_key: sub_room_name_key(&request.name),
+        access: door.access(),
+        hidden: door.hidden(),
+        created_by: creator,
+        created_by_agent: request.created_by_agent,
+        // 房主本来就管每一间，不用再记成这一间的管理员。
+        managers: if creator == parent.room().owner_principal_id() {
+            Vec::new()
+        } else {
+            vec![creator]
+        },
+        end_to_end_encrypted,
+        created_at,
     }
 }
 

@@ -243,6 +243,7 @@ async fn 名字和用途一起改_撞了别的子房间不写_归档了的改不
         name: name.to_owned(),
         name_key: sub_room_name_key(name),
         description: description.to_owned(),
+        door: None,
         at: time(50),
     };
 
@@ -381,7 +382,7 @@ async fn name_key(repositories: &PostgresRepositories, catalog: RoomCatalogId) -
         .name_key
 }
 
-async fn revise(
+pub(super) async fn revise(
     repositories: &PostgresRepositories,
     revision: &SubRoomRevision,
 ) -> Option<SubRoomRevisionBlock> {

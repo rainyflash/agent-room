@@ -20,6 +20,8 @@ use super::{
     *,
 };
 
+#[path = "sub_room_doors.rs"]
+mod doors;
 #[path = "sub_room_follow.rs"]
 mod follow;
 #[path = "sub_room_membership.rs"]
@@ -71,6 +73,8 @@ async fn 子房间连同父子关系和管理员一起存_房间列表里没有�
             name_key: "design".to_owned(),
             access: RoomJoinMode::Open,
             hidden: false,
+            door_opened_at: None,
+            end_to_end_encrypted: true,
             created_by: member,
             created_by_agent: None,
             created_at: time(10),

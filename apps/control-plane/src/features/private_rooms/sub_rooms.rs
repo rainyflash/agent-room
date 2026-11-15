@@ -1,5 +1,6 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：在一间房下面建子房间、读名单（2a），人自己加入、退出，
-//! 改名字和用途（2b），和一间房里子房间的三项设置（`specs/redesign/room-roles.md` R4）。
+//! 改名字和用途（2b），门和“不在名单里显示”（2d-1），和一间房里子房间的三项设置
+//! （`specs/redesign/room-roles.md` R4）。
 //!
 //! 都是新的接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段
 //! 整个房间都读不出来。建好的子房间照私人房间的样子回。
@@ -14,6 +15,7 @@ use agent_room_application::{
 use agent_room_domain::{
     ids::RoomCatalogId,
     private_rooms::PrivateRoomMembershipStatus,
+    room_listing::RoomJoinMode,
     sub_rooms::{SubRoomCreators, SubRoomPolicy},
     time::UtcMillis,
 };
@@ -39,15 +41,39 @@ use crate::{
     features::authentication::{authenticate_session, no_store},
 };
 
+/// 门（“谁能进”），和公开房间的加入方式是同一套词：`open` 是没有门。
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AccessValue {
+    Open,
+    Request,
+    InviteOnly,
+}
+
+impl From<AccessValue> for RoomJoinMode {
+    fn from(access: AccessValue) -> Self {
+        match access {
+            AccessValue::Open => Self::Open,
+            AccessValue::Request => Self::Request,
+            AccessValue::InviteOnly => Self::InviteOnly,
+        }
+    }
+}
+
+/// 门和隐藏可以不带：不带就是没有门、在名单里显示。分类跟后面的步骤。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CreateSubRoomBody {
     name: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    access: Option<AccessValue>,
+    #[serde(default)]
+    hidden: bool,
 }
 
-/// 改名字、用途。没带的那一项不动；两项都没带就是没什么可改的。门、隐藏和分类跟后面几步。
+/// 改名字、用途、门、隐藏。没带的那一项不动；一项都没带就是没什么可改的。分类跟后面的步骤。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct ReviseSubRoomBody {
@@ -55,6 +81,19 @@ pub(super) struct ReviseSubRoomBody {
     name: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    access: Option<AccessValue>,
+    #[serde(default)]
+    hidden: Option<bool>,
+}
+
+impl ReviseSubRoomBody {
+    const fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.description.is_none()
+            && self.access.is_none()
+            && self.hidden.is_none()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +266,8 @@ pub(super) async fn create(
                 // 两头的空白多半是手滑带上的，不为它拒绝。
                 name: body.name.trim().to_owned(),
                 description: body.description,
+                access: body.access.map_or(RoomJoinMode::Open, RoomJoinMode::from),
+                hidden: body.hidden,
                 created_by_agent: None,
             })
             .await,
@@ -326,7 +367,7 @@ pub(super) async fn leave(
     }
 }
 
-/// 改子房间的名字、用途。
+/// 改子房间的名字、用途、门和“不在名单里显示”。
 pub(super) async fn revise(
     State(state): State<PrivateRoomHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -338,7 +379,7 @@ pub(super) async fn revise(
     let Ok(Json(body)) = body else {
         return invalid("sub_room.invalid_revision_body", correlation_id);
     };
-    if body.name.is_none() && body.description.is_none() {
+    if body.is_empty() {
         return invalid("sub_room.invalid_revision_body", correlation_id);
     }
     let (actor, parent_catalog_id, sub_room_catalog_id) =
@@ -358,6 +399,8 @@ pub(super) async fn revise(
                 // 两头的空白多半是手滑带上的，不为它拒绝。
                 name: body.name.map(|name| name.trim().to_owned()),
                 description: body.description,
+                access: body.access.map(RoomJoinMode::from),
+                hidden: body.hidden,
             })
             .await,
         StatusCode::OK,

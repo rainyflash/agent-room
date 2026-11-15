@@ -6,7 +6,7 @@ use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
-    sub_rooms::SubRoomPolicy,
+    sub_rooms::{SubRoomDoor, SubRoomPolicy},
     time::UtcMillis,
     version::AggregateVersion,
 };
@@ -30,7 +30,7 @@ pub struct NewSubRoom {
     pub created_by_agent: Option<AgentId>,
     /// 这一间的子房间管理员。建的人自动是；建的人就是父房间的房主时为空。
     pub managers: Vec<PrincipalId>,
-    /// 跟父房间：父房间加密它就加密。
+    /// 有门的一律加密；没有门的跟父房间：父房间加密它就加密。
     pub end_to_end_encrypted: bool,
     pub created_at: UtcMillis,
 }
@@ -89,6 +89,10 @@ pub struct SubRoomLink {
     pub name_key: String,
     pub access: RoomJoinMode,
     pub hidden: bool,
+    /// 有过门、后来拆了的，第一次拆门的时间：这以后才进来的人不补发以前的房间钥匙。
+    pub door_opened_at: Option<UtcMillis>,
+    /// 这一间现在加不加密（房间目录上记的）。
+    pub end_to_end_encrypted: bool,
     pub created_by: PrincipalId,
     pub created_by_agent: Option<AgentId>,
     pub created_at: UtcMillis,
@@ -140,7 +144,16 @@ pub struct SubRoomAdmission<'a> {
     pub role_changes: &'a [RoomRoleChange],
 }
 
-/// 改子房间的名字和用途要存的。
+/// 换门、勾或者去掉“不在名单里显示”：从哪样换成哪样。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubRoomDoorChange {
+    /// 算新门的时候读到的门。存的时候在事务里再看一眼还是不是它：不是的话，照旧样子算出来的新门
+    /// 不能写，别人刚装上的门会被悄悄拆掉，或者反过来。
+    pub from: SubRoomDoor,
+    pub to: SubRoomDoor,
+}
+
+/// 改子房间的名字、用途和门要存的。名字和用途是改完以后的样子，没改的照原来的带上。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubRoomRevision {
     pub catalog_id: RoomCatalogId,
@@ -148,6 +161,8 @@ pub struct SubRoomRevision {
     pub name: String,
     pub name_key: String,
     pub description: String,
+    /// 请求里没提门、也没提隐藏时为空：门那几列不碰。
+    pub door: Option<SubRoomDoorChange>,
     pub at: UtcMillis,
 }
 
@@ -158,6 +173,8 @@ pub enum SubRoomRevisionBlock {
     NameTaken,
     /// 这间子房间归档了、不在了，或者不挂在这间房下面。
     Unavailable,
+    /// 要换门，可门已经不是算的时候读到的那样了：另一个请求刚换过。
+    DoorChanged,
 }
 
 /// 子房间跟着父房间变了以后，聊天服务器上还没照着做的一件事（`private_room_sub_room_sync`）。
@@ -224,8 +241,9 @@ pub trait SubRoomStore: Send + Sync {
         admission: &'a SubRoomAdmission<'a>,
     ) -> PortFuture<'a, RepositoryResult<bool>>;
 
-    /// 改子房间的名字和用途：目录上的名字、用途和比重名用的键在同一个事务里。撞了名字、子房间归档
-    /// 了时什么都不写，回原因。
+    /// 改子房间的名字、用途和门：目录上的名字、用途，比重名用的键，门和“不在名单里显示”在同一个
+    /// 事务里。从有门改成没有门、以前又没拆过的，记下拆门的时间（`at`）；拆过的不动。撞了名字、
+    /// 子房间归档了、门已经不是读到的那样时什么都不写，回原因。
     fn revise_sub_room<'a>(
         &'a self,
         revision: &'a SubRoomRevision,

@@ -2,7 +2,7 @@
 //! 父房间有的那几件事。存储是内存里的一份，重名、上限这些规则照真实存储的写；真实存储自己的
 //! 测试在 `postgres-adapter` 的 `tests/private_rooms/sub_rooms.rs`。人加入、退出和改名（2b）的
 //! 用例在旁边的 `sub_room_membership.rs`，父房间变了以后聊天服务器上跟着做（2c-2）的在
-//! `sub_room_sync.rs`，用的都是这里的夹具。
+//! `sub_room_sync.rs`，门（2d-1）的在 `sub_room_doors.rs`，用的都是这里的夹具。
 
 use std::collections::BTreeSet;
 
@@ -33,6 +33,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_doors.rs"]
+mod doors;
 #[path = "sub_room_membership.rs"]
 mod membership;
 #[path = "sub_room_mutes.rs"]
@@ -215,6 +217,8 @@ async fn agent_替主人建_记下是哪个_agent_房主关掉以后_agent_建�
         catalog_id: catalog_id(catalog),
         name: format!("release-{catalog}"),
         description: String::new(),
+        access: RoomJoinMode::Open,
+        hidden: false,
         created_by_agent: agent,
     };
 
@@ -659,8 +663,9 @@ impl Rooms {
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
-            listings: listings.clone(),
-            listing_matrix: listings.clone(),
+            // 装门开加密、拆门写下那一刻走的是公开设置那两个口子：落在这里的存储和 Matrix 替身上。
+            listings: store.clone(),
+            listing_matrix: matrix.clone(),
             secrets: listings,
             sub_rooms: store.clone(),
             topics: matrix.clone(),
@@ -684,6 +689,8 @@ impl Rooms {
             catalog_id: catalog_id(catalog),
             name: name.to_owned(),
             description: String::new(),
+            access: RoomJoinMode::Open,
+            hidden: false,
             created_by_agent: None,
         }
     }
@@ -764,6 +771,29 @@ impl Rooms {
                 catalog_id: catalog_id(catalog),
                 name: name.map(str::to_owned),
                 description: description.map(str::to_owned),
+                access: None,
+                hidden: None,
+            })
+            .await
+    }
+
+    /// 只换门、勾或者去掉“不在名单里显示”，名字和用途不带。
+    async fn change_door(
+        &self,
+        person: u128,
+        catalog: u128,
+        access: Option<RoomJoinMode>,
+        hidden: Option<bool>,
+    ) -> Result<PrivateRoomSnapshot, PrivateRoomFailure> {
+        self.service
+            .revise_sub_room(ReviseSubRoom {
+                actor: self::person(person),
+                parent_catalog_id: catalog_id(PARENT),
+                catalog_id: catalog_id(catalog),
+                name: None,
+                description: None,
+                access,
+                hidden,
             })
             .await
     }
@@ -902,6 +932,7 @@ struct Seed {
     access: RoomJoinMode,
     hidden: bool,
     archived: bool,
+    encrypted: bool,
 }
 
 impl Seed {
@@ -912,6 +943,7 @@ impl Seed {
             access: RoomJoinMode::Open,
             hidden: false,
             archived: false,
+            encrypted: true,
         }
     }
 }
@@ -969,6 +1001,8 @@ pub(super) struct MemoryRooms {
     /// 设上以后，再问过这么多次“他是不是被禁言着”，这条禁言才落下来：摆出“给发言级别的当口
     /// 禁言落下来了”。
     mutes_later: Mutex<Option<(u32, RoomCatalogId, PrincipalId)>>,
+    /// 设上以后，下一次存改动之前这间子房间的门先被换成这样：摆出“存的当口别人换了门”。
+    door_moves_before_revision: Mutex<Option<(RoomCatalogId, RoomJoinMode)>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -989,7 +1023,14 @@ impl MemoryRooms {
             interrupts_read: Mutex::new(None),
             muted: Mutex::new(BTreeSet::new()),
             mutes_later: Mutex::new(None),
+            door_moves_before_revision: Mutex::new(None),
         }
+    }
+
+    /// 下一次存改动之前，另一个请求先把这间子房间的门换成 `access`。
+    fn move_door_before_revision(&self, catalog: u128, access: RoomJoinMode) {
+        *self.door_moves_before_revision.lock().expect("门锁正常") =
+            Some((catalog_id(catalog), access));
     }
 
     /// 这个人在这间房里被禁言了。
@@ -1163,6 +1204,8 @@ impl MemoryRooms {
                 name_key: seed.name.to_lowercase(),
                 access: seed.access,
                 hidden: seed.hidden,
+                door_opened_at: None,
+                end_to_end_encrypted: seed.encrypted,
                 created_by: principal_id(EARLIER),
                 created_by_agent: None,
                 created_at: UtcMillis::new(0).expect("时间有效"),
@@ -1281,6 +1324,8 @@ impl MemoryRooms {
                 name_key: sub_room.name_key.clone(),
                 access: sub_room.access,
                 hidden: sub_room.hidden,
+                door_opened_at: None,
+                end_to_end_encrypted: sub_room.end_to_end_encrypted,
                 created_by: sub_room.created_by,
                 created_by_agent: sub_room.created_by_agent,
                 created_at: sub_room.created_at,
@@ -1481,6 +1526,18 @@ impl SubRoomStore for MemoryRooms {
             self.record("sub_rooms.revise");
             let mut rooms = self.rooms.lock().expect("房间锁正常");
             let mut links = self.links.lock().expect("关系锁正常");
+            if let Some((moved, access)) = self
+                .door_moves_before_revision
+                .lock()
+                .expect("门锁正常")
+                .take()
+            {
+                for stored in links.iter_mut() {
+                    if stored.link.catalog_id == moved {
+                        stored.link.access = access;
+                    }
+                }
+            }
             let siblings = |stored: &&StoredLink| {
                 stored.link.parent_catalog_id == revision.parent_catalog_id && !stored.archived
             };
@@ -1491,6 +1548,16 @@ impl SubRoomStore for MemoryRooms {
             {
                 return Ok(Some(SubRoomRevisionBlock::Unavailable));
             }
+            let door_moved = revision.door.is_some_and(|door| {
+                links.iter().any(|stored| {
+                    stored.link.catalog_id == revision.catalog_id
+                        && (stored.link.access != door.from.access()
+                            || stored.link.hidden != door.from.hidden())
+                })
+            });
+            if door_moved {
+                return Ok(Some(SubRoomRevisionBlock::DoorChanged));
+            }
             if links.iter().filter(siblings).any(|stored| {
                 stored.link.catalog_id != revision.catalog_id
                     && stored.link.name_key == revision.name_key
@@ -1499,7 +1566,18 @@ impl SubRoomStore for MemoryRooms {
             }
             for stored in links.iter_mut() {
                 if stored.link.catalog_id == revision.catalog_id {
-                    stored.link.name_key.clone_from(&revision.name_key);
+                    let link = &mut stored.link;
+                    link.name_key.clone_from(&revision.name_key);
+                    let Some(door) = revision.door else {
+                        continue;
+                    };
+                    // 从有门改成没有门的记下拆门的时间，只记第一次。
+                    let opens = link.access != RoomJoinMode::Open && !door.to.has_door();
+                    if opens && link.door_opened_at.is_none() {
+                        link.door_opened_at = Some(revision.at);
+                    }
+                    link.access = door.to.access();
+                    link.hidden = door.to.hidden();
                 }
             }
             let current = rooms.remove(&revision.catalog_id).expect("房间存在");

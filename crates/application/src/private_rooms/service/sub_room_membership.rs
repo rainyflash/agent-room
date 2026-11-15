@@ -1,5 +1,5 @@
 //! 子房间第 2b 步（`specs/redesign/sub-rooms.md`）：人自己进一间子房间、从里面退出，和改它的名字、
-//! 用途。
+//! 用途；第 2d-1 步：装门、拆门、换一种门，和“不在名单里显示”。
 //!
 //! 加入不走“受邀再接受”两步：加入是他自己点的，控制面直接把他记成已加入，在 Matrix 上邀请他、
 //! 设好发言级别，网页接着照“服务器记着已加入、Matrix 上是受邀”那一套替他加入。退出也只要这一个
@@ -8,14 +8,17 @@
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     private_rooms::PrivateRoomLifecycleStatus,
+    room_listing::RoomJoinMode,
     sub_rooms::{
-        SubRoomEntryRefusal, authorize_sub_room_join, manages_sub_room, runs_parent_room,
-        sub_room_name_key, validate_sub_room_name,
+        SubRoomDoor, SubRoomEntryRefusal, authorize_sub_room_join, manages_sub_room,
+        runs_parent_room, sub_room_name_key, validate_sub_room_name,
     },
+    time::UtcMillis,
 };
 
 use crate::ports::{
-    PrivateRoomSnapshot, SubRoomAdmission, SubRoomLink, SubRoomRevision, SubRoomRevisionBlock,
+    MatrixRoomId, PrivateRoomSnapshot, SubRoomAdmission, SubRoomDoorChange, SubRoomLink,
+    SubRoomRevision, SubRoomRevisionBlock,
 };
 
 use super::{
@@ -161,7 +164,11 @@ impl PrivateRoomService {
         let now = self.clock.now();
         ensure_active_actor(&request.actor, now, OPERATION)?;
         let actor = request.actor.principal_id;
-        if request.name.is_none() && request.description.is_none() {
+        let nothing_asked = request.name.is_none()
+            && request.description.is_none()
+            && request.access.is_none()
+            && request.hidden.is_none();
+        if nothing_asked {
             return Err(failure(
                 OPERATION,
                 PrivateRoomFailureStage::Validation,
@@ -169,7 +176,9 @@ impl PrivateRoomService {
             ));
         }
         let LoadedSubRoom {
-            parent, sub_room, ..
+            parent,
+            sub_room,
+            link,
         } = self
             .load_sub_room(
                 request.parent_catalog_id,
@@ -197,6 +206,19 @@ impl PrivateRoomService {
             .renaming(name)
             .and_then(|renamed| renamed.describing(description))
             .map_err(|error| domain(OPERATION, &error))?;
+        let matrix_room = matrix_room_id(&revised, OPERATION)?;
+        let door = if request.access.is_some() || request.hidden.is_some() {
+            let from = SubRoomDoor::new(link.access, link.hidden)
+                .map_err(|error| domain(OPERATION, &error))?;
+            let to = from
+                .changed(request.access, request.hidden)
+                .map_err(|error| domain(OPERATION, &error))?;
+            self.prepare_door(&link, to, &matrix_room, now, OPERATION)
+                .await?;
+            Some(SubRoomDoorChange { from, to })
+        } else {
+            None
+        };
         // 目录先改：名字重不重由它在锁着父房间的事务里说了算。
         let blocked = self
             .sub_rooms
@@ -206,6 +228,7 @@ impl PrivateRoomService {
                 name: revised.catalog().name().to_owned(),
                 name_key: sub_room_name_key(revised.catalog().name()),
                 description: revised.catalog().description().to_owned(),
+                door,
                 at: now,
             })
             .await
@@ -218,11 +241,18 @@ impl PrivateRoomService {
             Some(SubRoomRevisionBlock::Unavailable) => {
                 return Err(refused(OPERATION, SubRoomRefusal::Archived));
             }
+            // 另一个请求刚换过门：请他看过新的再换。
+            Some(SubRoomRevisionBlock::DoorChanged) => {
+                return Err(failure(
+                    OPERATION,
+                    PrivateRoomFailureStage::Persistence,
+                    PrivateRoomFailureKind::Conflict,
+                ));
+            }
             None => {}
         }
         // Matrix 上的房间名和话题跟着写。和现在的一样也写一遍（可以重复写）：上一次目录改好了、
         // 这一步没成的，再点一次保存就补上。
-        let matrix_room = matrix_room_id(&revised, OPERATION)?;
         self.matrix
             .set_name(&matrix_room, revised.catalog().name())
             .await
@@ -232,6 +262,44 @@ impl PrivateRoomService {
             .await
             .map_err(|error| matrix(OPERATION, error))?;
         Ok(revised)
+    }
+
+    /// 换门之前在聊天服务器上要先做的两样，都在存门之前：没做成就不换。两样重做都不出错；做了、
+    /// 门却没存上（撞了名字、别人刚换过门）也不要紧，留下的样子都是说得通的。
+    ///
+    /// - 装门（现在不加密、换完有门）：先开加密，再把目录上的标记改过来。有门的一律加密，开了关
+    ///   不掉。门还没存就先标成加密不要紧：“没有门、加密着”本来就是拆过门的子房间的样子。
+    /// - 第一次拆门：写下这一刻（`room.listing.v1`），这以后才进来的人不补发以前的房间钥匙。写在
+    ///   存门之前，门一开就进来的人一定排在这一刻后面。拆过的不再写：往后挪的话，第一次拆门以后
+    ///   自己进来的人会变成“拆门以前就在”，拿得到后来又装上门那一段的钥匙。
+    async fn prepare_door(
+        &self,
+        link: &SubRoomLink,
+        door: SubRoomDoor,
+        matrix_room: &MatrixRoomId,
+        now: UtcMillis,
+        operation: &'static str,
+    ) -> PrivateRoomResult<()> {
+        if door.has_door() && !link.end_to_end_encrypted {
+            self.listing_matrix
+                .enable_encryption(matrix_room)
+                .await
+                .map_err(|error| matrix(operation, error))?;
+            self.listings
+                .mark_room_encrypted(link.catalog_id)
+                .await
+                .map_err(|error| {
+                    repository(operation, PrivateRoomFailureStage::Persistence, &error)
+                })?;
+        }
+        let had_door = link.access != RoomJoinMode::Open;
+        if had_door && !door.has_door() && link.door_opened_at.is_none() {
+            self.listing_matrix
+                .mark_listed(matrix_room, now)
+                .await
+                .map_err(|error| matrix(operation, error))?;
+        }
+        Ok(())
     }
 
     /// 读一间子房间和它所在的房间，照看的人找得到的来：他得是父房间里已加入的人，地址里的父房间得

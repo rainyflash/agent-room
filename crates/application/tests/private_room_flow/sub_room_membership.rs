@@ -9,11 +9,11 @@ const SPEAKER: [PrivateRoomCapability; 3] = [
     PrivateRoomCapability::Automate,
 ];
 
-fn refusal(result: Result<impl Sized, PrivateRoomFailure>) -> PrivateRoomFailureKind {
+pub(super) fn refusal(result: Result<impl Sized, PrivateRoomFailure>) -> PrivateRoomFailureKind {
     result.err().expect("应该被拒").kind()
 }
 
-const fn sub_room(refusal: SubRoomRefusal) -> PrivateRoomFailureKind {
+pub(super) const fn sub_room(refusal: SubRoomRefusal) -> PrivateRoomFailureKind {
     PrivateRoomFailureKind::SubRoom(refusal)
 }
 
