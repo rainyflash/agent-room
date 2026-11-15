@@ -409,7 +409,7 @@ async fn 建子房间要同源会话和幂等键_名字去掉两头的空白_回
             "private_room.invalid_idempotency_key",
         ),
         (
-            // 分类还没有：带了不认识的字段就拒，免得人以为放进了分类。
+            // 不认识的字段就拒：分类是 `categoryId`，写错了别当没写。
             sub_request(
                 Method::POST,
                 &uri,
@@ -487,6 +487,7 @@ async fn 名单只要有效登录_有门又没进的不给人数和最近说话�
                     "description": "Ship Alpha 95",
                     "access": "open",
                     "hidden": false,
+                    "categoryId": OTHER_CATEGORY_UUID,
                     "createdByPrincipalId": TARGET_UUID,
                     "createdAtUnixMs": 1_700_000_000_000_i64,
                     "managerPrincipalIds": [TARGET_UUID],
@@ -747,7 +748,7 @@ async fn 改名字和用途_没带的那一项不动_名字去掉两头的空白
             "sub_room.invalid_revision_body",
         ),
         (
-            // 分类还没有：带了不认识的字段就拒，免得人以为改上了。
+            // 不认识的字段就拒：分类是 `categoryId`，写错了别当没写。
             json!({ "name": "launch", "category": "launch" }),
             true,
             StatusCode::BAD_REQUEST,
@@ -1002,6 +1003,7 @@ fn list() -> SubRoomList {
         description: String::new(),
         access: RoomJoinMode::Open,
         hidden: false,
+        category_id: None,
         archived: false,
         created_by: owner_id(),
         created_at: time(1_700_000_000_000),
@@ -1022,6 +1024,7 @@ fn list() -> SubRoomList {
             SubRoomView {
                 entry: SubRoomEntry {
                     description: "Ship Alpha 95".to_owned(),
+                    category_id: Some(SubRoomCategoryId::from_uuid(uuid(OTHER_CATEGORY_UUID))),
                     created_by: target_id(),
                     managers: vec![target_id()],
                     viewer_status: Some(PrivateRoomMembershipStatus::Joined),

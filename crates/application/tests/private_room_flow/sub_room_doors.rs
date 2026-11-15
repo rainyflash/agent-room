@@ -346,6 +346,7 @@ async fn 装门的同时改名撞了名字_门没装上_加密已经开了不要
             description: None,
             access: Some(RoomJoinMode::Request),
             hidden: None,
+            category: None,
         })
         .await;
     assert_eq!(refusal(taken), sub_room(SubRoomRefusal::NameTaken));

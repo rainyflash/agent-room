@@ -21,6 +21,7 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
+    ids::SubRoomCategoryId,
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember},
     room_listing::RoomJoinMode,
     rooms::{
@@ -231,6 +232,7 @@ async fn agent_替主人建_记下是哪个_agent_房主关掉以后_agent_建�
         description: String::new(),
         access: RoomJoinMode::Open,
         hidden: false,
+        category_id: None,
         created_by_agent: agent,
     };
 
@@ -704,6 +706,7 @@ impl Rooms {
             description: String::new(),
             access: RoomJoinMode::Open,
             hidden: false,
+            category_id: None,
             created_by_agent: None,
         }
     }
@@ -786,6 +789,7 @@ impl Rooms {
                 description: description.map(str::to_owned),
                 access: None,
                 hidden: None,
+                category: None,
             })
             .await
     }
@@ -807,6 +811,7 @@ impl Rooms {
                 description: None,
                 access,
                 hidden,
+                category: None,
             })
             .await
     }
@@ -966,6 +971,8 @@ struct StoredLink {
     link: SubRoomLink,
     managers: Vec<PrincipalId>,
     archived: bool,
+    /// 在哪个分类里（2e-1b）。
+    category: Option<SubRoomCategoryId>,
 }
 
 /// 排着的一件要在聊天服务器上跟着做的事，和真实存储的 `private_room_sub_room_sync` 一行一样。
@@ -1260,6 +1267,7 @@ impl MemoryRooms {
             },
             managers: Vec::new(),
             archived: seed.archived,
+            category: None,
         });
     }
 
@@ -1359,8 +1367,13 @@ impl MemoryRooms {
                     && stored.link.created_at.value() > check.at.value() - 3_600_000
             })
             .count();
-        (recent >= usize::from(MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR))
-            .then_some(SubRoomCreationBlock::CreatorLimitReached)
+        if recent >= usize::from(MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR) {
+            return Some(SubRoomCreationBlock::CreatorLimitReached);
+        }
+        check
+            .category_id
+            .filter(|category| !self.has_category(check.parent_catalog_id, *category))
+            .map(|_| SubRoomCreationBlock::CategoryMissing)
     }
 
     fn insert(&self, sub_room: &NewSubRoom) {
@@ -1380,6 +1393,7 @@ impl MemoryRooms {
             },
             managers: sub_room.managers.clone(),
             archived: false,
+            category: sub_room.category_id,
         });
     }
 }
@@ -1527,6 +1541,7 @@ impl SubRoomStore for MemoryRooms {
                     description: snapshot.catalog().description().to_owned(),
                     access: stored.link.access,
                     hidden: stored.link.hidden,
+                    category_id: stored.category,
                     archived: room.status() == PrivateRoomLifecycleStatus::Archived,
                     created_by: stored.link.created_by,
                     created_at: stored.link.created_at,
@@ -1668,8 +1683,16 @@ impl SubRoomStore for MemoryRooms {
             }) {
                 return Ok(Some(SubRoomRevisionBlock::NameTaken));
             }
+            if let Some(Some(category)) = revision.category
+                && !self.has_category(revision.parent_catalog_id, category)
+            {
+                return Ok(Some(SubRoomRevisionBlock::CategoryMissing));
+            }
             for stored in links.iter_mut() {
                 if stored.link.catalog_id == revision.catalog_id {
+                    if let Some(category) = revision.category {
+                        stored.category = category;
+                    }
                     let link = &mut stored.link;
                     link.name_key.clone_from(&revision.name_key);
                     let Some(door) = revision.door else {

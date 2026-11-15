@@ -50,6 +50,7 @@ fn revision(
             from: door(from),
             to: door(to),
         }),
+        category: None,
         at,
     }
 }

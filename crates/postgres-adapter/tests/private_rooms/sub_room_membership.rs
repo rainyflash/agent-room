@@ -244,6 +244,7 @@ async fn 名字和用途一起改_撞了别的子房间不写_归档了的改不
         name_key: sub_room_name_key(name),
         description: description.to_owned(),
         door: None,
+        category: None,
         at: time(50),
     };
 

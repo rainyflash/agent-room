@@ -3,7 +3,7 @@
 //! 子房间自己照旧是一间私人房间，成员、Matrix 房间都走私人房间那一套；这里只管它多出来的几张表。
 
 use agent_room_domain::{
-    ids::{AgentId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
     sub_rooms::{SubRoomDoor, SubRoomPolicy},
@@ -28,6 +28,8 @@ pub struct NewSubRoom {
     pub name_key: String,
     pub access: RoomJoinMode,
     pub hidden: bool,
+    /// 放进哪个分类（2e-1b）。不选是“未分类”。
+    pub category_id: Option<SubRoomCategoryId>,
     pub created_by: PrincipalId,
     pub created_by_agent: Option<AgentId>,
     /// 这一间的子房间管理员。建的人自动是；建的人就是父房间的房主时为空。
@@ -44,6 +46,7 @@ impl NewSubRoom {
             catalog_id: self.snapshot.catalog().id(),
             parent_catalog_id: self.parent_catalog_id,
             name_key: self.name_key.clone(),
+            category_id: self.category_id,
             created_by: self.created_by,
             created_by_agent: self.created_by_agent,
             at: self.created_at,
@@ -58,6 +61,8 @@ pub struct SubRoomCreationCheck {
     pub catalog_id: RoomCatalogId,
     pub parent_catalog_id: RoomCatalogId,
     pub name_key: String,
+    /// 选的分类得在这间房里。
+    pub category_id: Option<SubRoomCategoryId>,
     pub created_by: PrincipalId,
     pub created_by_agent: Option<AgentId>,
     pub at: UtcMillis,
@@ -74,6 +79,8 @@ pub enum SubRoomCreationBlock {
     CreatorLimitReached,
     /// 父房间不在了、归档了，或者它自己就是一间子房间。
     ParentUnavailable,
+    /// 选的分类不在这间房里：可能刚被删了。
+    CategoryMissing,
 }
 
 /// 建子房间之前要知道的父房间的事。
@@ -109,6 +116,8 @@ pub struct SubRoomEntry {
     pub description: String,
     pub access: RoomJoinMode,
     pub hidden: bool,
+    /// 在哪个分类里（2e-1b）。“未分类”为空。
+    pub category_id: Option<SubRoomCategoryId>,
     pub archived: bool,
     pub created_by: PrincipalId,
     pub created_at: UtcMillis,
@@ -188,6 +197,8 @@ pub struct SubRoomRevision {
     pub description: String,
     /// 请求里没提门、也没提隐藏时为空：门那几列不碰。
     pub door: Option<SubRoomDoorChange>,
+    /// 挪到哪个分类（2e-1b）：没提分类时为空，那一列不碰；`Some(None)` 是挪回“未分类”。
+    pub category: Option<Option<SubRoomCategoryId>>,
     pub at: UtcMillis,
 }
 
@@ -200,6 +211,8 @@ pub enum SubRoomRevisionBlock {
     Unavailable,
     /// 要换门，可门已经不是算的时候读到的那样了：另一个请求刚换过。
     DoorChanged,
+    /// 要挪进的分类不在这间房里：可能刚被删了。
+    CategoryMissing,
 }
 
 /// 申请进一间子房间，存的时候怎么样了。

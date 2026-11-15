@@ -15,7 +15,7 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{AgentId, PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
     sub_rooms::{
@@ -410,6 +410,7 @@ const LIST_SQL: &str = r"
            catalog.status,
            link.access,
            link.hidden,
+           link.category_id,
            link.created_by_principal_id,
            floor(extract(epoch FROM link.created_at) * 1000)::bigint AS created_at_ms,
            floor(extract(epoch FROM link.last_message_at) * 1000)::bigint AS last_message_at_ms,
@@ -525,7 +526,33 @@ async fn block(
     if recent >= i64::from(MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR) {
         return Ok(Some(SubRoomCreationBlock::CreatorLimitReached));
     }
+    if let Some(category) = check.category_id
+        && !category_in_parent(transaction, check.parent_catalog_id, category, operation).await?
+    {
+        return Ok(Some(SubRoomCreationBlock::CategoryMissing));
+    }
     Ok(None)
+}
+
+/// 这个分类在不在这间房里。父房间那一行已经锁着，删分类的事务排在后面，这里看到的存的时候还在。
+async fn category_in_parent(
+    transaction: &mut Transaction<'_, Postgres>,
+    parent: RoomCatalogId,
+    category: SubRoomCategoryId,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    sqlx::query_scalar(
+        r"SELECT EXISTS (
+              SELECT 1
+                FROM agent_room.private_room_sub_room_category
+               WHERE id = $1 AND parent_catalog_entry_id = $2
+          )",
+    )
+    .bind(category.as_uuid())
+    .bind(parent.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))
 }
 
 /// 把一个人记进子房间。他在父房间里的那条成员记录锁到这次存完：同时把他移出父房间的请求排在
@@ -800,32 +827,25 @@ async fn revise(
     if door_moved {
         return Ok(Some(SubRoomRevisionBlock::DoorChanged));
     }
-    let taken: bool = sqlx::query_scalar(
-        r"SELECT EXISTS (
-              SELECT 1
-                FROM agent_room.private_room_parent
-               WHERE parent_catalog_entry_id = $1
-                 AND archived_at IS NULL
-                 AND name_key = $2
-                 AND catalog_entry_id <> $3
-          )",
-    )
-    .bind(parent)
-    .bind(&revision.name_key)
-    .bind(catalog_id)
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(|error| map_sqlx_error(operation, &error))?;
-    if taken {
+    if name_taken(transaction, revision, operation).await? {
         return Ok(Some(SubRoomRevisionBlock::NameTaken));
     }
+    if let Some(Some(category)) = revision.category
+        && !category_in_parent(transaction, revision.parent_catalog_id, category, operation).await?
+    {
+        return Ok(Some(SubRoomRevisionBlock::CategoryMissing));
+    }
+    // 没提分类时 `$3` 是假，那一列照旧。
     sqlx::query(
         r"UPDATE agent_room.private_room_parent
-             SET name_key = $2
+             SET name_key = $2,
+                 category_id = CASE WHEN $3 THEN $4 ELSE category_id END
            WHERE catalog_entry_id = $1",
     )
     .bind(catalog_id)
     .bind(&revision.name_key)
+    .bind(revision.category.is_some())
+    .bind(revision.category.flatten().map(SubRoomCategoryId::as_uuid))
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -863,6 +883,30 @@ async fn revise(
         return Err(corrupt_data(operation));
     }
     Ok(None)
+}
+
+/// 这间房里另一间没归档的子房间是不是已经叫这个名字。
+async fn name_taken(
+    transaction: &mut Transaction<'_, Postgres>,
+    revision: &SubRoomRevision,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    sqlx::query_scalar(
+        r"SELECT EXISTS (
+              SELECT 1
+                FROM agent_room.private_room_parent
+               WHERE parent_catalog_entry_id = $1
+                 AND archived_at IS NULL
+                 AND name_key = $2
+                 AND catalog_entry_id <> $3
+          )",
+    )
+    .bind(revision.parent_catalog_id.as_uuid())
+    .bind(&revision.name_key)
+    .bind(revision.catalog_id.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))
 }
 
 /// 存换好的门。从有门改成没有门的记下拆门的时间，只记第一次。
@@ -906,9 +950,10 @@ async fn insert_link(
     sqlx::query(
         r"INSERT INTO agent_room.private_room_parent (
                catalog_entry_id, parent_catalog_entry_id, name_key, access, hidden,
-               created_by_principal_id, created_by_agent_id, parent_version_applied, created_at
+               created_by_principal_id, created_by_agent_id, parent_version_applied, created_at,
+               category_id
            ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0)
+               $1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0), $10
            )",
     )
     .bind(catalog_id)
@@ -920,6 +965,7 @@ async fn insert_link(
     .bind(sub_room.created_by_agent.map(AgentId::as_uuid))
     .bind(sub_room.parent_version.value())
     .bind(sub_room.created_at.value())
+    .bind(sub_room.category_id.map(SubRoomCategoryId::as_uuid))
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
@@ -978,6 +1024,7 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
     let agent_count: i64 = decode_column(row, "agent_count", operation)?;
     let viewer_requested_at: Option<i64> = decode_column(row, "viewer_requested_at_ms", operation)?;
     let pending_requests: i64 = decode_column(row, "pending_request_count", operation)?;
+    let category_id: Option<uuid::Uuid> = decode_column(row, "category_id", operation)?;
     let count = |value: i64| u32::try_from(value).map_err(|_| corrupt_data(operation));
     Ok(SubRoomEntry {
         catalog_id: RoomCatalogId::from_uuid(catalog_id),
@@ -985,6 +1032,7 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
         description: decode_column(row, "description", operation)?,
         access: RoomJoinMode::try_from(access.as_str()).map_err(|_| corrupt_data(operation))?,
         hidden: decode_column(row, "hidden", operation)?,
+        category_id: category_id.map(SubRoomCategoryId::from_uuid),
         archived: match status.as_str() {
             "active" => false,
             "archived" => true,

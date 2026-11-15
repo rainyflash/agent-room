@@ -253,3 +253,92 @@ async fn 不是房主和管理员_重名_到上限_分类没了时说清楚() {
         assert_eq!(response_json(response).await["code"], code);
     }
 }
+
+#[tokio::test]
+async fn 建子房间时能带分类号_不是分类号的不收() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let app = sub_room_router(sub_rooms.clone(), Arc::default());
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms");
+
+    let created = app
+        .clone()
+        .oneshot(sub_request(
+            Method::POST,
+            &uri,
+            &json!({ "name": "ship", "categoryId": CATEGORY_UUID }),
+            true,
+            Some(SUB_ROOM_UUID),
+        ))
+        .await
+        .expect("建子房间的路由可调用");
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let refused = app
+        .oneshot(sub_request(
+            Method::POST,
+            &uri,
+            &json!({ "name": "ship", "categoryId": "not-a-category" }),
+            true,
+            Some(OTHER_SUB_ROOM_UUID),
+        ))
+        .await
+        .expect("建子房间的路由可调用");
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "sub_room.invalid_creation_body"
+    );
+
+    let created = sub_rooms.created.lock().unwrap().clone();
+    assert_eq!(created.len(), 1, "被拒的没到用例");
+    assert_eq!(
+        created[0].category_id,
+        Some(SubRoomCategoryId::from_uuid(uuid(CATEGORY_UUID)))
+    );
+}
+
+#[tokio::test]
+async fn 改的时候带分类号是挪过去_写成_null_是挪回未分类_不带不动() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let app = sub_room_router(sub_rooms.clone(), Arc::default());
+    let uri = format!("/private-rooms/{CATALOG_UUID}/sub-rooms/{SUB_ROOM_UUID}");
+
+    for body in [
+        json!({ "categoryId": CATEGORY_UUID }),
+        json!({ "categoryId": null }),
+        json!({ "name": "launch" }),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(sub_request(Method::PUT, &uri, &body, true, None))
+            .await
+            .expect("改子房间的路由可调用");
+        assert_eq!(response.status(), StatusCode::OK, "{body}");
+    }
+    let refused = app
+        .oneshot(sub_request(
+            Method::PUT,
+            &uri,
+            &json!({ "categoryId": "not-a-category" }),
+            true,
+            None,
+        ))
+        .await
+        .expect("改子房间的路由可调用");
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(refused).await["code"],
+        "sub_room.invalid_revision_body"
+    );
+
+    let category = SubRoomCategoryId::from_uuid(uuid(CATEGORY_UUID));
+    assert_eq!(
+        sub_rooms
+            .revised
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| request.category)
+            .collect::<Vec<_>>(),
+        [Some(Some(category)), Some(None), None]
+    );
+}

@@ -81,7 +81,8 @@ pub(super) fn category_responses(categories: Vec<SubRoomCategory>) -> Vec<Catego
     categories.into_iter().map(CategoryResponse::from).collect()
 }
 
-fn category_id(value: &str) -> Option<SubRoomCategoryId> {
+/// 分类号得是 UUID v7。
+pub(super) fn category_id(value: &str) -> Option<SubRoomCategoryId> {
     parse_uuid_v7(value).map(SubRoomCategoryId::from_uuid).ok()
 }
 

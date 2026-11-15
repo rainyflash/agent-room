@@ -469,6 +469,7 @@ async fn draft(
         name_key: sub_room_name_key(name),
         access: RoomJoinMode::Open,
         hidden: false,
+        category_id: None,
         created_by: creator,
         created_by_agent: None,
         managers: if creator == owner {
@@ -489,6 +490,7 @@ fn entry(sub_room: &NewSubRoom) -> SubRoomEntry {
         description: sub_room.snapshot.catalog().description().to_owned(),
         access: sub_room.access,
         hidden: sub_room.hidden,
+        category_id: sub_room.category_id,
         archived: false,
         created_by: sub_room.created_by,
         created_at: sub_room.created_at,
