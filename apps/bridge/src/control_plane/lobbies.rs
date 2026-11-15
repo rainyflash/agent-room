@@ -549,7 +549,10 @@ mod tests {
                 "sub_room.agent_not_admitted",
                 AgentLobbySessionFailureKind::SubRoomAgentNotAdmitted,
             ),
-            ("lobby.room_refused", AgentLobbySessionFailureKind::Forbidden),
+            (
+                "lobby.room_refused",
+                AgentLobbySessionFailureKind::Forbidden,
+            ),
         ] {
             let refused = Router::new().route(
                 "/agents/{agent_id}/instances/{instance_id}/lobbies/{catalog_id}/entry",
