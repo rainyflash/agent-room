@@ -58,7 +58,7 @@ pub use private_room_join_requests::{
 };
 pub use private_room_listing::{
     PrivateRoomListingMatrix, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-    PrivateRoomListingStore,
+    PrivateRoomListingStore, SubRoomPrivacy,
 };
 pub use private_rooms::{
     PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,

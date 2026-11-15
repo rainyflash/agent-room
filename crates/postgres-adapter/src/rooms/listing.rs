@@ -4,8 +4,8 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore, PrivateRoomSnapshot, RoomRoleChange,
+        MatrixRoomId, PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
+        PrivateRoomListingStore, PrivateRoomSnapshot, RoomRoleChange, SubRoomPrivacy,
     },
 };
 use agent_room_domain::{
@@ -271,6 +271,78 @@ impl PrivateRoomListingStore for PostgresRepositories {
             Ok(())
         })
     }
+
+    fn sub_room_privacy(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomPrivacy>>> {
+        Box::pin(async move {
+            let operation = "private_room.listing.sub_room_privacy";
+            // 归档了的也读：恢复以后照样在这间房下面，得跟着它加密、跟着它画线。
+            let rows = sqlx::query(
+                r"SELECT link.catalog_entry_id,
+                         instance.matrix_room_id,
+                         link.access <> 'open' AS has_door,
+                         link.door_opened_at IS NOT NULL AS listing_marked,
+                         catalog.end_to_end_encrypted
+                    FROM agent_room.private_room_parent AS link
+                    JOIN agent_room.private_room_state AS private_state
+                      ON private_state.catalog_entry_id = link.catalog_entry_id
+                    JOIN agent_room.room_instance AS instance
+                      ON instance.id = private_state.room_instance_id
+                    JOIN agent_room.room_catalog_entry AS catalog
+                      ON catalog.id = link.catalog_entry_id
+                   WHERE link.parent_catalog_entry_id = $1
+                   ORDER BY link.created_at ASC, link.catalog_entry_id ASC",
+            )
+            .bind(parent_catalog_id.as_uuid())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_sub_room_privacy(row, operation))
+                .collect()
+        })
+    }
+
+    fn mark_sub_room_listed(
+        &self,
+        catalog_id: RoomCatalogId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async move {
+            let operation = "private_room.listing.mark_sub_room_listed";
+            // 只认第一次：往后挪的话，之前写的那一刻以后进来的人会变成“以前就在”。
+            sqlx::query(
+                r"UPDATE agent_room.private_room_parent
+                     SET door_opened_at = COALESCE(
+                             door_opened_at, to_timestamp($2::double precision / 1000.0)
+                         )
+                   WHERE catalog_entry_id = $1",
+            )
+            .bind(catalog_id.as_uuid())
+            .bind(at.value())
+            .execute(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(())
+        })
+    }
+}
+
+fn decode_sub_room_privacy(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<SubRoomPrivacy> {
+    let catalog: uuid::Uuid = decode_column(row, "catalog_entry_id", operation)?;
+    let matrix_room: String = decode_column(row, "matrix_room_id", operation)?;
+    Ok(SubRoomPrivacy {
+        catalog_id: RoomCatalogId::from_uuid(catalog),
+        matrix_room: MatrixRoomId::new(matrix_room).map_err(|_| corrupt_data(operation))?,
+        has_door: decode_column(row, "has_door", operation)?,
+        listing_marked: decode_column(row, "listing_marked", operation)?,
+        end_to_end_encrypted: decode_column(row, "end_to_end_encrypted", operation)?,
+    })
 }
 
 /// 房主名下还在使用中、正公开着的房间。

@@ -26,6 +26,19 @@ pub struct PrivateRoomListingRecord {
     pub version: AggregateVersion,
 }
 
+/// 一间子房间跟着父房间公开、改回私密时要看的几样（`specs/redesign/sub-rooms.md` 第 2d-5 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubRoomPrivacy {
+    pub catalog_id: RoomCatalogId,
+    pub matrix_room: MatrixRoomId,
+    /// 现在有没有门。
+    pub has_door: bool,
+    /// 写过 `room.listing.v1`：第一次拆门，或者父房间公开时它没有门。只写第一次。
+    pub listing_marked: bool,
+    /// 目录上记的加不加密。
+    pub end_to_end_encrypted: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrivateRoomListingSaveOutcome {
     Saved,
@@ -114,6 +127,26 @@ pub trait PrivateRoomListingStore: Send + Sync {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<()>>;
+
+    /// 这间房下面每一间子房间跟着它公开、改回私密要看的几样，按建的先后。归档了的也在：恢复以后
+    /// 照样是这间房下面的。默认没有子房间：不关心子房间的测试仓储不用管它。
+    fn sub_room_privacy(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomPrivacy>>> {
+        let _ = parent_catalog_id;
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// 子房间在 Matrix 上写了 `room.listing.v1` 以后记下这一刻；记过的不动（只认第一次）。
+    fn mark_sub_room_listed(
+        &self,
+        catalog_id: RoomCatalogId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let _ = (catalog_id, at);
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// 公开设置在 Matrix 上的两样副作用，都以应用服务写房间状态。

@@ -89,7 +89,8 @@ pub struct SubRoomLink {
     pub name_key: String,
     pub access: RoomJoinMode,
     pub hidden: bool,
-    /// 有过门、后来拆了的，第一次拆门的时间：这以后才进来的人不补发以前的房间钥匙。
+    /// 第一次在 Matrix 上写 `room.listing.v1` 的时间：第一次拆门，或者父房间公开时它没有门（2d-5）。
+    /// 这以后才进来的人不补发以前的房间钥匙。库里的列名还是 `door_opened_at`。
     pub door_opened_at: Option<UtcMillis>,
     /// 这一间现在加不加密（房间目录上记的）。
     pub end_to_end_encrypted: bool,

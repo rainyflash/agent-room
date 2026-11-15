@@ -34,6 +34,8 @@ mod members;
 mod membership;
 #[path = "sub_room_mutes.rs"]
 mod mutes;
+#[path = "sub_room_privacy.rs"]
+mod privacy;
 #[path = "sub_room_sync.rs"]
 mod sync;
 

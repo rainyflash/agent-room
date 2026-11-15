@@ -31,7 +31,7 @@ use crate::{
         MatrixRoomVisibility, MatrixUserId, NewSubRoom, PendingJoinRequest, PortFuture,
         PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot,
         SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomParentFacts,
-        SubRoomPolicyRecord,
+        SubRoomPolicyRecord, SubRoomPrivacy,
     },
 };
 
@@ -43,6 +43,7 @@ use super::{
         ReviseSubRoom, SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView,
         SubRoomRefusal, SubRoomView,
         failure::{domain, failure, matrix, repository},
+        sub_room_privacy::{SubRoomPrivacyFailure, encrypt_sub_rooms, mark_open_sub_rooms_listed},
     },
     PrivateRoomService, active_room_actor_matrix_user, ensure_active_actor, private_room_alias,
 };
@@ -289,9 +290,12 @@ impl PrivateRoomService {
             return Err(refused(OPERATION, SubRoomRefusal::Nested));
         }
         if let Some(existing) = self.find(request.catalog_id, OPERATION).await? {
-            return self
+            let existing = self
                 .ensure_same_sub_room(&request, existing, OPERATION)
-                .await;
+                .await?;
+            // 上一次存好以后没跟上父房间的，这次补上。
+            self.follow_parent_privacy(&request, now, OPERATION).await?;
+            return Ok(existing);
         }
         let facts = self
             .authorized_parent_facts(&request, &parent, OPERATION)
@@ -345,7 +349,65 @@ impl PrivateRoomService {
         let stored = self.store_sub_room(&request, sub_room, OPERATION).await?;
         self.hold_fresh_mutes(&request, &matrix_room_id, &prepared.speakers, OPERATION)
             .await?;
+        self.follow_parent_privacy(&request, now, OPERATION).await?;
         Ok(stored)
+    }
+
+    /// 建的当口父房间可能刚改回私密、刚公开（`sub_room_privacy`）：存好以后再读一遍父房间，照它补上
+    /// 加密、写下这一刻。改回私密那边先改父房间的标记、再读子房间；公开那边存好设置以后再读一遍
+    /// 子房间。所以两边总有一边看得到对方。
+    async fn follow_parent_privacy(
+        &self,
+        request: &CreateSubRoom,
+        at: UtcMillis,
+        operation: &'static str,
+    ) -> PrivateRoomResult<()> {
+        let persistence =
+            |error| repository(operation, PrivateRoomFailureStage::Persistence, &error);
+        let parent = request.parent_catalog_id;
+        let this_one: Vec<SubRoomPrivacy> = self
+            .listings
+            .sub_room_privacy(parent)
+            .await
+            .map_err(persistence)?
+            .into_iter()
+            .filter(|sub_room| sub_room.catalog_id == request.catalog_id)
+            .collect();
+        if this_one.is_empty() {
+            return Ok(());
+        }
+        let encrypted = self
+            .sub_rooms
+            .sub_room_parent_facts(parent)
+            .await
+            .map_err(persistence)?
+            .is_some_and(|facts| facts.end_to_end_encrypted);
+        if encrypted {
+            encrypt_sub_rooms(
+                self.listings.as_ref(),
+                self.listing_matrix.as_ref(),
+                &this_one,
+            )
+            .await
+            .map_err(|failure| privacy_failure(operation, failure))?;
+        }
+        let listed = self
+            .listings
+            .listing(parent)
+            .await
+            .map_err(persistence)?
+            .is_some_and(|listing| listing.settings.listed());
+        if listed {
+            mark_open_sub_rooms_listed(
+                self.listings.as_ref(),
+                self.listing_matrix.as_ref(),
+                &this_one,
+                at,
+            )
+            .await
+            .map_err(|failure| privacy_failure(operation, failure))?;
+        }
+        Ok(())
     }
 
     /// 建的当口落下来的禁言看不到这间还没存的子房间：存好以后再看一眼，被禁言着的把发言级别收回。
@@ -914,4 +976,13 @@ const fn conflict(operation: &'static str) -> PrivateRoomFailure {
         PrivateRoomFailureStage::Persistence,
         PrivateRoomFailureKind::Conflict,
     )
+}
+
+fn privacy_failure(operation: &'static str, failure: SubRoomPrivacyFailure) -> PrivateRoomFailure {
+    match failure {
+        SubRoomPrivacyFailure::Repository(error) => {
+            repository(operation, PrivateRoomFailureStage::Persistence, &error)
+        }
+        SubRoomPrivacyFailure::Matrix(error) => matrix(operation, error),
+    }
 }
