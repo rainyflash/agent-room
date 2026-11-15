@@ -592,6 +592,29 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 2)
 
+    def test_expired_session_check_on_page_load_is_noise(self) -> None:
+        def failure(path: str, kind: str = "InvalidSession") -> str:
+            return (
+                CONTROL_JOIN_CODE.replace("Agent 口令请求失败", "认证请求失败")
+                .replace("private_room.join_code.reveal", "authentication.authenticate")
+                .replace('"failure": "NotFound"', f'"failure": "{kind}"')
+                .replace(f"/devices/current/private-rooms/{CATALOG_ID}/code", path)
+            )
+
+        digest = summarize(
+            {"control-plane": [failure("/auth/session"), failure("/account")]},
+            load_noise(NOISE_FILE),
+        )
+        summaries = [finding.signature.summary for finding in digest.findings]
+        self.assertEqual(
+            summaries,
+            [
+                "WARN agent_room_control_plane::error 认证请求失败 failure=InvalidSession "
+                "operation=authentication.authenticate @ GET /account"
+            ],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_someone_elses_certificate_challenge_is_noise(self) -> None:
         challenge = json.dumps(
             {

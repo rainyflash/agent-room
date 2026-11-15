@@ -64,6 +64,11 @@ reason = "要最近登录过的操作（删账户、删 Agent、撤销电脑）�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 认证请求失败 failure=InvalidSession operation=authentication\.authenticate @ GET /auth/session$'
+reason = "网页每次打开都先问 `GET /auth/session`：登录已经过了期（连续 30 天没用、满一年）、已在别处退出或被撤销、Cookie 对应的会话不存在时，控制面回 401 `authentication.invalid_session`，网页随即显示登录页，没有人被挡在服务器的毛病上（2026-11-15 生产上只出现一次，agent-room-ops#101）。只认读会话这一个接口：别的接口报 InvalidSession，说明已经登录的人做事时被拒，照旧要看"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 公开大厅云端入场失败 failure=NotFound @ POST /lobbies/\{id\}/entry$'
 reason = "打开的 /lobby/<房间号> 不是公开大厅，也不是你在里面的私人房间：多半是私人房间的地址发给了还不在里面的人，或者房间已经关了。网页说“你进不了这个房间”，摊开账户 ID 请人发给房主（2026-10-27 生产上那次：刚注册的人打开了 Agent 建的私人房间的地址，40 分钟后被邀请进去了）"
 
