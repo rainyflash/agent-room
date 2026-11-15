@@ -89,12 +89,14 @@ import {
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
+import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
 import { ArchivedSubRoomNotice } from '@/features/sub-rooms/ui/archived-sub-room-notice';
 import { NewSubRoomDialog } from '@/features/sub-rooms/ui/new-sub-room-dialog';
 import { SubRoomBrowser } from '@/features/sub-rooms/ui/sub-room-browser';
 import { SubRoomDoor } from '@/features/sub-rooms/ui/sub-room-door';
 import { SubRoomPlaces } from '@/features/sub-rooms/ui/sub-room-places';
+import type { SubRoomRowMenuContext } from '@/features/sub-rooms/ui/sub-room-row-menu';
 import { useUnseenSubRooms } from '@/features/sub-rooms/ui/use-unseen-sub-rooms';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
@@ -332,6 +334,8 @@ function ReadyLobby({
   // 一间都没有时，建得了的人也看得到“浏览子房间”和“新建子房间”。
   const hasSubRoomPlaces = family !== null && (family.subRooms.length > 0 || family.canCreate);
   const [creatingSubRoom, setCreatingSubRoom] = useState(false);
+  // 从左栏那一行的“⋯”打开的、不是眼前这一间的子房间设置。
+  const [rowSettings, setRowSettings] = useState<SubRoom | null>(null);
   const createSubRoom =
     family?.canCreate === true
       ? () => {
@@ -351,6 +355,24 @@ function ReadyLobby({
           name: family.parent.name,
         }
       : null;
+  // 每一行的“⋯”：父房间的房主在每一间里，退不出去；退出眼前这一间以后回到父房间。
+  const subRoomMenu: SubRoomRowMenuContext | null =
+    principal === null || family === null
+      ? null
+      : {
+          principalId: principal.principalId,
+          ownerPrincipalId:
+            (privateRoomList.data?.ok === true
+              ? privateRoomList.data.value.find(
+                  (entry) => entry.catalogId === family.parent.catalogId,
+                )?.ownerPrincipalId
+              : undefined) ?? null,
+          parentMatrixRoomId: subRoomParent?.matrixRoomId ?? undefined,
+          onOpenSettings: (entry) => {
+            if (entry.catalogId === catalogId) setRoomSettings({ section: 'sub-room' });
+            else setRowSettings(entry);
+          },
+        };
   const invitable = subRoom
     ? null
     : invitableRoom(
@@ -659,6 +681,26 @@ function ReadyLobby({
               ? { list: family, room: subRoomEntry }
               : null
           }
+        />
+      )}
+      {rowSettings === null || principal === null || family === null ? null : (
+        <RoomSettingsDialog
+          catalogId={rowSettings.catalogId}
+          onClose={() => {
+            setRowSettings(null);
+          }}
+          onExitRoom={() => {
+            setRowSettings(null);
+          }}
+          principal={principal}
+          roomName={rowSettings.name}
+          subRoom={{
+            list: family,
+            room:
+              family.subRooms.find((entry) => entry.catalogId === rowSettings.catalogId) ??
+              rowSettings,
+          }}
+          subRoomOnly
         />
       )}
       {peopleInviteOpen &&
@@ -1006,6 +1048,7 @@ function ReadyLobby({
                         currentSelected={selectedDirectSessionId === null && !fullPage}
                         currentUnread={activity.unread}
                         list={family}
+                        menu={subRoomMenu}
                         onCreate={createSubRoom}
                         onNavigate={onNavigate}
                         onSelectCurrent={() => {

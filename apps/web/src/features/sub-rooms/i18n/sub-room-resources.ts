@@ -234,6 +234,29 @@ const en = {
   'subRooms.create.failure.name_taken': 'There’s already a sub-room with this name.',
   'subRooms.create.failure.rate_limited':
     'You’ve created a lot of sub-rooms in the last hour. Try again later.',
+  'subRooms.rowMenu.open': 'Options for {{name}}',
+  'subRooms.rowMenu.markRead': 'Mark as read',
+  'subRooms.rowMenu.mute': 'Mute',
+  'subRooms.rowMenu.unmute': 'Unmute',
+  'subRooms.rowMenu.muteNote': 'Mentions still show',
+  'subRooms.rowMenu.muted': 'Muted',
+  'subRooms.rowMenu.move': 'Move to category',
+  'subRooms.rowMenu.moveTitle': 'Move “{{name}}” to',
+  'subRooms.rowMenu.back': 'Back',
+  'subRooms.rowMenu.leave': 'Leave',
+  'subRooms.rowMenu.leaveTitle': 'Leave “{{name}}”?',
+  'subRooms.rowMenu.leaveDetail.open':
+    'Your agents in it leave with you. You can come back any time from Browse sub-rooms.',
+  'subRooms.rowMenu.leaveDetail.request':
+    'Your agents in it leave with you. To come back, you’ll have to ask again.',
+  'subRooms.rowMenu.leaveDetail.invite_only':
+    'Your agents in it leave with you. Only someone who runs it can bring you back.',
+  'subRooms.rowMenu.archive': 'Archive',
+  'subRooms.rowMenu.archiveTitle': 'Archive “{{name}}”?',
+  'subRooms.rowMenu.cancel': 'Cancel',
+  'subRooms.rowMenu.failure.owner_stays':
+    'The room’s owner is in every sub-room and can’t leave. Mute it instead.',
+  'subRooms.rowMenu.failure.personal': 'That couldn’t be saved. Try again in a moment.',
 } as const;
 
 export const subRoomResources = {
@@ -451,5 +474,26 @@ export const subRoomResources = {
     'subRooms.create.failure.limit_reached': '这间房已经有 100 间开着的子房间，先归档一间。',
     'subRooms.create.failure.name_taken': '已经有一间子房间叫这个名字了。',
     'subRooms.create.failure.rate_limited': '这一个小时你建的子房间太多了，过一会儿再建。',
+    'subRooms.rowMenu.open': '{{name}}的更多操作',
+    'subRooms.rowMenu.markRead': '标为已读',
+    'subRooms.rowMenu.mute': '免打扰',
+    'subRooms.rowMenu.unmute': '取消免打扰',
+    'subRooms.rowMenu.muteNote': '提到你的照样显示',
+    'subRooms.rowMenu.muted': '免打扰',
+    'subRooms.rowMenu.move': '移到分类',
+    'subRooms.rowMenu.moveTitle': '把“{{name}}”移到',
+    'subRooms.rowMenu.back': '返回',
+    'subRooms.rowMenu.leave': '退出',
+    'subRooms.rowMenu.leaveTitle': '退出“{{name}}”？',
+    'subRooms.rowMenu.leaveDetail.open':
+      '你在里面的 Agent 跟着一起退出。想回来时在“浏览子房间”里随时能再加入。',
+    'subRooms.rowMenu.leaveDetail.request': '你在里面的 Agent 跟着一起退出。想回来要重新申请。',
+    'subRooms.rowMenu.leaveDetail.invite_only':
+      '你在里面的 Agent 跟着一起退出。只有管它的人能把你请回来。',
+    'subRooms.rowMenu.archive': '归档',
+    'subRooms.rowMenu.archiveTitle': '归档“{{name}}”？',
+    'subRooms.rowMenu.cancel': '取消',
+    'subRooms.rowMenu.failure.owner_stays': '房主在每一间子房间里，退不出去。嫌吵就设成免打扰。',
+    'subRooms.rowMenu.failure.personal': '没存上，过一会儿再试。',
   } satisfies Record<keyof typeof en, string>,
 } as const;

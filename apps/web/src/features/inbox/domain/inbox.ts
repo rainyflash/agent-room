@@ -180,6 +180,19 @@ function position(message: RoomMessageSignal) {
 }
 
 /**
+ * 本机见到的最新一条（谁说的都算）：“标为已读”把读到的位置挪到这儿，和在对话里看到最下面一样。
+ * 一条都没有时是 null。
+ */
+export function latestReadingCursor(messages: readonly RoomMessageSignal[]): ReadingCursor | null {
+  let latest: ReadingCursor | null = null;
+  for (const message of messages) {
+    const at = position(message);
+    if (latest === null || compareCursors(at, latest) > 0) latest = at;
+  }
+  return latest;
+}
+
+/**
  * 读到的位置以后别人说的话有几句。本机只同步了最近的一段：一条读到的位置以前（含）的消息
  * 都没有，就说明没接上，真实的只会更多。
  */

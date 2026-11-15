@@ -14,6 +14,7 @@ import {
 import { PersonalWorkspaceStore } from '@/features/personal-workspace/application/personal-workspace-store';
 import { BrowserWorkspaceCache } from '@/features/personal-workspace/adapters/browser-workspace-cache';
 import {
+  changeWorkspace,
   emptyWorkspace,
   type WorkspaceDocument,
 } from '@/features/personal-workspace/domain/workspace-document';
@@ -468,6 +469,7 @@ const messages: MessageGateway = {
           .slice(-historyWindow),
         ...fixtureChatter.filter((message) => message.roomId === requestedRoomId),
         ...publishedConversations.filter((message) => message.roomId === requestedRoomId),
+        ...(fixtureSubRoomInbox.find((entry) => entry.roomId === requestedRoomId)?.messages ?? []),
       ].toSorted((left, right) => right.serverTimestamp - left.serverTimestamp),
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
@@ -493,8 +495,86 @@ const messages: MessageGateway = {
     };
   },
 };
+// `?private&subRooms&unread`：你在的三间子房间也在收件箱里。Release checklist 里 Grace 在你读到的地方以后
+// 说了三句（最后一句提到你），Backups 里两句，Loose ends 都读过了。“⋯”里的标为已读、免打扰真的改这台
+// 设备上的“读到哪儿”和免打扰。
+const subRoomUnreadFixture =
+  subRoomsFixture && new URLSearchParams(window.location.search).has('unread');
+const fixtureSubRoomInbox: readonly {
+  readonly catalogId: string;
+  readonly roomId: string;
+  readonly name: string;
+  readonly messages: readonly RoomMessageSignal[];
+}[] = subRoomUnreadFixture
+  ? [
+      {
+        suffix: '51',
+        name: 'Release checklist',
+        unread: [
+          'Windows checks are green.',
+          'The Mac build is still signing.',
+          'Can you read the release notes?',
+        ],
+      },
+      {
+        suffix: '52',
+        name: 'Backups',
+        unread: ['The restore drill passed.', 'Next one is on Friday.'],
+      },
+      { suffix: '53', name: 'Loose ends', unread: [] },
+    ].map(({ suffix, name, unread }) => {
+      const roomId = `!sub-${suffix}:agent-room.test`;
+      const said = (index: number, text: string, mentionsYou: boolean): RoomMessageSignal => ({
+        ...conversationFixture(`sub-${suffix}-${String(index)}`, {
+          roomId,
+          serverTimestamp: Date.now() - (10 - index) * 60_000,
+        }),
+        actor: {
+          kind: 'human',
+          provenance: 'human',
+          displayName: 'Grace',
+          matrixUserId: '@grace:matrix.test',
+          principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e43',
+        },
+        preview: {
+          title: 'Conversation',
+          summary: text,
+          contentType: 'text/plain',
+          sensitivity: 'normal',
+          riskFlags: [],
+          conversation: { text, mentions: mentionsYou ? [fixtureIdentity.matrixUserId] : [] },
+        },
+      });
+      return {
+        catalogId: `01990d9e-8400-7000-8000-0000000004${suffix}`,
+        roomId,
+        name,
+        messages: [
+          said(0, 'Starting this one.', false),
+          ...unread.map((text, index) => said(index + 1, text, index === 2)),
+        ],
+      };
+    })
+  : [];
 const workspaceCache = new BrowserWorkspaceCache(window.localStorage);
-let remoteWorkspace: WorkspaceDocument = emptyWorkspace;
+// 读到的位置停在每一间的第一句：后面的都没读。
+let remoteWorkspace: WorkspaceDocument = fixtureSubRoomInbox.reduce<WorkspaceDocument>(
+  (document, entry) => {
+    const first = entry.messages[0];
+    if (first === undefined) return document;
+    const changed = changeWorkspace(
+      document,
+      {
+        kind: 'read',
+        id: entry.roomId,
+        value: { eventId: first.matrixEventId, timestamp: first.serverTimestamp },
+      },
+      'fixture-device',
+    );
+    return changed.ok ? changed.value : document;
+  },
+  emptyWorkspace,
+);
 const personalWorkspace = new PersonalWorkspaceStore(
   {
     scope: () => ({ accountId: fixtureIdentity.matrixUserId, writerId: 'fixture-device' }),
@@ -520,6 +600,9 @@ const inboxStore = new InboxStore(
               name: room.name,
               direct: false,
             },
+            ...fixtureSubRoomInbox
+              .filter((entry) => fixtureSubRoomJoined(entry.catalogId))
+              .map(({ catalogId, roomId, name }) => ({ catalogId, roomId, name, direct: false })),
           ],
           handoffs: [],
           limited: false,
@@ -528,7 +611,11 @@ const inboxStore = new InboxStore(
   },
   {
     accountId: () => fixtureIdentity.matrixUserId,
-    isJoined: (id) => id === room.roomId,
+    isJoined: (id) =>
+      id === room.roomId ||
+      fixtureSubRoomInbox.some(
+        (entry) => entry.roomId === id && fixtureSubRoomJoined(entry.catalogId),
+      ),
     isIgnored: () => false,
     subscribe: (listener) => {
       conversationListeners.add(listener);
@@ -1116,6 +1203,8 @@ function recordFixtureRoleChange(principalId: string, previous: RoomStanding | u
 const FIXTURE_PARENT_ID = '01990d9e-8400-7000-8000-000000000400';
 const FIXTURE_WORK_CATEGORY = '01990d9e-8400-7000-8000-000000000460';
 const FIXTURE_OPS_CATEGORY = '01990d9e-8400-7000-8000-000000000461';
+// 你是房主或管理员（`asAdmin`）时管每一间子房间：名单上带着在等的申请有几个，“⋯”里有移到分类、设置、归档。
+const fixtureRunsParent = fixtureRoomOwner === fixtureOwner || asAdminFixture;
 function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = {}): SubRoom {
   return {
     catalogId: `01990d9e-8400-7000-8000-0000000004${suffix}`,
@@ -1128,8 +1217,45 @@ function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = 
     managerPrincipalIds: [],
     joined: true,
     banned: false,
+    ...(fixtureRunsParent ? { pendingRequestCount: 0 } : {}),
     ...extra,
   };
+}
+// 左栏“⋯”对眼前这一间以外的子房间做的：退出（父房间的房主退不出去）、归档、移到分类。
+const fixtureSubRoomChanges = new Map<
+  string,
+  { readonly left?: boolean; readonly archived?: boolean; readonly categoryId?: string | null }
+>();
+function changeFixtureSubRoom(
+  catalogId: string,
+  change: {
+    readonly left?: boolean;
+    readonly archived?: boolean;
+    readonly categoryId?: string | null;
+  },
+): void {
+  fixtureSubRoomChanges.set(catalogId, { ...fixtureSubRoomChanges.get(catalogId), ...change });
+}
+function applyFixtureSubRoomChanges(entries: readonly SubRoom[]): SubRoom[] {
+  return entries.flatMap((entry) => {
+    const change = fixtureSubRoomChanges.get(entry.catalogId);
+    if (change === undefined) return [entry];
+    if (change.archived === true) return [];
+    const next: SubRoom = {
+      ...entry,
+      ...(change.left === true ? { joined: false } : {}),
+      ...(typeof change.categoryId === 'string' ? { categoryId: change.categoryId } : {}),
+    };
+    if (change.categoryId !== null) return [next];
+    // 移到“未分类”：不带分类。
+    const uncategorized: Partial<SubRoom> = { ...next };
+    delete uncategorized.categoryId;
+    return [uncategorized as SubRoom];
+  });
+}
+function fixtureSubRoomJoined(catalogId: string): boolean {
+  const change = fixtureSubRoomChanges.get(catalogId);
+  return change?.left !== true && change?.archived !== true;
 }
 // `?private&subRoom`：眼前这一间。你管得了它（名单上带着在等的申请有几个），子房间设置改的就是它。
 // 是你（房主）建的，你在子房间管理员的名单上；Grace 在里面，能设成管理员。
@@ -1158,7 +1284,7 @@ function fixtureSubRoomList(): SubRoomList {
       : { catalogId: current, name: room.name },
     canCreate: true,
     categories: [...fixtureCategories],
-    subRooms: [
+    subRooms: applyFixtureSubRoomChanges([
       ...(subRoomFixture && fixturePrivateRoom.status !== 'archived'
         ? [
             {
@@ -1220,7 +1346,7 @@ function fixtureSubRoomList(): SubRoomList {
             ...(entry.categoryId === undefined ? {} : { categoryId: entry.categoryId }),
           }),
         ),
-    ],
+    ]),
   };
 }
 // 整间房的分类和三项设置：房间设置的“子房间”一节真的改它们，建、改、删的分类名和房主以外的人改三项
@@ -1265,6 +1391,7 @@ const fixtureSubRoomActions: {
   readonly answers: { readonly principalId: string; readonly decision: string }[];
   readonly managers: { readonly kind: 'grant' | 'revoke'; readonly principalId: string }[];
   readonly policies: Omit<SubRoomPolicy, 'canChange'>[];
+  readonly left: string[];
 } = {
   creations: [],
   broughtAgents: [],
@@ -1273,6 +1400,7 @@ const fixtureSubRoomActions: {
   answers: [],
   managers: [],
   policies: [],
+  left: [],
 };
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
@@ -1307,8 +1435,12 @@ function reviseFixtureSubRoom(
   input: ReviseSubRoomInput,
 ): Result<PrivateRoom, PrivateRoomFailure> {
   fixtureSubRoomActions.revisions.push({ subRoomId, ...input });
-  if (subRoomId !== fixturePrivateRoom.catalogId)
-    return err({ code: 'sub_room.unavailable', retryable: false });
+  if (subRoomId !== fixturePrivateRoom.catalogId) {
+    if (input.categoryId === undefined)
+      return err({ code: 'sub_room.unavailable', retryable: false });
+    changeFixtureSubRoom(subRoomId, { categoryId: input.categoryId });
+    return ok(fixturePrivateRoom);
+  }
   const taken = fixtureSubRoomList().subRooms.some(
     (entry) => entry.catalogId !== subRoomId && entry.name === input.name,
   );
@@ -1411,7 +1543,10 @@ const fixtureSubRooms: SubRoomGateway = {
   // 子房间设置：眼前这一间归档了，房间页接着照归档的子房间显示。
   archive: ({ subRoomId }) => {
     fixtureSubRoomActions.archived.push(subRoomId);
-    if (subRoomId !== fixturePrivateRoom.catalogId) return unavailableSubRoom();
+    if (subRoomId !== fixturePrivateRoom.catalogId) {
+      changeFixtureSubRoom(subRoomId, { archived: true });
+      return Promise.resolve(ok(undefined));
+    }
     fixturePrivateRoom = { ...fixturePrivateRoom, status: 'archived' };
     return Promise.resolve(ok(undefined));
   },
@@ -1438,10 +1573,17 @@ const fixtureSubRooms: SubRoomGateway = {
     changeFixtureManager('grant', subRoomId, principalId),
   join: unavailableSubRoom,
   joinRequests: ({ subRoomId }) =>
-    subRoomId === fixturePrivateRoom.catalogId
-      ? Promise.resolve(ok([...fixtureCurrentRequests]))
-      : unavailableSubRoom(),
-  leave: unavailableSubRoom,
+    Promise.resolve(
+      ok(subRoomId === fixturePrivateRoom.catalogId ? [...fixtureCurrentRequests] : []),
+    ),
+  // 父房间的房主退不出去（服务器回 `sub_room.owner_stays`）；别人退出以后这一间留在名单上、你不在里面。
+  leave: ({ subRoomId }) => {
+    fixtureSubRoomActions.left.push(subRoomId);
+    if (fixtureRoomOwner === fixtureOwner)
+      return Promise.resolve(err({ code: 'sub_room.owner_stays', retryable: false }));
+    changeFixtureSubRoom(subRoomId, { left: true });
+    return Promise.resolve(ok(undefined));
+  },
   policy: () => Promise.resolve(ok(fixturePolicy)),
   remove: unavailableSubRoom,
   requestToJoin: ({ subRoomId }) => {
@@ -1549,7 +1691,25 @@ const privateRooms: PrivateRoomGateway = {
         return Promise.resolve(ok(generated));
       }
     : unavailablePrivateRoom,
-  inspect: unavailablePrivateRoom,
+  inspect: (catalogId) => {
+    const entry =
+      subRoomsFixture || subRoomFixture
+        ? fixtureSubRoomList().subRooms.find(
+            (candidate) => candidate.catalogId === catalogId && candidate.joined,
+          )
+        : undefined;
+    return entry === undefined
+      ? unavailablePrivateRoom()
+      : Promise.resolve(
+          ok({
+            ...fixturePrivateRoom,
+            catalogId,
+            description: entry.description,
+            matrixRoomId: `!sub-${fixtureSubRoomSuffix(catalogId)}:agent-room.test`,
+            name: entry.name,
+          }),
+        );
+  },
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
   list: () => Promise.resolve(ok(privateFixture ? [fixturePrivateRoom] : [])),
