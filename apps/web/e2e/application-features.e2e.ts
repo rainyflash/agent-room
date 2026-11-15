@@ -342,6 +342,24 @@ for (const width of [1440, 390]) {
   });
 }
 
+test('房间卡片把你在的子房间的未读和 @ 也算进去，免打扰的只算 @', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${fixture}&unread&subRooms`);
+  const mine = page.getByRole('region', { name: 'Your rooms' });
+  // Design studio 自己三条，Specs 两条；Retro 免打扰，它的四条不算。
+  await expect(mine.getByRole('link', { name: /Design studio/ })).toContainText(
+    'Someone mentioned you, 5 unread messages',
+  );
+  // Engineering room 下面的 Incidents 免打扰，可它提到了你：照样标 @。
+  await expect(mine.getByRole('link', { name: /Engineering room/ })).toContainText(
+    'Someone mentioned you, At least 99 unread messages',
+  );
+  // 子房间没有自己的卡片。
+  await expect(mine.getByRole('link', { name: /Specs|Retro|Incidents/ })).toHaveCount(0);
+  expect(failures).toEqual([]);
+});
+
 test('刷新恢复附件、清除后不残留本地文件', async ({ page }) => {
   await page.goto(fixture);
   await page.getByRole('link', { name: /Design studio/ }).click();

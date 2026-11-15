@@ -10,15 +10,24 @@ import {
 } from '@/features/personal-workspace/domain/workspace-document';
 import { ok } from '@/shared/result';
 
+/** 子房间：收件箱里有它、读到的位置停在第一句，后面几句没读；`muted` 的设了免打扰。 */
+export type FeaturesUnreadSubRoom = {
+  readonly room: InboxRoom;
+  readonly unread: number;
+  readonly mentionsYou?: boolean;
+  readonly muted?: boolean;
+};
+
 /**
  * “房间”页夹具（`lobby-scene.html?features=1&unread`）的收件箱：
  * Design studio 读到一半、后面三条里有一条点名你；Engineering room 积了 120 条；
- * 公开大厅的分片里有人点名你。
+ * 公开大厅的分片里有人点名你。`subRooms` 是加 `&subRooms` 时你在的几间子房间。
  */
 export function featuresUnreadInbox(
   accountId: string,
   rooms: readonly InboxRoom[],
-): InboxStore | null {
+  subRooms: readonly FeaturesUnreadSubRoom[] = [],
+): { readonly inbox: InboxStore; readonly personal: PersonalWorkspaceStore } | null {
   const [design, engineering, lobby] = rooms;
   if (design === undefined || engineering === undefined || lobby === undefined) return null;
   const start = Date.now() - 60 * 60_000;
@@ -59,19 +68,30 @@ export function featuresUnreadInbox(
     ],
     [lobby.roomId, [said(lobby, 'hello', 5), said(lobby, 'ping', 6, [accountId])]],
   ]);
+  const subRoomSeen = subRooms.map(({ room, unread, mentionsYou = false }) => {
+    const seen = said(room, 'seen', 0);
+    messages.set(room.roomId, [
+      seen,
+      ...Array.from({ length: unread }, (_, index) =>
+        said(room, `s${String(index)}`, 1 + index, mentionsYou && index === 0 ? [accountId] : []),
+      ),
+    ]);
+    return seen;
+  });
   let document: WorkspaceDocument = emptyWorkspace;
-  for (const seen of [designSeen, engineeringSeen]) {
-    const changed = changeWorkspace(
-      document,
-      {
-        kind: 'read',
-        id: seen.roomId,
-        value: { eventId: seen.matrixEventId, timestamp: seen.serverTimestamp },
-      },
-      'fixture-device',
-    );
+  const remember = (change: Parameters<typeof changeWorkspace>[1]) => {
+    const changed = changeWorkspace(document, change, 'fixture-device');
     if (changed.ok) document = changed.value;
+  };
+  for (const seen of [designSeen, engineeringSeen, ...subRoomSeen]) {
+    remember({
+      kind: 'read',
+      id: seen.roomId,
+      value: { eventId: seen.matrixEventId, timestamp: seen.serverTimestamp },
+    });
   }
+  for (const { room, muted = false } of subRooms)
+    if (muted) remember({ kind: 'mute', id: room.roomId, value: true });
   let cached = document;
   const personal = new PersonalWorkspaceStore(
     {
@@ -91,8 +111,12 @@ export function featuresUnreadInbox(
       },
     },
   );
-  return new InboxStore(
-    { read: () => Promise.resolve(ok({ accountId, rooms, handoffs: [], limited: false })) },
+  const indexRooms = [...rooms, ...subRooms.map(({ room }) => room)];
+  const inbox = new InboxStore(
+    {
+      read: () =>
+        Promise.resolve(ok({ accountId, rooms: indexRooms, handoffs: [], limited: false })),
+    },
     {
       accountId: () => accountId,
       isJoined: (roomId) => messages.has(roomId),
@@ -111,4 +135,5 @@ export function featuresUnreadInbox(
     },
     personal,
   );
+  return { inbox, personal };
 }
