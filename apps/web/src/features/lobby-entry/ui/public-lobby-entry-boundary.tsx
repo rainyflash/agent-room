@@ -6,7 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useAppServices } from '@/app/app-services';
 import type { PublicLobbyRouteTarget } from '@/features/lobby-entry/domain/public-lobby-entry';
-import { usePrivateRoomList } from '@/features/private-rooms/data/private-room-queries';
+import {
+  usePrivateRoom,
+  usePrivateRoomList,
+} from '@/features/private-rooms/data/private-room-queries';
 import { privateRoomAddressEntry } from '@/features/private-rooms/domain/private-room';
 import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
 import { sessionStateName } from '@/features/session/ui/connection-model';
@@ -79,12 +82,23 @@ export function PublicLobbyEntryBoundary({
     retry: false,
     staleTime: 0,
   });
+  // 子房间不在房间列表里，公开大厅入场也说找不到：这时再单独问这一间，你在里面就照私人房间打开。
+  // 放在入场之后问，公开大厅不多等一个请求。
+  const entryMissing = entry.data?.ok === false && entry.data.error.code === NOT_FOUND_CODE;
+  const single = usePrivateRoom(privateRooms, catalogId, principalId !== null && entryMissing);
+  const singleEntry =
+    principalId !== null && single.data?.ok === true
+      ? privateRoomAddressEntry([single.data.value], catalogId, principalId)
+      : null;
+  const singlePending = entryMissing && single.data === undefined && !single.isError;
   const target =
     privateEntry?.kind === 'joined'
       ? privateEntry
-      : entry.data?.ok === true
-        ? entry.data.value
-        : null;
+      : singleEntry?.kind === 'joined'
+        ? singleEntry
+        : entry.data?.ok === true
+          ? entry.data.value
+          : null;
   const failureCode =
     entry.data?.ok === false
       ? entry.data.error.code
@@ -92,9 +106,9 @@ export function PublicLobbyEntryBoundary({
         ? 'lobby_entry.unexpected_failure'
         : null;
   const phase: EntryPhase =
-    privateEntry?.kind === 'invited'
+    privateEntry?.kind === 'invited' || singleEntry?.kind === 'invited'
       ? 'invited'
-      : failureCode === null
+      : failureCode === null || singlePending || singleEntry?.kind === 'joined'
         ? 'loading'
         : failureCode === PROVISIONING_BUSY_CODE
           ? 'preparing'

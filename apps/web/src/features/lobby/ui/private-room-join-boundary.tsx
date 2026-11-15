@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAppServices } from '@/app/app-services';
 import type { LobbyRoomState } from '@/features/lobby/application/lobby-room-store';
 import { LobbyStateBoundary } from '@/features/lobby/ui/lobby-state-boundary';
-import { usePrivateRoomList } from '@/features/private-rooms/data/private-room-queries';
+import { usePrivateRoomListWith } from '@/features/private-rooms/data/private-room-queries';
 import { joinedPrivateRoom } from '@/features/private-rooms/domain/private-room';
 
 /** 加入请求回来以后，最多等这么久让同步把“已加入”带回来；过了还没到，照常说打不开、能重试。 */
@@ -32,7 +32,13 @@ export function PrivateRoomJoinBoundary({
   state,
 }: PrivateRoomJoinBoundaryProps) {
   const { privateRoomMatrix, privateRooms } = useAppServices();
-  const list = usePrivateRoomList(privateRooms, principalId ?? undefined, principalId !== null);
+  // 子房间不在房间列表里，单独问这一间（`usePrivateRoomListWith`）。
+  const list = usePrivateRoomListWith(
+    privateRooms,
+    principalId ?? undefined,
+    catalogId,
+    principalId !== null,
+  );
   const room =
     principalId !== null && list.data?.ok === true
       ? joinedPrivateRoom(list.data.value, catalogId, roomId, principalId)

@@ -43,15 +43,24 @@ function renderBoundary({
   join = vi.fn<PrivateRoomMatrixGateway['join']>(() => Promise.resolve(ok(undefined))),
   principalId = OWNER,
   rooms = [ROOM],
+  single = null,
 }: {
   readonly join?: ReturnType<typeof vi.fn<PrivateRoomMatrixGateway['join']>>;
   readonly principalId?: string | null;
   readonly rooms?: readonly PrivateRoom[];
+  /** 单独问这一间时的回答（子房间不在房间列表里）；`null` 是找不到。 */
+  readonly single?: PrivateRoom | null;
 } = {}) {
   const onRetry = vi.fn();
   const services = {
     privateRoomMatrix: { join, leave: vi.fn() } satisfies PrivateRoomMatrixGateway,
-    privateRooms: { list: () => Promise.resolve(ok(rooms)) } as unknown as PrivateRoomGateway,
+    privateRooms: {
+      inspect: () =>
+        Promise.resolve(
+          single === null ? err({ code: 'private_room.not_found', retryable: false }) : ok(single),
+        ),
+      list: () => Promise.resolve(ok(rooms)),
+    } as unknown as PrivateRoomGateway,
   } as unknown as AppServices;
   render(
     <I18nextProvider i18n={i18n}>
@@ -104,6 +113,15 @@ describe('打开 Matrix 上还没加入的私人房间', () => {
 
     expect(await screen.findByText('You are not in this room yet')).toBeVisible();
     expect(join).not.toHaveBeenCalled();
+  });
+
+  it('子房间不在房间列表里：单独问到服务器记着你在里面，照样替你加入', async () => {
+    const { join } = renderBoundary({ rooms: [], single: ROOM });
+
+    await waitFor(() => {
+      expect(join).toHaveBeenCalledWith(ROOM.matrixRoomId);
+    });
+    expect(screen.getByText('Opening the room')).toBeVisible();
   });
 
   it('加入没成就说打不开；“重试”再加入一次，也让房间重读', async () => {

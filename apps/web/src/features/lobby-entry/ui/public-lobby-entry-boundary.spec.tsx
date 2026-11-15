@@ -142,6 +142,41 @@ describe('公开大厅入场边界', () => {
     expect(screen.getByRole('link', { name: 'Back to rooms' })).toHaveAttribute('href', '/rooms');
     expect(enter).toHaveBeenCalledWith(catalogId);
   });
+
+  it('子房间不在房间列表里：入场说找不到以后单独问这一间，你在里面就照私人房间打开', async () => {
+    const enter = vi.fn(() =>
+      Promise.resolve(err({ code: 'lobby.entry_not_found', retryable: false })),
+    );
+    const inspect = vi.fn(() => Promise.resolve(ok(privateRoom('joined'))));
+    mockServices(enter, [], inspect);
+    mockSession('ready', principal);
+    const onEntered = vi.fn();
+
+    renderBoundary(onEntered);
+
+    await vi.waitFor(() => {
+      expect(onEntered).toHaveBeenCalledWith({ catalogId, matrixRoomId: privateMatrixRoomId });
+    });
+    expect(inspect).toHaveBeenCalledWith(catalogId);
+    expect(screen.queryByRole('heading', { name: 'This room isn’t open to you' })).toBeNull();
+  });
+
+  it('公开大厅进得去就不单独问', async () => {
+    const enter = vi.fn(() =>
+      Promise.resolve(ok({ catalogId, matrixRoomId: '!lobby:matrix.test' })),
+    );
+    const inspect = vi.fn();
+    mockServices(enter, [], inspect);
+    mockSession('ready', principal);
+    const onEntered = vi.fn();
+
+    renderBoundary(onEntered);
+
+    await vi.waitFor(() => {
+      expect(onEntered).toHaveBeenCalledWith({ catalogId, matrixRoomId: '!lobby:matrix.test' });
+    });
+    expect(inspect).not.toHaveBeenCalled();
+  });
 });
 
 const privateMatrixRoomId = '!private:matrix.test';
@@ -167,11 +202,17 @@ function privateRoom(status: 'invited' | 'joined'): PrivateRoom {
   } as unknown as PrivateRoom;
 }
 
-function mockServices(enter: ReturnType<typeof vi.fn>, rooms: readonly PrivateRoom[] = []) {
+function mockServices(
+  enter: ReturnType<typeof vi.fn>,
+  rooms: readonly PrivateRoom[] = [],
+  inspect: ReturnType<typeof vi.fn> = vi.fn(() =>
+    Promise.resolve(err({ code: 'private_room.not_found', retryable: false })),
+  ),
+) {
   const list = vi.fn(() => Promise.resolve(ok(rooms)));
   vi.mocked(useAppServices).mockReturnValue({
     lobbyEntry: { enter },
-    privateRooms: { list },
+    privateRooms: { inspect, list },
   } as unknown as ReturnType<typeof useAppServices>);
   return list;
 }

@@ -1,6 +1,7 @@
 import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 
-import { err } from '@/shared/result';
+import { err, ok } from '@/shared/result';
 
 import type { PrivateRoomGateway } from '@/features/private-rooms/domain/private-room';
 import type { PrivateRoomInviteGateway } from '@/features/private-rooms/domain/private-room-invite-link';
@@ -29,6 +30,50 @@ export function usePrivateRoomList(
   enabled = true,
 ) {
   return useQuery({ ...privateRoomListQueryOptions(gateway, accountId), enabled });
+}
+
+export const privateRoomQueryKey = (catalogId: string) =>
+  [...privateRoomListQueryKey, 'room', catalogId] as const;
+
+/**
+ * 单独问一间房（`GET /private-rooms/{c}`）：子房间不在房间列表里（旧版网页不认得它们），打开子房间时
+ * 这样问。你不在里面、受邀也不是的回“找不到”。挂在房间列表的键下面，列表刷新时跟着重问。
+ */
+export function usePrivateRoom(gateway: PrivateRoomGateway, catalogId: string, enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: privateRoomQueryKey(catalogId),
+    queryFn: async () => await gateway.inspect(catalogId),
+    networkMode: 'always',
+    retry: false,
+    staleTime: 5_000,
+  });
+}
+
+/**
+ * 房间列表加上眼前这一间：列表里没有它（子房间）时单独问一次，问到了接在列表后面，问不到（公开大厅、
+ * 你不在里面）就只是列表。`data` 和房间列表是同一个形状，单独问的那次回来以前没有。
+ */
+export function usePrivateRoomListWith(
+  gateway: PrivateRoomGateway,
+  accountId: string | undefined,
+  catalogId: string,
+  enabled = true,
+) {
+  const list = usePrivateRoomList(gateway, accountId, enabled);
+  const missing =
+    list.data?.ok === true && !list.data.value.some((room) => room.catalogId === catalogId);
+  const single = usePrivateRoom(gateway, catalogId, enabled && missing);
+  const data = useMemo(() => {
+    if (list.data?.ok !== true || !missing) return list.data;
+    if (single.data === undefined) return single.isError ? list.data : undefined;
+    return single.data.ok ? ok([...list.data.value, single.data.value]) : list.data;
+  }, [list.data, missing, single.data, single.isError]);
+  return {
+    data,
+    isError: list.isError || (missing && single.isError),
+    isPending: list.isPending || (missing && single.data === undefined && !single.isError),
+  };
 }
 
 export const privateRoomOriginQueryKey = (catalogId: string) =>
