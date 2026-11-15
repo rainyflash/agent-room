@@ -47,7 +47,8 @@ const REQUESTED_AT: i64 = 1_700_000_200_000;
 #[derive(Default)]
 pub(super) struct FakeSubRooms {
     created: Mutex<Vec<CreateSubRoom>>,
-    listed: Mutex<Vec<RoomCatalogId>>,
+    /// 问名单的房间号，和要不要“已归档”的那份。
+    listed: Mutex<Vec<(RoomCatalogId, bool)>>,
     inspected: Mutex<Vec<RoomCatalogId>>,
     changed: Mutex<Vec<(RoomCatalogId, SubRoomPolicy)>>,
     /// 加入和退出：父房间、子房间。
@@ -137,8 +138,16 @@ impl SubRoomUseCases for FakeSubRooms {
         &self,
         request: ListSubRooms,
     ) -> PortFuture<'_, PrivateRoomResult<SubRoomList>> {
-        self.listed.lock().unwrap().push(request.catalog_id);
-        let result = self.refusal().map_or_else(|| Ok(list()), Err);
+        self.listed
+            .lock()
+            .unwrap()
+            .push((request.catalog_id, request.archived));
+        let listed = if request.archived {
+            archive::archived_list()
+        } else {
+            list()
+        };
+        let result = self.refusal().map_or(Ok(listed), Err);
         Box::pin(async move { result })
     }
 
@@ -559,8 +568,8 @@ async fn 名单只要有效登录_有门又没进的不给人数和最近说话�
     );
     assert_eq!(
         sub_rooms.listed.lock().unwrap().as_slice(),
-        &[RoomCatalogId::from_uuid(uuid(SUB_ROOM_UUID))],
-        "地址里是子房间的房间号也行，原样交给用例"
+        &[(RoomCatalogId::from_uuid(uuid(SUB_ROOM_UUID)), false)],
+        "地址里是子房间的房间号也行，原样交给用例；不带 archived 是没归档的那份"
     );
     assert_eq!(
         authentication.calls.lock().unwrap().as_slice(),
@@ -1036,6 +1045,7 @@ fn list() -> SubRoomList {
         hidden: false,
         category_id: None,
         archived: false,
+        archive_record: None,
         created_by: owner_id(),
         created_at: time(1_700_000_000_000),
         managers: Vec::new(),
@@ -1063,6 +1073,7 @@ fn list() -> SubRoomList {
                 },
                 inside_visible: true,
                 manages: true,
+                restorable: false,
             },
             SubRoomView {
                 entry: SubRoomEntry {
@@ -1073,6 +1084,7 @@ fn list() -> SubRoomList {
                 },
                 inside_visible: false,
                 manages: false,
+                restorable: false,
             },
             SubRoomView {
                 entry: SubRoomEntry {
@@ -1082,6 +1094,7 @@ fn list() -> SubRoomList {
                 },
                 inside_visible: false,
                 manages: false,
+                restorable: false,
             },
         ],
     }

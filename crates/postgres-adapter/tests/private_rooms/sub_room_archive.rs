@@ -139,16 +139,17 @@ async fn 归档_状态和记录一起写_在等的申请作废_锁住的事排�
     let archived = load(&repositories, sub_room).await;
     assert_eq!(status(&archived), PrivateRoomLifecycleStatus::Archived);
     assert!(archived.room().member(owner).is_some(), "成员原样留着");
+    let record = Some(SubRoomArchiveRecord {
+        at: time(20),
+        by: Some(owner),
+        reason: SubRoomArchiveReason::Manual,
+    });
     assert_eq!(
         link(&repositories, sub_room)
             .await
             .expect("还挂在父房间下面")
             .archived,
-        Some(SubRoomArchiveRecord {
-            at: time(20),
-            by: Some(owner),
-            reason: SubRoomArchiveReason::Manual,
-        })
+        record
     );
     assert_eq!(
         statuses(&database.runtime, sub_room, member).await,
@@ -159,9 +160,11 @@ async fn 归档_状态和记录一起写_在等的申请作废_锁住的事排�
             .await
             .contains_key(&None)
     );
-    assert!(
-        list(&repositories, parent, owner).await[0].archived,
-        "名单上标着归档了"
+    let listed = &list(&repositories, parent, owner).await[0];
+    assert!(listed.archived, "名单上标着归档了");
+    assert_eq!(
+        listed.archive_record, record,
+        "名单上带着谁、什么时候、为什么（2e-3）"
     );
     let expected_audit = (
         "principal".to_owned(),
@@ -239,6 +242,10 @@ async fn 恢复_清掉记录_撞了名字不写_父房间归档了收不了也�
             .await
             .expect("还挂着")
             .archived,
+        None
+    );
+    assert_eq!(
+        list(&repositories, parent, owner).await[0].archive_record,
         None
     );
     assert!(

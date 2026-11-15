@@ -419,6 +419,9 @@ const LIST_SQL: &str = r"
            link.created_by_principal_id,
            floor(extract(epoch FROM link.created_at) * 1000)::bigint AS created_at_ms,
            floor(extract(epoch FROM link.last_message_at) * 1000)::bigint AS last_message_at_ms,
+           floor(extract(epoch FROM link.archived_at) * 1000)::bigint AS archived_at_ms,
+           link.archived_by_principal_id,
+           link.archived_reason,
            COALESCE((
                SELECT array_agg(manager.principal_id
                                 ORDER BY manager.granted_at, manager.principal_id)
@@ -1064,6 +1067,7 @@ fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoo
             "archived" => true,
             _ => return Err(corrupt_data(operation)),
         },
+        archive_record: decode_archive_record(row, operation)?,
         created_by: PrincipalId::from_uuid(created_by),
         created_at: UtcMillis::new(created_at).map_err(|_| corrupt_data(operation))?,
         managers: managers.into_iter().map(PrincipalId::from_uuid).collect(),

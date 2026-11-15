@@ -10,12 +10,15 @@ use std::collections::BTreeSet;
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    private_rooms::{PrivateRoom, PrivateRoomMember, PrivateRoomMembershipStatus},
+    private_rooms::{
+        PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember, PrivateRoomMembershipStatus,
+    },
     room_join_requests::JoinRequestStatus,
     room_listing::RoomJoinMode,
     rooms::{
         RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus, RoomCatalogVisibility,
     },
+    sub_room_archive::{RestoreStanding, SubRoomArchiveReason, restore_allowed},
     sub_rooms::{
         SubRoomCreationRefusal, SubRoomDoor, SubRoomPolicy, authorize_sub_room_creation,
         new_sub_room, runs_parent_room, sub_room_name_key, validate_sub_room_name,
@@ -791,18 +794,30 @@ impl PrivateRoomService {
             .sub_room_categories(parent_catalog_id)
             .await
             .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
-        let sub_rooms = entries
+        let parent_active = parent.room().status() == PrivateRoomLifecycleStatus::Active;
+        let mut sub_rooms: Vec<SubRoomView> = entries
             .into_iter()
-            // 归档的不在这份名单里：它们让出了名字和名额，另有“已归档”的名单。
-            .filter(|entry| !entry.archived && visible(entry, runs_parent))
-            .map(|entry| SubRoomView {
-                // 有门、看的人又不在里面的，里面有几个人、多久以前有人说话不给。
-                inside_visible: entry.access == RoomJoinMode::Open || inside(&entry),
+            // 归档的和没归档的各是一份：归档的让出了名字和名额，在“已归档”里。归档以前看得到的人，
+            // 归档以后也看得到这一行。
+            .filter(|entry| entry.archived == request.archived && visible(entry, runs_parent))
+            .map(|entry| {
                 // 和 `manages_sub_room` 一样：父房间的房主和管理员，加上在里面的这一间的管理员。
-                manages: runs_parent || (inside(&entry) && entry.managers.contains(&viewer)),
-                entry,
+                let manages = runs_parent || (inside(&entry) && entry.managers.contains(&viewer));
+                SubRoomView {
+                    // 有门、看的人又不在里面的，里面有几个人、多久以前有人说话不给。
+                    inside_visible: entry.access == RoomJoinMode::Open || inside(&entry),
+                    manages,
+                    restorable: entry.archived && restorable(&entry, manages, parent_active),
+                    entry,
+                }
             })
             .collect();
+        if request.archived {
+            // 最近归档的在前：多半是刚收错了要拿回来的。
+            sub_rooms.sort_by_key(|view| {
+                std::cmp::Reverse(view.entry.archive_record.map(|record| record.at))
+            });
+        }
         Ok(SubRoomList {
             parent_catalog_id,
             parent_name: parent.catalog().name().to_owned(),
@@ -988,6 +1003,23 @@ fn inside(entry: &SubRoomEntry) -> bool {
 /// 勾了“不在名单里显示”的，只有里面的人、父房间的房主和管理员看得到。
 fn visible(entry: &SubRoomEntry, runs_parent: bool) -> bool {
     !entry.hidden || runs_parent || inside(entry)
+}
+
+/// 归档了的这一间看的人能不能恢复：和恢复本身同一套规矩（`authorize_sub_room_restore`）。看的人
+/// 已经在父房间里（读得到名单就是），所以“原来在里面”只看这一间。没记原因的当是人收起来的。
+fn restorable(entry: &SubRoomEntry, manages: bool, parent_active: bool) -> bool {
+    let reason = entry
+        .archive_record
+        .map_or(SubRoomArchiveReason::Manual, |record| record.reason);
+    restore_allowed(
+        RestoreStanding {
+            manages,
+            was_inside: inside(entry),
+            parent_active,
+        },
+        reason,
+    )
+    .is_ok()
 }
 
 pub(super) const fn refused(

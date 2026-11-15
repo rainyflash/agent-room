@@ -54,7 +54,11 @@ impl MemoryRooms {
         }
     }
 
-    fn set_archive_record(&self, catalog: RoomCatalogId, record: Option<SubRoomArchiveRecord>) {
+    pub(super) fn set_archive_record(
+        &self,
+        catalog: RoomCatalogId,
+        record: Option<SubRoomArchiveRecord>,
+    ) {
         for stored in self.links.lock().expect("关系锁正常").iter_mut() {
             if stored.link.catalog_id == catalog {
                 stored.mark_archived(record);

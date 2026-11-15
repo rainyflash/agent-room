@@ -95,14 +95,41 @@ pub fn authorize_sub_room_restore(
         && sub_room
             .member(actor)
             .is_some_and(PrivateRoomMember::has_joined);
-    let may = manages_sub_room(parent, sub_room, actor)
-        || (reason == SubRoomArchiveReason::Inactive && was_inside);
+    restore_allowed(
+        RestoreStanding {
+            manages: manages_sub_room(parent, sub_room, actor),
+            was_inside,
+            parent_active: parent.status() == PrivateRoomLifecycleStatus::Active,
+        },
+        reason,
+    )
+}
+
+/// 看的人和这一间、父房间的关系里，判断能不能恢复要用的那几样。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreStanding {
+    /// 管得了这一间：这一间的子房间管理员，父房间的房主和管理员（[`manages_sub_room`]）。
+    pub manages: bool,
+    /// 他在父房间里、也在这一间里，都是已加入。
+    pub was_inside: bool,
+    pub parent_active: bool,
+}
+
+/// 和 [`authorize_sub_room_restore`] 同一套规矩，给“已归档”的名单（2e-3）判断每一行给不给“恢复”：
+/// 名单里只有每一间的记录，没有整间房。
+///
+/// # Errors
+///
+/// 恢复不了时返回原因。
+pub fn restore_allowed(
+    standing: RestoreStanding,
+    reason: SubRoomArchiveReason,
+) -> Result<(), SubRoomArchiveRefusal> {
+    let may = standing.manages || (reason == SubRoomArchiveReason::Inactive && standing.was_inside);
     if !may {
         return Err(SubRoomArchiveRefusal::ManagersOnly);
     }
-    if parent.status() != PrivateRoomLifecycleStatus::Active
-        || reason == SubRoomArchiveReason::Parent
-    {
+    if !standing.parent_active || reason == SubRoomArchiveReason::Parent {
         return Err(SubRoomArchiveRefusal::ParentArchived);
     }
     Ok(())
@@ -357,5 +384,45 @@ mod tests {
             assert_eq!(SubRoomArchiveReason::try_from(reason.as_str()), Ok(reason));
         }
         assert!(SubRoomArchiveReason::try_from("deleted").is_err());
+    }
+
+    #[test]
+    fn 名单上的恢复和恢复本身是同一套规矩() {
+        use SubRoomArchiveReason::{Inactive, Manual, Parent};
+        let standing = |manages, was_inside, parent_active| RestoreStanding {
+            manages,
+            was_inside,
+            parent_active,
+        };
+        for (standing, reason, expected) in [
+            (standing(true, false, true), Manual, Ok(())),
+            (
+                standing(false, true, true),
+                Manual,
+                Err(SubRoomArchiveRefusal::ManagersOnly),
+            ),
+            (standing(false, true, true), Inactive, Ok(())),
+            (
+                standing(false, false, true),
+                Inactive,
+                Err(SubRoomArchiveRefusal::ManagersOnly),
+            ),
+            (
+                standing(true, true, true),
+                Parent,
+                Err(SubRoomArchiveRefusal::ParentArchived),
+            ),
+            (
+                standing(true, true, false),
+                Manual,
+                Err(SubRoomArchiveRefusal::ParentArchived),
+            ),
+        ] {
+            assert_eq!(
+                restore_allowed(standing, reason),
+                expected,
+                "{standing:?} {reason:?}"
+            );
+        }
     }
 }
