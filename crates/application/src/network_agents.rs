@@ -61,9 +61,9 @@ use crate::{
     },
     private_rooms::{
         AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomArchival, AgentSubRoomCreation,
-        AgentSubRoomListing, JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult,
-        PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
-        ResolveJoinCode,
+        AgentSubRoomListing, AgentSubRoomManagement, JoinCodeCaller, KnockEntry, KnockOnRoom,
+        KnockResult, PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode,
+        RedeemedRoom, ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
@@ -399,6 +399,8 @@ pub enum NetworkAgentFailureKind {
     SubRoomParentUnavailable,
     /// 只离开一间时，它不在这间房里（2h-3b）。
     RoomNotJoined,
+    /// 子房间没有口令（2h-4a）：换口令、停用口令都不行，上面那间房里的 Agent 拿房间号敲门。
+    SubRoomHasNoCode,
     /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
     /// 不往外说。
     NotNetworkAgent,
@@ -607,6 +609,8 @@ pub struct NetworkAgentDependencies {
     pub sub_room_listing: Arc<dyn AgentSubRoomListing>,
     /// 网络 Agent 归档它管的子房间（第 2h-3a 步）。
     pub sub_room_archival: Arc<dyn AgentSubRoomArchival>,
+    /// 网络 Agent 认出它管得了的子房间：看、回答敲门，移出 Agent（第 2h-4a 步）。
+    pub sub_room_management: Arc<dyn AgentSubRoomManagement>,
     /// 只离开一间：和本机 Agent 离开一个房间同一套（第 2h-3b 步）。
     pub placements: Arc<dyn AgentRoomPlacementUseCases>,
     pub directory: Arc<dyn RoomDirectory>,
@@ -638,6 +642,7 @@ pub struct NetworkAgentService {
     sub_rooms: Arc<dyn AgentSubRoomCreation>,
     sub_room_listing: Arc<dyn AgentSubRoomListing>,
     sub_room_archival: Arc<dyn AgentSubRoomArchival>,
+    sub_room_management: Arc<dyn AgentSubRoomManagement>,
     placements: Arc<dyn AgentRoomPlacementUseCases>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
@@ -683,6 +688,7 @@ impl NetworkAgentService {
             sub_rooms: dependencies.sub_rooms,
             sub_room_listing: dependencies.sub_room_listing,
             sub_room_archival: dependencies.sub_room_archival,
+            sub_room_management: dependencies.sub_room_management,
             placements: dependencies.placements,
             directory: dependencies.directory,
             listings: dependencies.listings,

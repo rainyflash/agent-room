@@ -474,3 +474,30 @@ async fn 带_room_id_只离开一间_交给用例_不停用_不带的照旧全�
         "network_agent.room_not_joined"
     );
 }
+
+#[tokio::test]
+async fn 子房间的口令说是子房间_不替它生成() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.room_code.lock().unwrap() = Some(NetworkAgentRoomCode::SubRoom);
+
+    let shown = tool(
+        &messaging,
+        "agent_room_room_access",
+        &json!({"roomId": ROOM_ID}),
+    )
+    .await;
+
+    assert_eq!(
+        shown["structuredContent"]["code"],
+        json!({"state": "sub_room"})
+    );
+    assert!(first_text(&shown).contains("This is a sub-room"));
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("room_code {ROOM_ID}"),
+            format!("waiting_knocks {ROOM_ID}")
+        ],
+        "子房间没有口令，不去换"
+    );
+}

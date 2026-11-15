@@ -43,10 +43,11 @@ use agent_room_application::{
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
         AgentAccessView, AgentSubRoomArchival, AgentSubRoomCreated, AgentSubRoomCreation,
-        AgentSubRoomListing, AgentSubRooms, AnswerKnock, ArchiveAgentSubRoom, ArchivePrivateRoom,
-        ChangePrivateRoomPermissions, CreateAgentSubRoom, CreatePrivateRoom, GeneratedJoinCode,
-        GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember,
-        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
+        AgentSubRoomListing, AgentSubRoomManagement, AgentSubRooms, AnswerKnock,
+        ArchiveAgentSubRoom, ArchivePrivateRoom, ChangePrivateRoomPermissions, CreateAgentSubRoom,
+        CreatePrivateRoom, FindAgentManagedSubRoom, GeneratedJoinCode, GovernPrivateRoomMember,
+        InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller,
+        KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
         ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
         PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
         PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
@@ -1460,6 +1461,8 @@ struct FakeRooms {
     /// 归档子房间的请求（2h-3a），和要回的结果：没给时说不是子房间，照整间房关。
     sub_rooms_archived: Mutex<Vec<ArchiveAgentSubRoom>>,
     sub_room_archive: Mutex<Option<PrivateRoomResult<Option<PrivateRoomSnapshot>>>>,
+    /// 认它管得了的子房间的请求（2h-4a）。
+    sub_rooms_managed: Mutex<Vec<FindAgentManagedSubRoom>>,
 }
 
 /// 父房间里有的分类：要别的名字就放进“未分类”。
@@ -1551,6 +1554,42 @@ impl AgentSubRoomArchival for FakeRooms {
             .unwrap()
             .clone()
             .unwrap_or(Ok(None));
+        Box::pin(async move { result })
+    }
+}
+
+/// 认它管得了的子房间（2h-4a）：父房间的房主是它的合成主体（它自己的房间下面），或者这一间是它建的，
+/// 没归档就管得了；替身不看它在不在里面。不是子房间回空，没有这间房说找不到。
+impl AgentSubRoomManagement for FakeRooms {
+    fn agent_managed_sub_room(
+        &self,
+        request: FindAgentManagedSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>> {
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        let result = self
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|snapshot| snapshot.catalog().id() == request.catalog_id)
+            .cloned()
+            .map_or_else(
+                || Err(room_failure(PrivateRoomFailureKind::NotFound)),
+                |snapshot| {
+                    if snapshot.parent_catalog_id().is_none() {
+                        return Ok(None);
+                    }
+                    let manages = snapshot.room().owner_principal_id()
+                        == request.actor.principal_id()
+                        || snapshot.room().created_by_agent() == Some(request.agent_id);
+                    if manages && snapshot.catalog().status() == RoomCatalogStatus::Active {
+                        Ok(Some(snapshot))
+                    } else {
+                        Err(sub_room_refused(SubRoomRefusal::ManagersOnly))
+                    }
+                },
+            );
+        self.sub_rooms_managed.lock().unwrap().push(request);
         Box::pin(async move { result })
     }
 }
@@ -2116,6 +2155,7 @@ impl Harness {
             sub_rooms: rooms.clone(),
             sub_room_listing: rooms.clone(),
             sub_room_archival: rooms.clone(),
+            sub_room_management: rooms.clone(),
             placements: placements.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             listings: Arc::new(FakeListings),

@@ -40,7 +40,11 @@ async fn close_room(
 fn visible(code: &NetworkAgentRoomCode) -> &str {
     match code {
         NetworkAgentRoomCode::Visible(code) => code,
-        NetworkAgentRoomCode::Hidden | NetworkAgentRoomCode::Missing => panic!("口令应当看得到"),
+        NetworkAgentRoomCode::Hidden
+        | NetworkAgentRoomCode::Missing
+        | NetworkAgentRoomCode::SubRoom => {
+            panic!("口令应当看得到")
+        }
     }
 }
 
