@@ -347,10 +347,10 @@
 
 都是新加的，不往现有的回答里加字段（`privateRoomSchema` 等都是严格校验的，旧版桌面端多看到一个字段整个列表都读不出来）：
 
-- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。分类的名单 2e-1a 起有（`categories`：`[{ categoryId, name, position }]`，按先后；里面有几间由网页照它看得到的子房间数），每间的分类跟 2e-1b，`archived=1` 跟 2e-3；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
-- `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。和建房间一样带幂等键（子房间的房间号），回的是照私人房间样子的这一间。建不了时分开说：403 `sub_room.admins_only`、`sub_room.agents_may_not_create`，409 `sub_room.name_taken`、`sub_room.limit_reached`、`sub_room.nested`（在子房间下面建），429 `sub_room.rate_limited`。门（`access`：`open`、`request`、`invite_only`，不带就是 `open`）和隐藏（`hidden`，不带就是不藏）2d-1 起收；没有门又要藏的回 400 `private_room.invalid_request`。分类跟 2e，多带别的字段回 400。
+- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。分类的名单 2e-1a 起有（`categories`：`[{ categoryId, name, position }]`，按先后；里面有几间由网页照它看得到的子房间数），每间的分类 2e-1b 起有（`categoryId`，“未分类”的不写），`archived=1` 跟 2e-3；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
+- `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。和建房间一样带幂等键（子房间的房间号），回的是照私人房间样子的这一间。建不了时分开说：403 `sub_room.admins_only`、`sub_room.agents_may_not_create`，409 `sub_room.name_taken`、`sub_room.limit_reached`、`sub_room.nested`（在子房间下面建），429 `sub_room.rate_limited`。门（`access`：`open`、`request`、`invite_only`，不带就是 `open`）和隐藏（`hidden`，不带就是不藏）2d-1 起收；没有门又要藏的回 400 `private_room.invalid_request`。分类（`categoryId`）2e-1b 起收，得是这间房里的分类，没有了的回 409 `sub_room.category_missing`，不是分类号的回 400；多带别的字段回 400。
 - `PUT /private-rooms/{父}/sub-rooms/{子}`：改名、改用途、换分类、换门、隐藏；`DELETE`：归档；`POST .../sub-rooms/{子}/restore`：恢复。
-  - 每一项都可以不带，不带的不动；一项都没带回 400 `sub_room.invalid_revision_body`。收 `name`、`description`，2d-1 起收 `access` 和 `hidden`（规则见上面“换门”）；分类跟 2e，多带别的字段也回 400。
+  - 每一项都可以不带，不带的不动；一项都没带回 400 `sub_room.invalid_revision_body`。收 `name`、`description`，2d-1 起收 `access` 和 `hidden`（规则见上面“换门”），2e-1b 起收 `categoryId`（写成 `null` 是挪回“未分类”，挪进的分类没有了回 409 `sub_room.category_missing`）；多带别的字段也回 400。
   - 存的当口门已经被别人换了，回 409 `private_room.conflict`。
   - 管得了这一间的人能改：这一间的管理员，父房间的房主和管理员（进没进来都一样）。别人回 403 `sub_room.managers_only`。撞了名字回 409 `sub_room.name_taken`，归档了的回 409 `sub_room.archived`。
   - 目录先改（名字重不重由它在锁着父房间的事务里说了算），Matrix 上的房间名和话题跟着写；和现在的一样也照写一遍，上一次目录改好了、Matrix 没写成的，再保存一次就补上。
@@ -623,3 +623,6 @@
   - 审计只记分类号和房间号（`sub_room.category.created`、`sub_room.category.deleted`），名字是用户写的字，不进审计；改名、挪位置不记。
   - 父房间归档了以后分类不能再改，回 409 `private_room.conflict`；子房间下面没有分类。
   - 先后存成从 0 起连着的整数，挪一个、删一个都在锁着父房间的事务里整份重排。
+- 2026-11-15 2e-1b 做完（#PR）：建子房间时选分类（`categoryId`），之后这一间的管理员、父房间的房主和管理员能挪（写成 `null` 是挪回“未分类”），名单里每间带着 `categoryId`。没有迁移，只有控制面。
+  - 选的分类得是这间房里的。建和挪都在锁着父房间的事务里看一眼它还在不在，删分类排在后面；不在了回 409 `sub_room.category_missing`，建的时候在建 Matrix 房间之前就说。
+  - 同一个请求重发（同一个房间号）时不比分类：存好以后分类可能刚被删掉、回到了“未分类”。

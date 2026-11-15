@@ -194,6 +194,8 @@ pub struct CreateSubRoom {
     pub access: RoomJoinMode,
     /// 不在名单里显示。只有有门的能勾。
     pub hidden: bool,
+    /// 放进哪个分类（2e-1b），得是这间房里的。不选是“未分类”。
+    pub category_id: Option<SubRoomCategoryId>,
     /// Agent 替它的主人建时，是哪个 Agent。
     pub created_by_agent: Option<AgentId>,
 }
@@ -275,6 +277,8 @@ pub struct ReviseSubRoom {
     /// 换门：`Open` 是拆门。
     pub access: Option<RoomJoinMode>,
     pub hidden: Option<bool>,
+    /// 挪到哪个分类（2e-1b）：`Some(None)` 是挪回“未分类”。
+    pub category: Option<Option<SubRoomCategoryId>>,
 }
 
 /// 申请进一间要批准的子房间（`specs/redesign/sub-rooms.md` 第 2d-2 步）。`message` 是留的那

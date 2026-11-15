@@ -349,6 +349,7 @@ impl PrivateRoomService {
             catalog_id: request.catalog_id,
             parent_catalog_id: request.parent_catalog_id,
             name_key: sub_room_name_key(&request.name),
+            category_id: request.category_id,
             created_by: creator,
             created_by_agent: request.created_by_agent,
             at: now,
@@ -909,6 +910,7 @@ fn new_sub_room_record(
         name_key: sub_room_name_key(&request.name),
         access: door.access(),
         hidden: door.hidden(),
+        category_id: request.category_id,
         created_by: creator,
         created_by_agent: request.created_by_agent,
         // 房主本来就管每一间，不用再记成这一间的管理员。
@@ -1004,6 +1006,9 @@ const fn creation_blocked(
         }
         // 刚检查过以后父房间归档了，或者不在了。
         SubRoomCreationBlock::ParentUnavailable => PrivateRoomFailureKind::Conflict,
+        SubRoomCreationBlock::CategoryMissing => {
+            PrivateRoomFailureKind::SubRoom(SubRoomRefusal::CategoryMissing)
+        }
     };
     failure(operation, PrivateRoomFailureStage::Persistence, kind)
 }

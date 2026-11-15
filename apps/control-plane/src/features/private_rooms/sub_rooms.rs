@@ -35,7 +35,7 @@ use super::{
         IDEMPOTENCY_KEY_HEADER, invalid, invalid_resource, required_write_context, respond,
     },
     models::catalog_id,
-    sub_room_categories::{CategoryResponse, category_responses},
+    sub_room_categories::{CategoryResponse, category_id, category_responses},
 };
 use crate::{
     correlation::CorrelationId,
@@ -62,7 +62,7 @@ impl From<AccessValue> for RoomJoinMode {
     }
 }
 
-/// 门和隐藏可以不带：不带就是没有门、在名单里显示。分类跟后面的步骤。
+/// 门、隐藏和分类可以不带：不带就是没有门、在名单里显示、“未分类”。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CreateSubRoomBody {
@@ -73,9 +73,12 @@ pub(super) struct CreateSubRoomBody {
     access: Option<AccessValue>,
     #[serde(default)]
     hidden: bool,
+    #[serde(default)]
+    category_id: Option<String>,
 }
 
-/// 改名字、用途、门、隐藏。没带的那一项不动；一项都没带就是没什么可改的。分类跟后面的步骤。
+/// 改名字、用途、门、隐藏、分类。没带的那一项不动；一项都没带就是没什么可改的。`categoryId`
+/// 写成 `null` 是挪回“未分类”。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct ReviseSubRoomBody {
@@ -87,6 +90,24 @@ pub(super) struct ReviseSubRoomBody {
     access: Option<AccessValue>,
     #[serde(default)]
     hidden: Option<bool>,
+    #[serde(default)]
+    category_id: CategoryField,
+}
+
+/// 改的请求里关于分类的那一项：没带（不动）、写成 `null`（挪回“未分类”）、写了分类号。
+#[derive(Debug, Default)]
+enum CategoryField {
+    #[default]
+    Absent,
+    Cleared,
+    Set(String),
+}
+
+impl<'de> Deserialize<'de> for CategoryField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // 没带的那一项不会走到这里，由 `default` 给 `Absent`。
+        Ok(Option::<String>::deserialize(deserializer)?.map_or(Self::Cleared, Self::Set))
+    }
 }
 
 impl ReviseSubRoomBody {
@@ -95,6 +116,7 @@ impl ReviseSubRoomBody {
             && self.description.is_none()
             && self.access.is_none()
             && self.hidden.is_none()
+            && matches!(self.category_id, CategoryField::Absent)
     }
 }
 
@@ -127,6 +149,9 @@ struct SubRoomResponse {
     /// `open`、`request`、`invite_only`，和公开房间的加入方式是同一套词。
     access: &'static str,
     hidden: bool,
+    /// 在哪个分类里；“未分类”的不写。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category_id: Option<String>,
     created_by_principal_id: String,
     created_at_unix_ms: i64,
     /// 这一间的子房间管理员。房间的房主和管理员本来就管每一间，不在这里。
@@ -163,6 +188,7 @@ impl From<SubRoomView> for SubRoomResponse {
             description: entry.description,
             access: entry.access.as_str(),
             hidden: entry.hidden,
+            category_id: entry.category_id.map(|category| category.to_string()),
             created_by_principal_id: entry.created_by.to_string(),
             created_at_unix_ms: entry.created_at.value(),
             manager_principal_ids: entry.managers.iter().map(ToString::to_string).collect(),
@@ -271,6 +297,13 @@ pub(super) async fn create(
     else {
         return invalid("private_room.invalid_idempotency_key", correlation_id);
     };
+    let category = match body.category_id.as_deref() {
+        None => None,
+        Some(value) => match category_id(value) {
+            Some(category) => Some(category),
+            None => return invalid("sub_room.invalid_creation_body", correlation_id),
+        },
+    };
     respond(
         state
             .sub_rooms
@@ -283,6 +316,7 @@ pub(super) async fn create(
                 description: body.description,
                 access: body.access.map_or(RoomJoinMode::Open, RoomJoinMode::from),
                 hidden: body.hidden,
+                category_id: category,
                 created_by_agent: None,
             })
             .await,
@@ -397,6 +431,14 @@ pub(super) async fn revise(
     if body.is_empty() {
         return invalid("sub_room.invalid_revision_body", correlation_id);
     }
+    let category = match &body.category_id {
+        CategoryField::Absent => None,
+        CategoryField::Cleared => Some(None),
+        CategoryField::Set(value) => match category_id(value) {
+            Some(category) => Some(Some(category)),
+            None => return invalid("sub_room.invalid_revision_body", correlation_id),
+        },
+    };
     let (actor, parent_catalog_id, sub_room_catalog_id) =
         match sub_room_write_context(&state, &headers, &jar, &parent, &sub_room, correlation_id)
             .await
@@ -416,6 +458,7 @@ pub(super) async fn revise(
                 description: body.description,
                 access: body.access.map(RoomJoinMode::from),
                 hidden: body.hidden,
+                category,
             })
             .await,
         StatusCode::OK,

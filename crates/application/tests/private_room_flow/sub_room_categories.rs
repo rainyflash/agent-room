@@ -8,7 +8,10 @@ use agent_room_application::{
         NewSubRoomCategory, PortFuture, SubRoomCategory, SubRoomCategoryOutcome,
         SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
     },
-    private_rooms::{CreateSubRoomCategory, DeleteSubRoomCategory, ReviseSubRoomCategory},
+    private_rooms::{
+        CreateSubRoom, CreateSubRoomCategory, DeleteSubRoomCategory, ReviseSubRoom,
+        ReviseSubRoomCategory,
+    },
 };
 use agent_room_domain::{ids::SubRoomCategoryId, sub_room_categories::MAXIMUM_SUB_ROOM_CATEGORIES};
 
@@ -30,6 +33,15 @@ fn category_id(value: u128) -> SubRoomCategoryId {
 }
 
 impl MemoryRooms {
+    /// 这个分类在不在这间房里。
+    pub(super) fn has_category(&self, parent: RoomCatalogId, category: SubRoomCategoryId) -> bool {
+        self.categories
+            .lock()
+            .expect("分类锁正常")
+            .iter()
+            .any(|stored| stored.parent == parent && stored.category.id == category)
+    }
+
     /// 父房间还在、没归档、自己不是子房间。
     fn category_parent_usable(&self, parent: RoomCatalogId) -> bool {
         self.rooms
@@ -191,13 +203,22 @@ impl SubRoomCategoryStore for MemoryRooms {
             let mut stored = self.categories.lock().expect("分类锁正常");
             let before = stored.len();
             stored.retain(|stored| !(stored.parent == parent && stored.category.id == removal.id));
-            if stored.len() != before {
+            let removed = stored.len() != before;
+            if removed {
                 Self::renumber(&mut stored, parent, None);
                 self.record("sub_rooms.category");
             }
-            Ok(SubRoomCategoryOutcome::Saved(Self::categories_of(
-                &stored, parent,
-            )))
+            let left = Self::categories_of(&stored, parent);
+            drop(stored);
+            // 里面的子房间回到“未分类”，和真实存储的外键置空一样。
+            if removed {
+                for link in self.links.lock().expect("关系锁正常").iter_mut() {
+                    if link.category == Some(removal.id) {
+                        link.category = None;
+                    }
+                }
+            }
+            Ok(SubRoomCategoryOutcome::Saved(left))
         })
     }
 }
@@ -464,4 +485,120 @@ async fn 父房间归档了就管不了分类() {
         refusal(rooms.revise_category(OWNER, 60, Some("Design"), None).await),
         PrivateRoomFailureKind::Conflict,
     );
+}
+
+impl Rooms {
+    /// 只挪分类：`Some(None)` 是挪回“未分类”。
+    async fn move_to_category(
+        &self,
+        person: u128,
+        catalog: u128,
+        category: Option<u128>,
+    ) -> Result<PrivateRoomSnapshot, PrivateRoomFailure> {
+        self.service
+            .revise_sub_room(ReviseSubRoom {
+                actor: self::person(person),
+                parent_catalog_id: catalog_id(PARENT),
+                catalog_id: catalog_id(catalog),
+                name: None,
+                description: None,
+                access: None,
+                hidden: None,
+                category: Some(category.map(category_id)),
+            })
+            .await
+    }
+
+    async fn category_of(&self, viewer: u128, catalog: u128) -> Option<SubRoomCategoryId> {
+        self.list(viewer, PARENT)
+            .await
+            .expect("房间里的人读得到")
+            .sub_rooms
+            .into_iter()
+            .find(|view| view.entry.catalog_id == catalog_id(catalog))
+            .expect("名单里有这一间")
+            .entry
+            .category_id
+    }
+}
+
+#[tokio::test]
+async fn 建子房间时放进分类_名单里带着_选的分类没了就建不了_删掉分类回到未分类() {
+    let rooms = Rooms::new();
+    rooms
+        .create_category(ADMIN, 60, "Release")
+        .await
+        .expect("建了分类");
+    rooms
+        .service
+        .create_sub_room(CreateSubRoom {
+            category_id: Some(category_id(60)),
+            ..Rooms::request(MEMBER, 20, "ship")
+        })
+        .await
+        .expect("成员建子房间时能选分类");
+    assert_eq!(rooms.category_of(VIEWER, 20).await, Some(category_id(60)));
+
+    rooms.clear_events();
+    let missing = rooms
+        .service
+        .create_sub_room(CreateSubRoom {
+            category_id: Some(category_id(99)),
+            ..Rooms::request(MEMBER, 21, "website")
+        })
+        .await;
+    assert_eq!(refusal(missing), sub_room(SubRoomRefusal::CategoryMissing));
+    assert!(
+        !rooms.events().contains(&"matrix.create"),
+        "建 Matrix 房间之前就说"
+    );
+
+    rooms.delete_category(OWNER, 60).await.expect("删了分类");
+    assert_eq!(
+        rooms.category_of(VIEWER, 20).await,
+        None,
+        "回到未分类，子房间还在"
+    );
+}
+
+#[tokio::test]
+async fn 管得了这一间的人能挪分类_能挪回未分类_挪进没有的分类不行_别人挪不了() {
+    let rooms = Rooms::new();
+    rooms
+        .create_category(OWNER, 60, "Release")
+        .await
+        .expect("建了分类");
+    rooms
+        .create(MEMBER, 20, "ship")
+        .await
+        .expect("成员建的，他管这一间");
+    rooms.join(VIEWER, 20).await.expect("能进");
+
+    rooms
+        .move_to_category(MEMBER, 20, Some(60))
+        .await
+        .expect("这一间的管理员能挪");
+    assert_eq!(rooms.category_of(VIEWER, 20).await, Some(category_id(60)));
+    assert_eq!(
+        refusal(rooms.move_to_category(VIEWER, 20, None).await),
+        sub_room(SubRoomRefusal::ManagersOnly),
+        "里面的人不都能挪"
+    );
+    assert_eq!(
+        refusal(rooms.move_to_category(ADMIN, 20, Some(99)).await),
+        sub_room(SubRoomRefusal::CategoryMissing),
+    );
+    assert_eq!(rooms.category_of(VIEWER, 20).await, Some(category_id(60)));
+    rooms
+        .move_to_category(ADMIN, 20, None)
+        .await
+        .expect("父房间的管理员没进来也能挪回未分类");
+    assert_eq!(rooms.category_of(VIEWER, 20).await, None);
+
+    let renamed = rooms
+        .revise(MEMBER, 20, Some("shipping"), None)
+        .await
+        .expect("只改名");
+    assert_eq!(renamed.catalog().name(), "shipping");
+    assert_eq!(rooms.category_of(VIEWER, 20).await, None, "没提分类就不动");
 }

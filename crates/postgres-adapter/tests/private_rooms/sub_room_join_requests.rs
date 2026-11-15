@@ -97,6 +97,7 @@ fn door_change(
             from: door(from),
             to: door(to),
         }),
+        category: None,
         at,
     }
 }

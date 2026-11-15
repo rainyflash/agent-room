@@ -1,10 +1,12 @@
 //! 子房间分类的存储（`specs/redesign/sub-rooms.md` 第 2e-1 步）：建的排在最后、重发不多建、重名不分
 //! 大小写、一间房最多 20 个；改名挪位置以后先后从 0 起连着；删掉一个，里面的子房间回到“未分类”；
-//! 建和删写审计，只记号不记名字；父房间归档了、或者它是一间子房间时管不了。
+//! 建和删写审计，只记号不记名字；父房间归档了、或者它是一间子房间时管不了。建子房间时放进分类、
+//! 之后挪（2e-1b），只认这间房自己的分类。
 
 use agent_room_application::ports::{
     NewSubRoomCategory, SubRoomCategory, SubRoomCategoryName, SubRoomCategoryOutcome,
-    SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
+    SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore, SubRoomRevision,
+    SubRoomRevisionBlock,
 };
 use agent_room_domain::{
     ids::SubRoomCategoryId,
@@ -324,5 +326,110 @@ async fn 删掉以后子房间回到未分类_后面的往前挪_归档的和子
         )
         .await,
         SubRoomCategoryOutcome::ParentUnavailable
+    );
+}
+
+/// 只挪分类：名字和用途照现在的带上。
+async fn placement(
+    repositories: &PostgresRepositories,
+    parent: RoomCatalogId,
+    sub_room: RoomCatalogId,
+    category: Option<SubRoomCategoryId>,
+) -> Option<SubRoomRevisionBlock> {
+    let current = load(repositories, sub_room).await;
+    let name = current.catalog().name().to_owned();
+    SubRoomStore::revise_sub_room(
+        repositories,
+        &SubRoomRevision {
+            catalog_id: sub_room,
+            parent_catalog_id: parent,
+            name_key: sub_room_name_key(&name),
+            name,
+            description: current.catalog().description().to_owned(),
+            door: None,
+            category: Some(category),
+            at: time(60),
+        },
+    )
+    .await
+    .expect("写入不报错")
+}
+
+async fn category_in_list(
+    repositories: &PostgresRepositories,
+    parent: RoomCatalogId,
+    owner: PrincipalId,
+    sub_room: RoomCatalogId,
+) -> Option<SubRoomCategoryId> {
+    list(repositories, parent, owner)
+        .await
+        .into_iter()
+        .find(|entry| entry.catalog_id == sub_room)
+        .expect("名单里有这一间")
+        .category_id
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 建子房间时放进分类_能挪_能挪回未分类_别的房间的分类不收() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "sub-room-categories-placement").await;
+    let parent = create_room(&repositories, owner).await;
+    let elsewhere = create_room(&repositories, owner).await;
+    let ids = three_categories(&repositories, parent, owner).await;
+    let foreign = fresh_id();
+    saved(
+        create_category(
+            &repositories,
+            &new_category(elsewhere, owner, foreign, "别处"),
+        )
+        .await,
+    );
+
+    let ship = NewSubRoom {
+        category_id: Some(ids[1]),
+        ..draft(&repositories, parent, owner, "Ship", time(40)).await
+    };
+    assert_eq!(attempt(&repositories, &ship).await, None);
+    assert_eq!(
+        category_in_list(&repositories, parent, owner, id(&ship)).await,
+        Some(ids[1])
+    );
+    let stray = NewSubRoom {
+        category_id: Some(foreign),
+        ..draft(&repositories, parent, owner, "Stray", time(41)).await
+    };
+    assert_eq!(
+        attempt(&repositories, &stray).await,
+        Some(SubRoomCreationBlock::CategoryMissing),
+        "先问和存的时候都不收别的房间的分类"
+    );
+
+    let missing = Some(SubRoomRevisionBlock::CategoryMissing);
+    assert_eq!(
+        placement(&repositories, parent, id(&ship), Some(foreign)).await,
+        missing
+    );
+    assert_eq!(
+        placement(&repositories, parent, id(&ship), Some(fresh_id())).await,
+        missing
+    );
+    assert_eq!(
+        placement(&repositories, parent, id(&ship), Some(ids[0])).await,
+        None
+    );
+    assert_eq!(
+        category_in_list(&repositories, parent, owner, id(&ship)).await,
+        Some(ids[0])
+    );
+    assert_eq!(
+        placement(&repositories, parent, id(&ship), None).await,
+        None
+    );
+    assert_eq!(
+        category_in_list(&repositories, parent, owner, id(&ship)).await,
+        None,
+        "挪回未分类"
     );
 }

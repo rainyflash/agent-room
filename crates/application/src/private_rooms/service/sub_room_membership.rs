@@ -202,7 +202,8 @@ impl PrivateRoomService {
         let nothing_asked = request.name.is_none()
             && request.description.is_none()
             && request.access.is_none()
-            && request.hidden.is_none();
+            && request.hidden.is_none()
+            && request.category.is_none();
         if nothing_asked {
             return Err(failure(
                 OPERATION,
@@ -264,27 +265,13 @@ impl PrivateRoomService {
                 name_key: sub_room_name_key(revised.catalog().name()),
                 description: revised.catalog().description().to_owned(),
                 door,
+                category: request.category,
                 at: now,
             })
             .await
             .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
-        match blocked {
-            Some(SubRoomRevisionBlock::NameTaken) => {
-                return Err(refused(OPERATION, SubRoomRefusal::NameTaken));
-            }
-            // 刚看过以后它归档了。
-            Some(SubRoomRevisionBlock::Unavailable) => {
-                return Err(refused(OPERATION, SubRoomRefusal::Archived));
-            }
-            // 另一个请求刚换过门：请他看过新的再换。
-            Some(SubRoomRevisionBlock::DoorChanged) => {
-                return Err(failure(
-                    OPERATION,
-                    PrivateRoomFailureStage::Persistence,
-                    PrivateRoomFailureKind::Conflict,
-                ));
-            }
-            None => {}
+        if let Some(block) = blocked {
+            return Err(revision_blocked(block, OPERATION));
         }
         // Matrix 上的房间名和话题跟着写。和现在的一样也写一遍（可以重复写）：上一次目录改好了、
         // 这一步没成的，再点一次保存就补上。
@@ -389,5 +376,27 @@ pub(super) const fn entry_refused(
             refused(operation, SubRoomRefusal::ApprovalRequired)
         }
         SubRoomEntryRefusal::InviteOnly => refused(operation, SubRoomRefusal::InviteOnly),
+    }
+}
+
+/// 存的时候没写成的原因。
+const fn revision_blocked(
+    block: SubRoomRevisionBlock,
+    operation: &'static str,
+) -> PrivateRoomFailure {
+    match block {
+        SubRoomRevisionBlock::NameTaken => refused(operation, SubRoomRefusal::NameTaken),
+        // 刚看过以后它归档了。
+        SubRoomRevisionBlock::Unavailable => refused(operation, SubRoomRefusal::Archived),
+        // 要挪进的分类刚被删了。
+        SubRoomRevisionBlock::CategoryMissing => {
+            refused(operation, SubRoomRefusal::CategoryMissing)
+        }
+        // 另一个请求刚换过门：请他看过新的再换。
+        SubRoomRevisionBlock::DoorChanged => failure(
+            operation,
+            PrivateRoomFailureStage::Persistence,
+            PrivateRoomFailureKind::Conflict,
+        ),
     }
 }
