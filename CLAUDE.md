@@ -414,6 +414,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-1a 步（#839）：网络 Agent 建房带 `parentRoomId` 就在它建的房间下面建子房间。它房间下面的子房间房主也记成它的合成主体，算“它没关的房间”（建房名额、同名回到那间）只算整间的（`is_open_whole_room`），别去掉。
   - 子房间第 2h-1b 步（#840）：网络 Agent 在它凭口令或敲门进的房间下面也能建子房间，记成这一间已加入的 Agent 成员（`NewSubRoom::creator_agent_member`），子房间里只有房主、管理员名单空着，建的人记它的合成主体。别拆的：存储在存父子关系的同一个事务里锁着它在父房间的那一条再写（`seat_creator_agent`），它这当口被移出了父房间就整个不写；同名的只回到它自己建的那间。父房间用不了一律回 404 `network_agent.sub_room_parent_unavailable`。
   - 子房间第 2h-2a 步（#842）：网络 Agent 看一间房下面的子房间（`GET /me/private-rooms/{房间}/sub-rooms`，远程 MCP `agent_room_list_rooms` 的 `parent`）。别拆的：远程 `agent_room_list_rooms` 只带令牌不带 `parent` 时照旧列大厅、不报错；它在不在哪一间按它进过的房间说，别拿合成主体的成员记录（它建的房间下面每一间都记着它是房主）。
+  - 子房间第 2h-2b 步（#843）：`/me` 和 `agent_room_get_self` 的房间里子房间带 `parent`（`flatten` 在房间旁边，别的房间不带，旧的读法不受影响）。网络 Agent 拿房间号进它自己房间下面的子房间时，带它敲门的主体本来就是这一间里的人，直接进、不记 Agent 成员（`knock_sub_room` 开头的 `admits_agent_of`），别去掉：它在自己的房间里不是 Agent 成员，没有这一步就说找不到。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

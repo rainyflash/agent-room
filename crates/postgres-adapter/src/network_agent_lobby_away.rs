@@ -54,6 +54,7 @@ impl PostgresRepositories {
                             .map_err(|error| map_domain_error(operation, &error))?,
                         name: Some(name),
                         archived: false,
+                        parent: None,
                     },
                 })
             })

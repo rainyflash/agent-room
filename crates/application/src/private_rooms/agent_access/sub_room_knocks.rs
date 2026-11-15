@@ -13,7 +13,7 @@
 //! 由管得了这一间的人按名字放行。
 
 use agent_room_domain::{
-    ids::{AgentId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
     join_codes::{PrivateRoomAgentJoinedVia, PrivateRoomAgentMemberStatus},
     private_rooms::{
         PrivateRoomLifecycleStatus, PrivateRoomMembershipStatus, PrivateRoomPermissions,
@@ -148,14 +148,20 @@ impl PrivateRoomAgentAccessService {
             .map_err(|error| repository(operation, &error))
     }
 
-    /// Agent 拿子房间的房间号敲门。`sub_room` 已经核对过在用。
+    /// Agent 拿子房间的房间号敲门。`sub_room` 已经核对过在用。`principal` 是带它敲门的主体：此刻
+    /// 就是这一间里能发言的人时（网络 Agent 建的房间，它的合成主体是父房间和每间子房间的房主，
+    /// 2h-2b），它和主人的 Agent 一样直接进，不另记 Agent 成员。
     pub(super) async fn knock_sub_room(
         &self,
+        principal: PrincipalId,
         agent_id: AgentId,
         sub_room: &PrivateRoomSnapshot,
         now: UtcMillis,
         operation: &'static str,
     ) -> AgentAccessResult<KnockResult> {
+        if sub_room.room().admits_agent_of(principal) {
+            return Ok(KnockResult::Member(redeemed_room(sub_room)));
+        }
         let gate = self.sub_room_gate(sub_room, operation).await?;
         if !self.in_parent(&gate, agent_id, operation).await? {
             return Err(AgentAccessFailure::new(

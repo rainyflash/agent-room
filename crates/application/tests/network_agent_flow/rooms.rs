@@ -75,6 +75,7 @@ async fn record_joined(harness: &Harness, room: &NetworkAgentRoom) {
                 joined_at: UtcMillis::new(START).unwrap(),
                 name: None,
                 archived: false,
+                parent: None,
             },
         )
         .await

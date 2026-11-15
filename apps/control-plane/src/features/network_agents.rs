@@ -24,9 +24,9 @@ use std::{sync::Arc, time::Duration};
 use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentKnock, NetworkAgentLobby, NetworkAgentPlacement, NetworkAgentPolicy,
-        NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases, NetworkAgentUseCases,
-        NetworkAgentView,
+        NetworkAgentJoinedRoom, NetworkAgentKnock, NetworkAgentLobby, NetworkAgentPlacement,
+        NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
+        NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{Clock, NetworkAgentAckOutcome},
 };
@@ -302,7 +302,7 @@ struct MeResponse {
     agent_id: String,
     display_name: String,
     created_at_unix_ms: i64,
-    rooms: Vec<RoomResponse>,
+    rooms: Vec<JoinedRoomResponse>,
     /// 一天以内敲过、还没放进来的门；没有时不给。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     knocks: Vec<KnockResponse>,
@@ -534,13 +534,46 @@ impl From<NetworkAgentView> for MeResponse {
             agent_id: view.agent_id.to_string(),
             display_name: view.display_name,
             created_at_unix_ms: view.created_at.value(),
-            rooms: view.rooms.into_iter().map(RoomResponse::from).collect(),
+            rooms: view
+                .rooms
+                .into_iter()
+                .map(JoinedRoomResponse::from)
+                .collect(),
             knocks: view.knocks.into_iter().map(KnockResponse::from).collect(),
             incoming_knocks: view
                 .incoming_knocks
                 .into_iter()
                 .map(rooms::IncomingKnockResponse::from)
                 .collect(),
+        }
+    }
+}
+
+/// `/me` 里它在的一个房间：和别处一样的房间，子房间多一个 `parent`（2h-2b）。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JoinedRoomResponse {
+    #[serde(flatten)]
+    room: RoomResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<ParentRoomResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParentRoomResponse {
+    catalog_id: String,
+    name: String,
+}
+
+impl From<NetworkAgentJoinedRoom> for JoinedRoomResponse {
+    fn from(joined: NetworkAgentJoinedRoom) -> Self {
+        Self {
+            room: RoomResponse::from(joined.room),
+            parent: joined.parent.map(|parent| ParentRoomResponse {
+                catalog_id: parent.catalog_id.to_string(),
+                name: parent.name,
+            }),
         }
     }
 }

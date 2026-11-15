@@ -7,8 +7,8 @@ use agent_room_application::{
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission,
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
-        NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentKnock,
-        NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
+        NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentJoinedRoom,
+        NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
         NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
         NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
         NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
@@ -18,8 +18,8 @@ use agent_room_application::{
     },
     ports::{
         Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
-        NetworkAgentRoomNotice, NetworkAgentRoomRecord, PortFuture, PrivateRoomAgentKnockRecord,
-        PrivateRoomAgentMemberRecord, SecretValue,
+        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomRecord, PortFuture,
+        PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord, SecretValue,
     },
     private_rooms::AdmittedKnock,
 };
@@ -74,6 +74,8 @@ pub(super) struct FakeAgents {
     /// 查看自己时列出的敲门：自己敲的，和敲自己建的房间的。
     knocks: Mutex<Vec<NetworkAgentKnock>>,
     pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
+    /// 查看自己时大厅以外还在的房间（2h-2b）。
+    pub(super) also_in: Mutex<Vec<NetworkAgentJoinedRoom>>,
 }
 
 impl FakeAgents {
@@ -141,7 +143,13 @@ impl NetworkAgentUseCases for FakeAgents {
             agent_id: agent_id(),
             display_name: "Scout".to_owned(),
             created_at: time(1_700_000_000_000),
-            rooms: vec![lobby()],
+            rooms: [NetworkAgentJoinedRoom {
+                room: lobby(),
+                parent: None,
+            }]
+            .into_iter()
+            .chain(self.also_in.lock().unwrap().clone())
+            .collect(),
             knocks: self.knocks.lock().unwrap().clone(),
             incoming_knocks: self.incoming.lock().unwrap().clone(),
         });
@@ -1183,6 +1191,47 @@ async fn 查看自己时列出敲过的门_没有时不给() {
     assert_eq!(
         body_json(response).await["knocks"],
         json!([knock_json("waiting"), knock_json("expired")])
+    );
+}
+
+#[tokio::test]
+async fn 查看自己时_子房间在房间旁边带着上面那一间() {
+    let agents = Arc::new(FakeAgents::default());
+    let above = "019a0000-0000-7000-8000-000000000301";
+    let below = "019a0000-0000-7000-8000-000000000302";
+    agents.also_in.lock().unwrap().push(NetworkAgentJoinedRoom {
+        room: NetworkAgentRoom {
+            catalog_id: RoomCatalogId::from_uuid(uuid(below)),
+            matrix_room_id: MatrixRoomReference::new("!design:matrix.test".to_owned()).unwrap(),
+            name: "设计".to_owned(),
+            archived: false,
+        },
+        parent: Some(NetworkAgentRoomParent {
+            catalog_id: RoomCatalogId::from_uuid(uuid(above)),
+            name: "项目".to_owned(),
+        }),
+    });
+
+    let response = app(agents)
+        .oneshot(me_request(Method::GET, Some(TOKEN)))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        body_json(response).await["rooms"],
+        json!([
+            {
+                "catalogId": CATALOG_UUID,
+                "matrixRoomId": "!lobby:matrix.test",
+                "name": "Agent Room 大厅",
+            },
+            {
+                "catalogId": below,
+                "matrixRoomId": "!design:matrix.test",
+                "name": "设计",
+                "parent": { "catalogId": above, "name": "项目" },
+            },
+        ])
     );
 }
 
