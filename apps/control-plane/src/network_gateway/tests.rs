@@ -18,9 +18,10 @@ use agent_room_application::{
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentIncomingKnocks, NetworkAgentKnock, NetworkAgentKnockStatus, NetworkAgentLobby,
         NetworkAgentLobbyExit, NetworkAgentMatrixDevice, NetworkAgentOwnedRoom,
-        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
-        NetworkAgentRoomCodeView, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
-        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentOwnedSubRoom, NetworkAgentPendingExit, NetworkAgentPlacement,
+        NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomRequest,
+        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
@@ -131,6 +132,8 @@ struct FakeAgents {
     entered: Mutex<Vec<NetworkAgentTarget>>,
     /// 自己建房的结果，按顺序给出。
     owned: Mutex<VecDeque<NetworkAgentResult<NetworkAgentOwnedRoom>>>,
+    /// 建子房间的结果，按顺序给出。
+    owned_sub_rooms: Mutex<VecDeque<NetworkAgentResult<NetworkAgentOwnedSubRoom>>>,
     /// 网络 Agent 放行敲它房间的门：记成员的结果按顺序给出，记放进来了的失败。
     knock_admissions: Mutex<VecDeque<NetworkAgentResult<AdmittedKnock>>>,
     completion_failure: Mutex<Option<NetworkAgentFailure>>,
@@ -171,6 +174,7 @@ impl FakeAgents {
             admissions: Mutex::new(VecDeque::new()),
             entered: Mutex::new(Vec::new()),
             owned: Mutex::new(VecDeque::new()),
+            owned_sub_rooms: Mutex::new(VecDeque::new()),
             knock_admissions: Mutex::new(VecDeque::new()),
             completion_failure: Mutex::new(None),
             incoming: Mutex::new(Ok(NetworkAgentIncomingKnocks::default())),
@@ -467,6 +471,24 @@ impl NetworkAgentRoomUseCases for FakeAgents {
             .unwrap()
             .pop_front()
             .expect("测试给了建房结果");
+        Box::pin(async move { owned })
+    }
+
+    fn create_sub_room<'a>(
+        &'a self,
+        _token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("create_sub_room {}", request.name));
+        let owned = self
+            .owned_sub_rooms
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("测试给了建子房间的结果");
         Box::pin(async move { owned })
     }
 

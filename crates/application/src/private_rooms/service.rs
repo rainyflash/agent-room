@@ -56,6 +56,7 @@ mod sub_rooms;
 use public_creation::{ensure_public_creator, limit_reached};
 use role_changes::role_changes;
 pub use sub_room_accessible::{AccessibleSubRoom, AccountSubRoomListing};
+pub use sub_room_agent_creation::AgentSubRoomCreation;
 pub use sub_room_agent_owner::{AgentOwnerSeat, SubRoomAgentOwnerSeating};
 pub use sub_room_sync::{SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases};
 pub use sub_rooms::SubRoomUseCases;

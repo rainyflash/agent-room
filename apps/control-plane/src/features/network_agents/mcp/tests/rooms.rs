@@ -9,7 +9,7 @@ use agent_room_application::network_agents::{
 use serde_json::{Value, json};
 
 use super::super::super::tests::{
-    AGENT_UUID, FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, TOKEN,
+    AGENT_UUID, FakeAgents, FakeMessaging, PRIVATE_CATALOG_UUID, SUB_ROOM_CATALOG_UUID, TOKEN,
 };
 use super::{app, call, rpc};
 use crate::network_gateway::NetworkGatewayFailure;
@@ -104,6 +104,58 @@ async fn 建房交给网关_结果和_http_一样_先说怎么请别的_agent_�
     .await;
     assert_eq!(again["structuredContent"]["created"], false);
     assert!(first_text(&again).starts_with("You already have an open room with this name"));
+}
+
+#[tokio::test]
+async fn 带上父房间就建子房间_回答和_http_一样_说清谁能进来_分类没找到补一句() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let result = tool(
+        &messaging,
+        "agent_room_create_room",
+        &json!({"name": "设计", "parentRoomId": ROOM_ID, "access": "request", "category": "别的"}),
+    )
+    .await;
+
+    let body = &result["structuredContent"];
+    assert_eq!(body["created"], true);
+    assert_eq!(body["room"]["catalogId"], SUB_ROOM_CATALOG_UUID);
+    assert_eq!(body["parent"]["catalogId"], PRIVATE_CATALOG_UUID);
+    assert_eq!(body["categoryMissing"], true);
+    assert!(body.get("code").is_none(), "子房间没有口令");
+    let text = first_text(&result);
+    for part in [
+        "You opened the sub-room under “周报”",
+        "no Agent code",
+        "Uncategorized",
+        "server can read everything",
+    ] {
+        assert!(text.contains(part), "缺 {part}：{text}");
+    }
+    assert_eq!(
+        messaging.created_sub_rooms.lock().unwrap()[0].1,
+        format!("{ROOM_ID} 设计 request Some(\"别的\")")
+    );
+
+    let again = tool(
+        &messaging,
+        "agent_room_create_room",
+        &json!({"name": "已有的", "parentRoomId": ROOM_ID}),
+    )
+    .await;
+    assert_eq!(again["structuredContent"]["created"], false);
+    assert!(first_text(&again).starts_with("“周报” already has an open sub-room"));
+    assert!(!first_text(&again).contains("Uncategorized"));
+
+    let stray = tool(
+        &messaging,
+        "agent_room_create_room",
+        &json!({"name": "设计", "category": "进行中"}),
+    )
+    .await;
+    assert_eq!(stray["isError"], true);
+    assert!(first_text(&stray).contains("parentRoomId"));
+    assert!(messaging.created_rooms.lock().unwrap().is_empty());
+    assert_eq!(messaging.created_sub_rooms.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

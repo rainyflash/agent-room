@@ -1,11 +1,12 @@
-//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）里要替 Agent 进房间的两样：
-//! 建房和放行敲门。建好以后和凭口令进私人房间一样：先让加密客户端就绪、建好加密身份，再进去，进了
+//! 网络 Agent 自己建房间、管房间（`specs/agent-rooms/design.md` 第 4 步）里要替 Agent 进房间的几样：
+//! 建房、建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）和放行敲门。建好以后和凭口令进私人房间一样：先让加密客户端就绪、建好加密身份，再进去，进了
 //! 说一声在线；放行时替敲门的 Agent 进去，和管理者在网页上放行一样。只动账的几样（关房、口令、看
 //! 敲门、不让进）由接口直接交给 `NetworkAgentRoomUseCases`。
 
 use agent_room_application::{
     network_agents::{
-        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentOwnedRoom, NetworkAgentRoom,
+        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentOwnedRoom,
+        NetworkAgentOwnedSubRoom, NetworkAgentRoom, NetworkAgentSubRoomRequest,
     },
     ports::{PortFuture, PrivateRoomAgentMemberRecord},
 };
@@ -21,6 +22,14 @@ pub(crate) trait NetworkAgentRooms: Send + Sync {
         token: &'a str,
         name: &'a str,
     ) -> PortFuture<'a, Result<NetworkAgentOwnedRoom, NetworkGatewayFailure>>;
+
+    /// 在它建的房间下面建子房间并进去；这间房下面已经有没归档的同名子房间，就回到那间（还没进去
+    /// 的这次进去）。
+    fn create_sub_room<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, Result<NetworkAgentOwnedSubRoom, NetworkGatewayFailure>>;
 
     /// 放行在敲它房间的 Agent：先记为成员，再替那个 Agent 进房间，进去了才把敲门记为放进来了。
     /// 回答放进来的 Agent。
@@ -45,6 +54,25 @@ impl NetworkGateway {
             .map_err(NetworkGatewayFailure::Agent)?;
         // 上次建好了却没进去（比如那时 Matrix 暂时不通），这次接着进；进过的不再切一次加密客户端，
         // 免得白白打断它正在等的消息。
+        if !owned.joined {
+            owned.room = self.enter_private(token, owned.room).await?;
+            owned.joined = true;
+            self.announce_online(token).await;
+        }
+        Ok(owned)
+    }
+
+    async fn create_sub_room_internal(
+        &self,
+        token: &str,
+        request: NetworkAgentSubRoomRequest<'_>,
+    ) -> Result<NetworkAgentOwnedSubRoom, NetworkGatewayFailure> {
+        let mut owned = self
+            .owned_rooms
+            .create_sub_room(token, request)
+            .await
+            .map_err(NetworkGatewayFailure::Agent)?;
+        // 和建房一样：上次建好了没进去的这次接着进，进过的不再切加密客户端。
         if !owned.joined {
             owned.room = self.enter_private(token, owned.room).await?;
             owned.joined = true;
@@ -103,6 +131,14 @@ impl NetworkAgentRooms for NetworkGateway {
         name: &'a str,
     ) -> PortFuture<'a, Result<NetworkAgentOwnedRoom, NetworkGatewayFailure>> {
         Box::pin(self.create_room_internal(token, name))
+    }
+
+    fn create_sub_room<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, Result<NetworkAgentOwnedSubRoom, NetworkGatewayFailure>> {
+        Box::pin(self.create_sub_room_internal(token, request))
     }
 
     fn admit_knock<'a>(

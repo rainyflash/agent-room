@@ -1843,6 +1843,56 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
         | NetworkAgentFailureKind::KnockNotFound
         | NetworkAgentFailureKind::AccountNotFound
         | NetworkAgentFailureKind::AgentNotInRoom => owned_room_mapping(kind),
+        NetworkAgentFailureKind::SubRoomNested
+        | NetworkAgentFailureKind::SubRoomAdminsOnly
+        | NetworkAgentFailureKind::SubRoomAgentsMayNotCreate
+        | NetworkAgentFailureKind::SubRoomNameTaken
+        | NetworkAgentFailureKind::SubRoomLimitReached
+        | NetworkAgentFailureKind::SubRoomCategoryInvalid => sub_room_mapping(kind),
+    }
+}
+
+/// 网络 Agent 建子房间被拒（`specs/redesign/sub-rooms.md` 第 2h 步）。
+fn sub_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
+    match kind {
+        NetworkAgentFailureKind::SubRoomNested => (
+            StatusCode::BAD_REQUEST,
+            "network_agent.sub_room_nested",
+            ErrorCategory::Validation,
+            "That room is already a sub-room, and sub-rooms can't have their own. Give the room above it as parentRoomId.",
+        ),
+        NetworkAgentFailureKind::SubRoomAdminsOnly => (
+            StatusCode::FORBIDDEN,
+            "network_agent.sub_room_admins_only",
+            ErrorCategory::Authorization,
+            "Only the room's admins can open sub-rooms here. Talk in the room itself instead.",
+        ),
+        NetworkAgentFailureKind::SubRoomAgentsMayNotCreate => (
+            StatusCode::FORBIDDEN,
+            "network_agent.sub_room_agents_may_not_create",
+            ErrorCategory::Authorization,
+            "Agents can't open sub-rooms in this room. Talk in the room itself instead.",
+        ),
+        NetworkAgentFailureKind::SubRoomNameTaken => (
+            StatusCode::CONFLICT,
+            "network_agent.sub_room_name_taken",
+            ErrorCategory::Conflict,
+            "This room already has an open sub-room with that name. Pick another name, or list the room's sub-rooms (agent_room_list_rooms with parent) and use that one.",
+        ),
+        NetworkAgentFailureKind::SubRoomLimitReached => (
+            StatusCode::CONFLICT,
+            "network_agent.sub_room_limit_reached",
+            ErrorCategory::Conflict,
+            "This room has as many open sub-rooms as it can hold. Archive one that's done, or use one that is already open.",
+        ),
+        NetworkAgentFailureKind::SubRoomCategoryInvalid => (
+            StatusCode::BAD_REQUEST,
+            "network_agent.sub_room_category_invalid",
+            ErrorCategory::Validation,
+            "The category name must be 1 to 64 characters on one line, with no spaces at either end. Leave it out to put the sub-room under Uncategorized.",
+        ),
+        // 别的由 `network_agent_mapping` 回答，到不了这里。
+        _ => NETWORK_AGENT_INTERNAL,
     }
 }
 
@@ -1853,7 +1903,7 @@ fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::BAD_REQUEST,
             "network_agent.room_name_invalid",
             ErrorCategory::Validation,
-            "The room name must be 1 to 128 characters with no control characters.",
+            "The room name must be 1 to 128 characters with no control characters. A sub-room's name can't contain a slash (/).",
         ),
         NetworkAgentFailureKind::RoomLimitReached => (
             StatusCode::CONFLICT,

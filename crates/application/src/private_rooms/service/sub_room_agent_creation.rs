@@ -13,6 +13,26 @@ use super::{
     },
     PrivateRoomService,
 };
+use crate::ports::PortFuture;
+
+/// Agent 建子房间这一样（第 2g-1、2h 步）。网络 Agent 的用例只拿这个，不拿整个
+/// [`super::SubRoomUseCases`]。
+pub trait AgentSubRoomCreation: Send + Sync {
+    /// 和 [`super::SubRoomUseCases::create_agent_sub_room`] 一样。
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>>;
+}
+
+impl AgentSubRoomCreation for PrivateRoomService {
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>> {
+        Box::pin(self.create_agent_sub_room_internal(request))
+    }
+}
 
 impl PrivateRoomService {
     pub(super) async fn create_agent_sub_room_internal(

@@ -9,10 +9,11 @@ use agent_room_application::{
         NetworkAgentEncryptionSecrets, NetworkAgentFailure, NetworkAgentFailureKind,
         NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentKnock,
         NetworkAgentKnockStatus, NetworkAgentLobby, NetworkAgentLobbyExit,
-        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentPendingExit,
-        NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom, NetworkAgentRoomCode,
-        NetworkAgentRoomCodeView, NetworkAgentRoomRequest, NetworkAgentRoomUseCases,
-        NetworkAgentSession, NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
+        NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
+        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
+        NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomRequest,
+        NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{
         Clock, MatrixUserId, NetworkAgentAckOutcome, NetworkAgentActivity as _,
@@ -58,6 +59,8 @@ pub(super) const TOKEN: &str = "network-agent-token";
 const SUBMISSION_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e53";
 /// 拿这个房间号进房间就是敲门：替身用例和替身网关都这样回答。
 pub(super) const PRIVATE_CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e54";
+/// 建子房间时回答的那间子房间。
+pub(super) const SUB_ROOM_CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e5a";
 const KNOCKED_AT: i64 = 1_758_600_000_000;
 const HOUR: i64 = 60 * 60 * 1_000;
 
@@ -309,6 +312,8 @@ pub(super) struct FakeMessaging {
     pub(super) declined: Mutex<bool>,
     /// 自己建房的请求：令牌和名字。
     pub(super) created_rooms: Mutex<Vec<(String, String)>>,
+    /// 建子房间的请求：令牌，和父房间、名字、门、分类。
+    pub(super) created_sub_rooms: Mutex<Vec<(String, String)>>,
     /// 管自己建的房间的请求：令牌，和做了什么、对哪间（回答敲门时还有是谁）。
     pub(super) room_calls: Mutex<Vec<(String, String)>>,
     /// 看口令时房间现在的口令；不设就是看得到的那个。
@@ -574,6 +579,40 @@ impl NetworkAgentRooms for FakeMessaging {
         Box::pin(async move { failure.map_or(Ok(owned), Err) })
     }
 
+    /// 名字是“已有的”时回到同名的子房间；分类是“进行中”才找得到，别的放进未分类。
+    fn create_sub_room<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, Result<NetworkAgentOwnedSubRoom, NetworkGatewayFailure>> {
+        self.created_sub_rooms.lock().unwrap().push((
+            token.to_owned(),
+            format!(
+                "{} {} {} {:?}",
+                request.parent,
+                request.name,
+                request.access.as_str(),
+                request.category
+            ),
+        ));
+        let found = request.category == Some("进行中");
+        let owned = NetworkAgentOwnedSubRoom {
+            room: NetworkAgentRoom {
+                catalog_id: RoomCatalogId::from_uuid(uuid(SUB_ROOM_CATALOG_UUID)),
+                matrix_room_id: MatrixRoomReference::new("!sub:matrix.test".to_owned()).unwrap(),
+                name: request.name.to_owned(),
+                archived: false,
+            },
+            parent: owned_room("周报"),
+            category: found.then(|| "进行中".to_owned()),
+            category_missing: request.category.is_some() && !found,
+            created: request.name != "已有的",
+            joined: true,
+        };
+        let failure = self.failure.lock().unwrap().clone();
+        Box::pin(async move { failure.map_or(Ok(owned), Err) })
+    }
+
     /// 放行在敲门的 Agent：回答它叫 Scout。
     fn admit_knock<'a>(
         &'a self,
@@ -606,6 +645,14 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         _name: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>> {
         unreachable!("建房走网关")
+    }
+
+    fn create_sub_room<'a>(
+        &'a self,
+        _token: &'a str,
+        _request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>> {
+        unreachable!("建子房间走网关")
     }
 
     fn close_room<'a>(
@@ -2030,4 +2077,5 @@ fn 错误说明都是英文() {
 pub(super) mod notices;
 pub(super) mod public_rooms;
 mod rooms;
+mod sub_rooms;
 mod viewing;

@@ -18,6 +18,9 @@ use agent_room_domain::{
     ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::parse_room_number,
     private_rooms::PrivateRoomPermissions,
+    room_listing::RoomJoinMode,
+    sub_room_categories::validate_sub_room_category_name,
+    sub_rooms::sub_room_name_key,
 };
 
 use super::{
@@ -28,9 +31,9 @@ use crate::{
     ports::{NetworkAgentRecord, PortFuture, PrivateRoomAgentKnockRecord, PrivateRoomSnapshot},
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock, ArchivePrivateRoom,
-        CreatePrivateRoom, InspectAgentAccess, InvitePrivateRoomMember, ListPrivateRoomsForAccount,
-        ManageJoinCode, PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind,
-        PrivateRoomFailureStage, RemoveAgentMember,
+        CreateAgentSubRoom, CreatePrivateRoom, InspectAgentAccess, InvitePrivateRoomMember,
+        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, RemoveAgentMember, SubRoomRefusal,
     },
 };
 
@@ -46,6 +49,15 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
         token: &'a str,
         name: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>>;
+
+    /// 在它建的、还没关的房间下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）：它是这一间
+    /// 的管理员，子房间没有口令。这间房下面已经有没归档的同名子房间（不分大小写）就回到那间。
+    /// 还没进去：由网关让它的加密客户端就绪后再进。
+    fn create_sub_room<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>>;
 
     /// 关掉（归档）自己当房主的房间：谁都不能再说话，之前的消息照样看得到。已经关了的也算成功。
     /// `room` 是房间号（私人房间网址的最后一段，也收整段网址），或它进过的房间的 Matrix 房间 ID。
@@ -142,6 +154,32 @@ pub struct NetworkAgentOwnedRoom {
     /// 它已经在房间里；为 false 时由网关让它进去。
     pub joined: bool,
     pub code: NetworkAgentRoomCode,
+}
+
+/// 网络 Agent 要建的子房间。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkAgentSubRoomRequest<'a> {
+    /// 父房间：房间号（也收整段网址），或它进过的房间的 Matrix 房间 ID。
+    pub parent: &'a str,
+    pub name: &'a str,
+    pub access: RoomJoinMode,
+    /// 分类的名字，不分大小写、不看两头的空白；这间房里没有就放进“未分类”。
+    pub category: Option<&'a str>,
+}
+
+/// 网络 Agent 建好的子房间，或回到的同名子房间。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentOwnedSubRoom {
+    pub room: NetworkAgentRoom,
+    pub parent: NetworkAgentRoom,
+    /// 放进的分类；“未分类”和回到已有的那间时为 `None`。
+    pub category: Option<String>,
+    /// 要了分类，这间房里却没有叫这个名字的：放进了“未分类”。
+    pub category_missing: bool,
+    /// 新建的；为 false 时回到了这间房下面没归档的同名子房间。
+    pub created: bool,
+    /// 它已经在里面；为 false 时由网关让它进去。
+    pub joined: bool,
 }
 
 /// 房间现在的口令。
@@ -249,6 +287,87 @@ impl NetworkAgentService {
             created: true,
             joined: false,
             code,
+        })
+    }
+
+    async fn create_sub_room_internal(
+        &self,
+        token: &str,
+        request: NetworkAgentSubRoomRequest<'_>,
+    ) -> NetworkAgentResult<NetworkAgentOwnedSubRoom> {
+        let record = self.authenticated(token).await?;
+        let agent_id = record.agent_id.ok_or_else(internal)?;
+        let now = self.clock.now();
+        self.store
+            .record_activity(record.id, now)
+            .await
+            .map_err(repository)?;
+        let name = room_name(request.name)?;
+        if request
+            .category
+            .is_some_and(|category| validate_sub_room_category_name(category).is_err())
+        {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::SubRoomCategoryInvalid,
+            ));
+        }
+        let parent_id = self.room_of(record.id, request.parent).await?;
+        let rooms = self.account_rooms(record.principal_id).await?;
+        // 只在它自己当房主、还没关的整间房下面建；凭口令或敲门进的房间下面还不行。它房间下面的子房间
+        // 房主也记成它：拿子房间当父房间的照实说不能再开一层。
+        let parent = rooms
+            .iter()
+            .find(|snapshot| {
+                snapshot.catalog().id() == parent_id
+                    && snapshot.room().owner_principal_id() == record.principal_id
+            })
+            .ok_or_else(not_owned)?;
+        if parent.parent_catalog_id().is_some() {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::SubRoomNested,
+            ));
+        }
+        if !is_open_whole_room(parent, record.principal_id) {
+            return Err(not_owned());
+        }
+        let parent_room = owned_room(parent);
+        let wanted = sub_room_name_key(&name);
+        if let Some(existing) = rooms.iter().find(|snapshot| {
+            snapshot.parent_catalog_id() == Some(parent_id)
+                && !owned_room(snapshot).archived
+                && sub_room_name_key(snapshot.catalog().name()) == wanted
+        }) {
+            let room = owned_room(existing);
+            let joined = self.has_joined(record.id, room.catalog_id).await?;
+            return Ok(NetworkAgentOwnedSubRoom {
+                room,
+                parent: parent_room,
+                category: None,
+                category_missing: false,
+                created: false,
+                joined,
+            });
+        }
+        let created = self
+            .sub_rooms
+            .create_agent_sub_room(CreateAgentSubRoom {
+                actor: PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?),
+                parent_catalog_id: parent_id,
+                catalog_id: self.identifiers.room_catalog_id(),
+                name,
+                access: request.access,
+                category: request.category.map(str::to_owned),
+                created_by_agent: agent_id,
+            })
+            .await
+            .map_err(sub_room_failure)?;
+        Ok(NetworkAgentOwnedSubRoom {
+            room: owned_room(&created.room),
+            parent: parent_room,
+            category: created.category,
+            category_missing: created.category_missing,
+            created: true,
+            joined: false,
         })
     }
 
@@ -469,19 +588,29 @@ impl NetworkAgentService {
         })
     }
 
+    /// 它没关的整间房。它房间下面的子房间房主也记成它，不算在这里：子房间不占建房的名额，同名
+    /// 的整间房也不会回到子房间。
     async fn open_rooms(
         &self,
         principal_id: PrincipalId,
     ) -> NetworkAgentResult<Vec<PrivateRoomSnapshot>> {
-        let rooms = self
-            .rooms
+        Ok(self
+            .account_rooms(principal_id)
+            .await?
+            .into_iter()
+            .filter(|snapshot| is_open_whole_room(snapshot, principal_id))
+            .collect())
+    }
+
+    /// 它的合成主体在里面的房间，子房间也在内。
+    async fn account_rooms(
+        &self,
+        principal_id: PrincipalId,
+    ) -> NetworkAgentResult<Vec<PrivateRoomSnapshot>> {
+        self.rooms
             .list_for_account(ListPrivateRoomsForAccount { principal_id })
             .await
-            .map_err(room_failure)?;
-        Ok(rooms
-            .into_iter()
-            .filter(|snapshot| snapshot.room().owner_principal_id() == principal_id)
-            .collect())
+            .map_err(room_failure)
     }
 
     /// 建房前查上限：自己没关的房间满了、全站网络 Agent 建的没关的房间满了都不建；都没满再记一次
@@ -586,6 +715,14 @@ impl NetworkAgentRoomUseCases for NetworkAgentService {
         name: &'a str,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedRoom>> {
         Box::pin(self.create_room_internal(token, name))
+    }
+
+    fn create_sub_room<'a>(
+        &'a self,
+        token: &'a str,
+        request: NetworkAgentSubRoomRequest<'a>,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>> {
+        Box::pin(self.create_sub_room_internal(token, request))
     }
 
     fn close_room<'a>(
@@ -709,6 +846,40 @@ fn room_name(name: &str) -> NetworkAgentResult<String> {
         ));
     }
     Ok(name.to_owned())
+}
+
+/// 它当房主、还没关的整间房（不是子房间）。
+fn is_open_whole_room(snapshot: &PrivateRoomSnapshot, principal_id: PrincipalId) -> bool {
+    snapshot.room().owner_principal_id() == principal_id
+        && snapshot.parent_catalog_id().is_none()
+        && !owned_room(snapshot).archived
+}
+
+/// 建子房间被拒：照子房间的规矩说清楚；不在、归档了、它不是里面的人一律说不是它的房间。
+fn sub_room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
+    let kind = match failure.kind() {
+        PrivateRoomFailureKind::InvalidRequest => NetworkAgentFailureKind::RoomNameInvalid,
+        PrivateRoomFailureKind::SubRoom(refusal) => match refusal {
+            SubRoomRefusal::Nested => NetworkAgentFailureKind::SubRoomNested,
+            SubRoomRefusal::AdminsOnly => NetworkAgentFailureKind::SubRoomAdminsOnly,
+            SubRoomRefusal::AgentsMayNotCreate => {
+                NetworkAgentFailureKind::SubRoomAgentsMayNotCreate
+            }
+            SubRoomRefusal::NameTaken => NetworkAgentFailureKind::SubRoomNameTaken,
+            SubRoomRefusal::LimitReached => NetworkAgentFailureKind::SubRoomLimitReached,
+            SubRoomRefusal::RateLimited => {
+                return failure
+                    .retry_at()
+                    .map_or_else(dependency, NetworkAgentFailure::rate_limited);
+            }
+            SubRoomRefusal::Archived | SubRoomRefusal::NotInParent | SubRoomRefusal::Banned => {
+                NetworkAgentFailureKind::RoomNotOwned
+            }
+            _ => NetworkAgentFailureKind::Internal,
+        },
+        _ => return room_failure(failure),
+    };
+    NetworkAgentFailure::new(kind)
 }
 
 fn owned_room(snapshot: &PrivateRoomSnapshot) -> NetworkAgentRoom {
