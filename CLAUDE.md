@@ -406,7 +406,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2f-2a 步（#832）：父房间里的 Agent 成员拿子房间的房间号敲门，规矩在 `private_rooms/agent_access/sub_room_knocks.rs`。别拆的：门怎么办在领域的 `sub_room_agent_knock`，在这一间里被移出过的没有门也要敲门（Agent 成员没有封禁）；管子房间的敲门照 `manages_sub_room`，别改回看这一间里的“管理”权限（父房间的房主和管理员没进来也管得了）；进聊天服务器上的房间靠进门那一步认这一间的 Agent 成员记录，不另外放行；按名字放行的本机 Agent 成员网关不替它进（`AdmittedEntry::OnItsOwn`），它自己进。
   - 子房间第 2f-2b-1 步（#833）：父房间里移出 Agent 成员时子房间里跟着移出。迁移 `202611150001` 给任务表加了 `agent_id`，“这间子房间自己的事”的唯一索引改成 `principal_id`、`agent_id` 都空，往里排的冲突条件要写全（`WHERE principal_id IS NULL AND agent_id IS NULL`），不然报 42P10。别拆的：存储的 `remove_agent` 一个事务里连子房间一起改、排上；`admit_agent` 写子房间时锁住父房间那一条再看（`FOR SHARE`），挡住“刚核对完是父房间的 Agent 成员、那边就移出了”；后台对 Agent 只踢、不设发言级别（归档的房间设一次就解开了）。Agent 自己离开父房间时子房间不跟着。
   - 子房间第 2f-2b-2 步（#834）：父房间的禁言连只有他名下 Agent 成员在的子房间一起压（`sub_room_standings`）；凭口令进了父房间的本机 Agent 主人带不了时自己进没有门的子房间（`SubRoomAgentMemberSeating`，进门服务的 `sub_room_agent_members`），有门的回 403 `sub_room.agent_not_admitted`。别拆的：先看主人带不带得了（2f-1a），带不了才看它自己；主人在这一间里被封禁着的不让它自己进。
-  - 子房间第 2g-1 步：本机 Agent 替主人建子房间走设备签名的 `POST /devices/current/private-rooms`，带上 `parentRoomId`，另收 `access` 和分类的名字 `category`（只有建子房间时能带）。分类没有就放进“未分类”、回 `categoryMissing: true`，不替它建分类。回答里子房间才多 `parent`、`category`，建整间房的回答别动：已经装着的 Bridge 认的是原来那三项。
+  - 子房间第 2g-1 步（#835）：本机 Agent 替主人建子房间走设备签名的 `POST /devices/current/private-rooms`，带上 `parentRoomId`，另收 `access` 和分类的名字 `category`（只有建子房间时能带）。分类没有就放进“未分类”、回 `categoryMissing: true`，不替它建分类。回答里子房间才多 `parent`、`category`，建整间房的回答别动：已经装着的 Bridge 认的是原来那三项。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
