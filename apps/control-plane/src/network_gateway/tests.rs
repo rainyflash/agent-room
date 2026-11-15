@@ -157,6 +157,7 @@ impl FakeAgents {
                     joined_at: UtcMillis::new(1).unwrap(),
                     name: None,
                     archived: false,
+                    parent: None,
                 })
                 .collect(),
             quota: Mutex::new(None),
@@ -4526,6 +4527,7 @@ fn idle_exit(room: &str, token: Option<&str>) -> NetworkAgentLobbyExit {
             joined_at: UtcMillis::new(1).unwrap(),
             name: None,
             archived: false,
+            parent: None,
         },
         matrix_access_token: token.map(|token| SecretValue::new(token).unwrap()),
     }

@@ -21,7 +21,8 @@ use agent_room_application::{
         NetworkAgentGapReason, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMessageRetention,
-        NetworkAgentRoomNotice, NetworkAgentRoomRecord, NetworkAgentTimelineGap, PortFuture,
+        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomRecord,
+        NetworkAgentTimelineGap, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -37,6 +38,17 @@ use crate::{
     error::{map_domain_error, map_sqlx_error},
     network_agent_notices,
 };
+
+/// 网络 Agent 所在的一个房间：房间号、Matrix 房间、进来的时间、名字、归档了没有，子房间再带父房间。
+type RoomRow = (
+    uuid::Uuid,
+    String,
+    i64,
+    Option<String>,
+    bool,
+    Option<uuid::Uuid>,
+    Option<String>,
+);
 
 impl PostgresRepositories {
     pub(crate) async fn record_network_agent_room(
@@ -71,14 +83,20 @@ impl PostgresRepositories {
         id: NetworkAgentId,
     ) -> RepositoryResult<Vec<NetworkAgentRoomRecord>> {
         let operation = "network_agent.rooms";
-        let rows = sqlx::query_as::<_, (uuid::Uuid, String, i64, Option<String>, bool)>(
+        let rows = sqlx::query_as::<_, RoomRow>(
             r"SELECT room.catalog_entry_id, room.matrix_room_id,
                      floor(extract(epoch FROM room.joined_at) * 1000)::bigint,
                      catalog.name,
-                     coalesce(catalog.status = 'archived', false)
+                     coalesce(catalog.status = 'archived', false),
+                     link.parent_catalog_entry_id,
+                     parent.name
                 FROM agent_room.network_agent_room room
                 LEFT JOIN agent_room.room_catalog_entry catalog
                   ON catalog.id = room.catalog_entry_id
+                LEFT JOIN agent_room.private_room_parent link
+                  ON link.catalog_entry_id = room.catalog_entry_id
+                LEFT JOIN agent_room.room_catalog_entry parent
+                  ON parent.id = link.parent_catalog_entry_id
                WHERE room.network_agent_id = $1
                ORDER BY room.joined_at, room.matrix_room_id",
         )
@@ -87,17 +105,25 @@ impl PostgresRepositories {
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
         rows.into_iter()
-            .map(|(catalog_id, matrix_room_id, joined_at, name, archived)| {
-                Ok(NetworkAgentRoomRecord {
-                    catalog_id: RoomCatalogId::from_uuid(catalog_id),
-                    matrix_room_id: MatrixRoomReference::new(matrix_room_id)
-                        .map_err(|error| map_domain_error(operation, &error))?,
-                    joined_at: UtcMillis::new(joined_at)
-                        .map_err(|error| map_domain_error(operation, &error))?,
-                    name,
-                    archived,
-                })
-            })
+            .map(
+                |(catalog_id, matrix_room_id, joined_at, name, archived, parent, parent_name)| {
+                    Ok(NetworkAgentRoomRecord {
+                        catalog_id: RoomCatalogId::from_uuid(catalog_id),
+                        matrix_room_id: MatrixRoomReference::new(matrix_room_id)
+                            .map_err(|error| map_domain_error(operation, &error))?,
+                        joined_at: UtcMillis::new(joined_at)
+                            .map_err(|error| map_domain_error(operation, &error))?,
+                        name,
+                        archived,
+                        parent: parent.zip(parent_name).map(|(catalog_id, name)| {
+                            NetworkAgentRoomParent {
+                                catalog_id: RoomCatalogId::from_uuid(catalog_id),
+                                name,
+                            }
+                        }),
+                    })
+                },
+            )
             .collect()
     }
 }

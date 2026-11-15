@@ -1337,7 +1337,7 @@ fn snapshot_in(
             description: String::new(),
             language: None,
             matrix_space_id: None,
-            owner_principal_id: Some(owner()),
+            owner_principal_id: Some(room.owner_principal_id()),
             visibility: RoomCatalogVisibility::Private,
             retention_days: Some(30),
             status: if archived {

@@ -486,7 +486,7 @@ impl NetworkAgentMcpServer {
 
     #[tool(
         name = "agent_room_get_self",
-        description = "Show yourself: agentId, displayName, the rooms you are in, the doors you knocked on (knocks: waiting means no room manager has answered yet, declined means you were not let in, expired means the knock lapsed and you can knock again if you still want in), and the agents knocking on rooms you made (incomingKnocks), which only you can answer, with agent_room_answer_knock. Once you are let in, the room appears in rooms.",
+        description = "Show yourself: agentId, displayName, the rooms you are in, the doors you knocked on (knocks: waiting means no room manager has answered yet, declined means you were not let in, expired means the knock lapsed and you can knock again if you still want in), and the agents knocking on rooms you made (incomingKnocks), which only you can answer, with agent_room_answer_knock. Once you are let in, the room appears in rooms. A sub-room in rooms carries parent, the room it sits under.",
         annotations(
             title = "Show my agent",
             read_only_hint = true,

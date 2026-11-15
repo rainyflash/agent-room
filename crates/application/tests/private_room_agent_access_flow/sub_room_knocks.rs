@@ -442,3 +442,19 @@ async fn 本机_agent_自己进归档了的子房间_进不来() {
     assert_eq!(fixture.seat().await, AgentMemberSeat::Refused);
     assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
 }
+
+#[tokio::test]
+async fn 带它敲门的主体就是这一间里的人时_直接进_不记_agent_成员也不留敲门() {
+    // 网络 Agent 建的房间：它的合成主体是父房间和下面每一间的房主（2h-2b）。
+    let fixture = family_of(
+        PrivateRoom::create(parent_id(), outsider()),
+        PrivateRoom::create(catalog_id(), outsider()),
+        RoomJoinMode::Request,
+        true,
+    );
+
+    assert_eq!(admitted(fixture.knock().await), catalog_id());
+    assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
+    assert_eq!(fixture.store.knock_status(agent_id()), None);
+    assert!(fixture.matrix.events().is_empty());
+}

@@ -65,6 +65,7 @@ use crate::{
     rooms::EnterLobbyOutcome,
 };
 
+pub use crate::ports::NetworkAgentRoomParent;
 pub use rooms::{
     NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentOwnedRoom,
     NetworkAgentOwnedSubRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
@@ -261,11 +262,18 @@ pub struct NetworkAgentView {
     pub display_name: String,
     pub created_at: UtcMillis,
     /// 所在的房间，先进的在前。
-    pub rooms: Vec<NetworkAgentRoom>,
+    pub rooms: Vec<NetworkAgentJoinedRoom>,
     /// 一天以内敲过、还没放进来的门：在等的、没让进的、作废的。
     pub knocks: Vec<NetworkAgentKnock>,
     /// 敲它建的房间的门、在等它回答的，先敲的在前。
     pub incoming_knocks: Vec<NetworkAgentIncomingKnock>,
+}
+
+/// 网络 Agent 所在的一个房间；子房间带着它上面那一间（2h-2b）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentJoinedRoom {
+    pub room: NetworkAgentRoom,
+    pub parent: Option<NetworkAgentRoomParent>,
 }
 
 /// 网关代网络 Agent 收发时用的身份、Matrix 会话与签名种子。只在进程内传递，调试输出里不出现秘密。
@@ -1089,6 +1097,7 @@ impl NetworkAgentService {
                     joined_at: self.clock.now(),
                     name: None,
                     archived: false,
+                    parent: None,
                 },
             )
             .await
@@ -1249,7 +1258,11 @@ impl NetworkAgentService {
         self.return_to_lobbies(&record).await?;
         let mut rooms = Vec::new();
         for room in self.store.rooms(record.id).await.map_err(repository)? {
-            rooms.push(self.named(room).await?);
+            let parent = room.parent.clone();
+            rooms.push(NetworkAgentJoinedRoom {
+                room: self.named(room).await?,
+                parent,
+            });
         }
         let now = self.clock.now();
         let knocks = self
@@ -1258,7 +1271,11 @@ impl NetworkAgentService {
             .await
             .map_err(|_| dependency())?
             .iter()
-            .filter(|knock| !rooms.iter().any(|room| room.catalog_id == knock.catalog_id))
+            .filter(|knock| {
+                !rooms
+                    .iter()
+                    .any(|joined| joined.room.catalog_id == knock.catalog_id)
+            })
             .filter_map(|knock| knock_view(knock, now))
             .collect();
         let incoming_knocks = self.incoming_knocks_of(&record).await?.knocks;

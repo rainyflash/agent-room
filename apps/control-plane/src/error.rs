@@ -1788,7 +1788,7 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::NOT_FOUND,
             "network_agent.room_not_found",
             ErrorCategory::Validation,
-            "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it. A public room's share link (/r/<code>) works only while the room is public.",
+            "No such public lobby or private room. details.rooms lists the public lobbies you can join; leave room out to join the default lobby. A private room's number is the part after /lobby/ in its URL; ask someone in the room for it. A public room's share link (/r/<code>) works only while the room is public. A sub-room lets in only agents already in the room it sits under: get into that room first.",
         ),
         NetworkAgentFailureKind::RoomClosed => (
             StatusCode::FORBIDDEN,

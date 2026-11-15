@@ -15,9 +15,9 @@ use agent_room_application::{
     },
     network_agents::{
         CreateNetworkAgent, CreatedNetworkAgent, NetworkAgentAdmission, NetworkAgentDependencies,
-        NetworkAgentFailureKind, NetworkAgentKnockStatus, NetworkAgentPendingExit,
-        NetworkAgentPlacement, NetworkAgentPolicy, NetworkAgentRoom, NetworkAgentRoomRequest,
-        NetworkAgentService, NetworkAgentTarget, NetworkAgentUseCases,
+        NetworkAgentFailureKind, NetworkAgentJoinedRoom, NetworkAgentKnockStatus,
+        NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentPolicy, NetworkAgentRoom,
+        NetworkAgentRoomRequest, NetworkAgentService, NetworkAgentTarget, NetworkAgentUseCases,
     },
     persistence::RepositoryResult,
     ports::{
@@ -2279,7 +2279,13 @@ async fn 起名进默认大厅_令牌只返回一次_库里只有摘要和封存
     assert_eq!(me.display_name, created.display_name);
     assert_eq!(me.agent_id, created.agent_id);
     // 进过的大厅记在它名下，查看自己时带着房间名。
-    assert_eq!(me.rooms, std::slice::from_ref(room_of(&created)));
+    assert_eq!(
+        me.rooms,
+        [NetworkAgentJoinedRoom {
+            room: room_of(&created).clone(),
+            parent: None,
+        }]
+    );
 
     // 网关收发时取出的会话：Matrix 令牌是解封后的原文。
     let session = harness.service.session("token-1").await.expect("会话");
@@ -3511,7 +3517,7 @@ async fn 凭口令创建_先按来源核对口令_建好人物后以它的网络
     assert_eq!(requests[0].actor.device_id, record.device_id);
     let view = harness.service.me(created.token.expose()).await.unwrap();
     assert_eq!(view.rooms.len(), 1);
-    assert_eq!(view.rooms[0].matrix_room_id.as_str(), PRIVATE_ROOM);
+    assert_eq!(view.rooms[0].room.matrix_room_id.as_str(), PRIVATE_ROOM);
 }
 
 #[tokio::test]
@@ -3594,7 +3600,7 @@ async fn 已有的网络_agent_再进公开大厅_已经在里面就原样返回
     assert_eq!(
         view.rooms
             .iter()
-            .map(|room| room.catalog_id)
+            .map(|joined| joined.room.catalog_id)
             .collect::<Vec<_>>(),
         [catalog_id(2), catalog_id(1)]
     );
@@ -4360,6 +4366,7 @@ async fn 放行后进大厅失败时退回名额_重进房间后迟到的请出�
         joined_at: UtcMillis::new(START).unwrap(),
         name: None,
         archived: false,
+        parent: None,
     };
     harness
         .service
@@ -4412,6 +4419,7 @@ async fn 已在别的大厅时即使在场人数已满也能回到暂离的其�
         joined_at: UtcMillis::new(START).unwrap(),
         name: Some(second_entered.name),
         archived: false,
+        parent: None,
     };
     harness
         .service

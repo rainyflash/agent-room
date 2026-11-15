@@ -15,8 +15,9 @@ use agent_room_application::{
         NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentMessageActor,
         NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
         NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomNotice,
-        NetworkAgentRoomRecord, NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
-        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentRoomParent, NetworkAgentRoomRecord, NetworkAgentSecretKind,
+        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
+        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
         PrivateRoomSnapshot, PrivateRoomStore, RateWindowBucket, RateWindowDecision,
@@ -476,6 +477,54 @@ async fn 列房间时从房间目录带出归档了没有() {
         .expect("关房间应持久化");
     let rooms = repositories.rooms(provisioning.id).await.expect("列房间");
     assert!(rooms[0].archived, "关掉的房间读出来是归档了的");
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 列房间时子房间带出上面那一间_别的不带() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let provisioning = provisioning(&unique_name("Climber"), time(0));
+    repositories.begin(&provisioning).await.expect("写入");
+    let owner = provisioning.principal.principal.id();
+    let (above, above_room) = seed_private_room_kept(&repositories, owner, 30).await;
+    let (below, below_room) = seed_private_room_kept(&repositories, owner, 30).await;
+    sqlx::query(
+        r"INSERT INTO agent_room.private_room_parent
+              (catalog_entry_id, parent_catalog_entry_id, name_key, access,
+               created_by_principal_id, parent_version_applied, created_at)
+          VALUES ($1, $2, 'design', 'open', $3, 0, now())",
+    )
+    .bind(below.as_uuid())
+    .bind(above.as_uuid())
+    .bind(owner.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("挂到上面那一间下");
+    for (catalog, room, at) in [(above, &above_room, 10), (below, &below_room, 20)] {
+        repositories
+            .record_room(
+                provisioning.id,
+                &room_record(catalog, room.as_str(), time(at)),
+            )
+            .await
+            .expect("记房间");
+    }
+
+    let rooms = repositories.rooms(provisioning.id).await.expect("列房间");
+
+    assert_eq!(rooms.len(), 2);
+    assert_eq!(rooms[0].catalog_id, above);
+    assert_eq!(rooms[0].parent, None, "不是子房间的不带");
+    assert_eq!(rooms[1].catalog_id, below);
+    assert_eq!(
+        rooms[1].parent,
+        Some(NetworkAgentRoomParent {
+            catalog_id: above,
+            name: "网络 Agent 私人房间".to_owned(),
+        })
+    );
     database.close().await;
 }
 
@@ -2663,6 +2712,7 @@ fn room_record(catalog: RoomCatalogId, room_id: &str, at: UtcMillis) -> NetworkA
         joined_at: at,
         name: None,
         archived: false,
+        parent: None,
     }
 }
 

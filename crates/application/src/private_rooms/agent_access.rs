@@ -548,7 +548,13 @@ impl PrivateRoomAgentAccessService {
         let snapshot = self.knock_target(request.catalog_id, OPERATION).await?;
         if snapshot.parent_catalog_id().is_some() {
             return self
-                .knock_sub_room(request.agent_id, &snapshot, now, OPERATION)
+                .knock_sub_room(
+                    request.actor.account.principal.id(),
+                    request.agent_id,
+                    &snapshot,
+                    now,
+                    OPERATION,
+                )
                 .await;
         }
         let entry = self.knock_entry(&snapshot, OPERATION).await?;

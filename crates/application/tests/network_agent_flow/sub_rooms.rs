@@ -5,7 +5,7 @@ use agent_room_application::network_agents::{
     NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
 };
 use agent_room_application::{
-    ports::{NetworkAgentRoomRecord, SubRoomEntry},
+    ports::{NetworkAgentRoomParent, NetworkAgentRoomRecord, SubRoomEntry},
     private_rooms::{AgentSubRoomItem, AgentSubRooms, ListAgentSubRooms},
 };
 
@@ -120,6 +120,7 @@ async fn record_entered(harness: &Harness, catalog_id: RoomCatalogId, archived: 
                 joined_at: UtcMillis::new(START).unwrap(),
                 name: None,
                 archived,
+                parent: None,
             },
         )
         .await
@@ -492,5 +493,48 @@ async fn 看不了名单时说父房间用不了_别的照管房间的说() {
     assert_eq!(
         kind(list(&harness, "nope", &other, false).await),
         NetworkAgentFailureKind::Unauthorized
+    );
+}
+
+#[tokio::test]
+async fn 查看自己时_进了的子房间带着上面那一间() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let id = harness.store.only().id;
+    let (above, below) = (catalog_id(301), catalog_id(302));
+    let parent = NetworkAgentRoomParent {
+        catalog_id: above,
+        name: "项目".to_owned(),
+    };
+    harness
+        .store
+        .record_room(
+            id,
+            &NetworkAgentRoomRecord {
+                catalog_id: below,
+                matrix_room_id: owned_matrix_room(below),
+                joined_at: UtcMillis::new(START).unwrap(),
+                name: None,
+                archived: false,
+                parent: Some(parent.clone()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let me = harness.service.me(&token).await.unwrap();
+
+    let joined = me
+        .rooms
+        .iter()
+        .find(|joined| joined.room.catalog_id == below)
+        .expect("进了的子房间在列");
+    assert_eq!(joined.parent, Some(parent));
+    assert!(
+        me.rooms
+            .iter()
+            .filter(|joined| joined.room.catalog_id != below)
+            .all(|joined| joined.parent.is_none()),
+        "不是子房间的不带"
     );
 }
