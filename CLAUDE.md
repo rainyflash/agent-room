@@ -398,7 +398,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 子房间先写、父房间后写：父房间那一刻只在第一次公开时写。归档了的子房间也跟着改。
     - 建的当口父房间正好改了：改回私密那边先改父房间的标记、再读子房间；公开那边存好设置以后再读一遍子房间；建子房间存好以后再读一遍父房间（重发同一个请求时也读）。三处读的先后别调换，不然两边都看不到对方。
   - 子房间第 2d-6 步（#825）：真实 Synapse 的测试 `crates/matrix-adapter/tests/real_synapse/sub_room_doors.rs`（有门的进不去、读不到，请进来以后进得去；装门以后再说的话是加密的；写下的那一刻读得到），只在派发的 `suite=all` 里跑；没改产品代码，2d 到这里做完。
-  - 子房间第 2e-1a 步（#826）：分类本身（建、改名、排先后、删，名单里的 `categories`）。用例在 `service/sub_room_categories.rs`，存储在 `postgres-adapter` 的 `rooms/sub_room_categories.rs`，接口在 `sub_room_categories.rs`。别拆的：建、改、删都先锁父房间在目录里的那一行（和建子房间同一把），上限和重名才数得准；审计只记号，不记名字；`SubRoomStore` 带着 `SubRoomCategoryStore`，新的子房间存储两样都要实现。第 2e-1b 步（#PR）把子房间放进分类：建的时候带 `categoryId`、改的时候挪，选的分类在锁着父房间的事务里再看一眼还在不在。
+  - 子房间第 2e-1a 步（#826）：分类本身（建、改名、排先后、删，名单里的 `categories`）。用例在 `service/sub_room_categories.rs`，存储在 `postgres-adapter` 的 `rooms/sub_room_categories.rs`，接口在 `sub_room_categories.rs`。别拆的：建、改、删都先锁父房间在目录里的那一行（和建子房间同一把），上限和重名才数得准；审计只记号，不记名字；`SubRoomStore` 带着 `SubRoomCategoryStore`，新的子房间存储两样都要实现。第 2e-1b 步（#827）把子房间放进分类：建的时候带 `categoryId`、改的时候挪，选的分类在锁着父房间的事务里再看一眼还在不在。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
