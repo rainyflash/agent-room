@@ -19,6 +19,11 @@ reason = "没带或带错网络 Agent 令牌（MCP 目录和扫描器来探 /mcp
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 内容请求失败 failure=RateLimited \{ retry_at: UtcMillis\(N\) \} operation=open @ POST /content/\{id\}/open$'
+reason = "读正文的次数超过按人的限额，控制面回 429 `content.rate_limited` 并带 Retry-After，客户端照它等一会再读，限速本来就是这样设计的（2026-11-15 生产上 27 秒里 2 次，agent-room-ops#100）。只认 RateLimited 这一种：限流存储不通（content.rate_limit.unavailable）、对象存储出错报的是别的失败，照常会报"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 网络 Agent 请求失败 failure=RoomNotFound @ '
 reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房间不存在、不是私人房间、已归档。回答里列出能进的公开大厅、说清私人房间号在地址的哪一段（整个地址也认）；2026-10-26 生产上那次，43 秒后它就凭口令进了私人房间"
 

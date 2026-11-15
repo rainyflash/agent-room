@@ -782,6 +782,40 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_content_read_rate_limit_is_noise_but_other_failures_are_not(self) -> None:
+        def failure(detail: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-15T00:41:11.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "内容请求失败",
+                        "correlation.id": CORRELATION_ID,
+                        "operation": "open",
+                        "failure": detail,
+                    },
+                    "target": "agent_room_control_plane::error",
+                    "span": {
+                        "http.request.method": "POST",
+                        "url.path": f"/content/{CATALOG_ID}/open",
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure("RateLimited { retry_at: UtcMillis(1794703298991) }"),
+                    failure("RateLimit(Unavailable)"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(len(digest.findings), 1)
+        self.assertIn("RateLimit(Unavailable)", digest.findings[0].signature.summary)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_backfill_gap_notice_is_noise(self) -> None:
         def line(message: str) -> str:
             return json.dumps(
