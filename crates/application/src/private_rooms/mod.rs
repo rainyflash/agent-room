@@ -9,6 +9,7 @@ mod notice;
 mod platform_hold;
 mod public_join;
 mod service;
+mod sub_room_privacy;
 
 pub use agent_access::{
     AGENT_KNOCK_TTL_MILLIS, AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind,

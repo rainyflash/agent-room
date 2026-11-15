@@ -47,6 +47,8 @@ mod members;
 mod membership;
 #[path = "sub_room_mutes.rs"]
 mod mutes;
+#[path = "sub_room_privacy.rs"]
+mod privacy;
 #[path = "sub_room_sync.rs"]
 mod sync;
 
@@ -1018,6 +1020,10 @@ pub(super) struct MemoryRooms {
     door_moves_before_request: Mutex<Option<RoomJoinMode>>,
     /// 设、撤子房间管理员时一起记下的身份变动。
     manager_role_changes: Mutex<Vec<RoomRoleChange>>,
+    /// 正公开着的房间。
+    listed: Mutex<BTreeSet<RoomCatalogId>>,
+    /// 设上以后，下一次读完父房间加不加密之后先改一下存着的东西：摆出“建的当口父房间改了”。
+    changes_after_parent_facts: Mutex<Option<Interruption>>,
 }
 
 type Interruption = Box<dyn FnOnce(&MemoryRooms) + Send>;
@@ -1042,7 +1048,26 @@ impl MemoryRooms {
             door_moves_before_revision: Mutex::new(None),
             requests: Mutex::new(Vec::new()),
             door_moves_before_request: Mutex::new(None),
+            listed: Mutex::new(BTreeSet::new()),
+            changes_after_parent_facts: Mutex::new(None),
         }
+    }
+
+    fn set_listed(&self, catalog: u128, listed: bool) {
+        let mut rooms = self.listed.lock().expect("公开锁正常");
+        if listed {
+            rooms.insert(catalog_id(catalog));
+        } else {
+            rooms.remove(&catalog_id(catalog));
+        }
+    }
+
+    /// 下一次读完父房间加不加密以后，另一个请求先这样改了它。
+    fn change_after_parent_facts(&self, change: impl FnOnce(&Self) + Send + 'static) {
+        *self
+            .changes_after_parent_facts
+            .lock()
+            .expect("中途改动锁正常") = Some(Box::new(change));
     }
 
     /// 下一次存改动之前，另一个请求先把这间子房间的门换成 `access`。
@@ -1427,6 +1452,14 @@ impl SubRoomStore for MemoryRooms {
                 .expect("设置锁正常")
                 .map_or(SubRoomPolicy::DEFAULT, |record| record.policy),
         });
+        let change = self
+            .changes_after_parent_facts
+            .lock()
+            .expect("中途改动锁正常")
+            .take();
+        if let Some(change) = change {
+            change(self);
+        }
         Box::pin(async move { Ok(facts) })
     }
 

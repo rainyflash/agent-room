@@ -175,8 +175,8 @@ pub use rooms::{
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
     SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange, SubRoomParentFacts,
-    SubRoomPolicyRecord, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope,
-    SubRoomSyncTask,
+    SubRoomPolicyRecord, SubRoomPrivacy, SubRoomRevision, SubRoomRevisionBlock, SubRoomStore,
+    SubRoomSyncScope, SubRoomSyncTask,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

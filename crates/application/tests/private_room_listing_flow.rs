@@ -1,6 +1,8 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：只有房主能改；第一次公开先在 Matrix 上记下
 //! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请；
 //! 平台拿掉了照样能看能改，回答里带着原因和时间；房主能换分享码，撞上别的房间就再换。
+//! 子房间跟着它（`specs/redesign/sub-rooms.md` 第 2d-5 步）：改回私密时没加密的一起打开加密，公开时
+//! 没有门的写下这一刻。
 
 use std::sync::{Arc, Mutex};
 
@@ -14,7 +16,7 @@ use agent_room_application::{
         PrivateRoomListingRecord, PrivateRoomListingSaveOutcome, PrivateRoomListingStore,
         PrivateRoomSnapshot, PrivateRoomStore, PublicRoomPlatformHold, PublicRoomPlatformHoldStore,
         RoomContentPolicy, RoomContentPolicyLookup, SecretDigest, SecretFactory,
-        SecretGenerationFailure, SecretValue,
+        SecretGenerationFailure, SecretValue, SubRoomPrivacy,
     },
     private_rooms::{
         ChangeShareCode, InspectListing, ListingFailureKind, PlatformHoldNotice,
@@ -357,6 +359,196 @@ async fn 不加密的房间改回私密_先打开加密再改标记_matrix_写�
     assert_eq!(fixture.requests.voided.lock().unwrap().len(), 2);
 }
 
+const CLUB: &str = "!club:matrix.test";
+
+/// 父房间下面的一间子房间：Matrix 房间号是 `!sub-<号>:matrix.test`。
+fn sub_room(number: u128, has_door: bool, listing_marked: bool, encrypted: bool) -> SubRoomPrivacy {
+    SubRoomPrivacy {
+        catalog_id: RoomCatalogId::from_uuid(Uuid::from_u128(number)),
+        matrix_room: MatrixRoomId::new(format!("!sub-{number}:matrix.test")).unwrap(),
+        has_door,
+        listing_marked,
+        end_to_end_encrypted: encrypted,
+    }
+}
+
+fn written(fixture: &Fixture) -> Vec<(String, &'static str)> {
+    fixture.matrix.written.lock().unwrap().clone()
+}
+
+fn at(room: &str, what: &'static str) -> (String, &'static str) {
+    (room.to_owned(), what)
+}
+
+#[tokio::test]
+async fn 改回私密_没加密的子房间一起打开加密_有门的和加密着的不动_没写进的再点接着做() {
+    let fixture = Fixture::new(false);
+    fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .expect("公开");
+    // 公开、不加密的时候建的没有门的两间不加密；有门的一律加密；拆过门的加密着、没有门。
+    *fixture.listings.sub_rooms.lock().unwrap() = vec![
+        sub_room(31, false, true, false),
+        sub_room(32, true, false, true),
+        sub_room(33, false, true, true),
+        sub_room(34, false, true, false),
+    ];
+    fixture.matrix.written.lock().unwrap().clear();
+    *fixture.matrix.failing_room.lock().unwrap() = Some("!sub-34:matrix.test".to_owned());
+
+    assert_eq!(
+        fixture
+            .service
+            .update(update(owner(), settings(false, RoomJoinMode::Open)))
+            .await
+            .expect_err("有一间写不进")
+            .kind(),
+        ListingFailureKind::DependencyUnavailable
+    );
+    assert_eq!(
+        written(&fixture),
+        [at(CLUB, "encrypt"), at("!sub-31:matrix.test", "encrypt")]
+    );
+    assert!(
+        fixture
+            .listings
+            .record
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .settings
+            .listed(),
+        "子房间没跟上就还公开着"
+    );
+
+    *fixture.matrix.failing_room.lock().unwrap() = None;
+    fixture
+        .service
+        .update(update(owner(), settings(false, RoomJoinMode::Open)))
+        .await
+        .expect("再点一次就成了");
+    assert_eq!(
+        written(&fixture)[2..],
+        [at("!sub-34:matrix.test", "encrypt")],
+        "父房间和开好的那间不再写"
+    );
+    assert!(
+        fixture
+            .listings
+            .sub_rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|sub_room| sub_room.end_to_end_encrypted)
+    );
+    assert!(
+        !fixture
+            .listings
+            .record
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .settings
+            .listed()
+    );
+}
+
+#[tokio::test]
+async fn 公开_没有门的子房间写下这一刻_有门的和写过的不写_存的当口刚建的也补上() {
+    let fixture = Fixture::new(true);
+    *fixture.listings.sub_rooms.lock().unwrap() = vec![
+        sub_room(31, false, false, true),
+        sub_room(32, true, false, true),
+        sub_room(33, false, true, true),
+    ];
+    *fixture.listings.appears_after_save.lock().unwrap() = Some(sub_room(34, false, false, true));
+
+    fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .expect("公开");
+    assert_eq!(
+        written(&fixture),
+        [
+            at("!sub-31:matrix.test", "listed"),
+            at(CLUB, "listed"),
+            at("!sub-34:matrix.test", "listed"),
+        ],
+        "子房间先写；存设置的当口建好的，存完再看一遍补上"
+    );
+    assert_eq!(
+        fixture.matrix.listed.lock().unwrap().as_slice(),
+        [time(NOW); 3]
+    );
+    let marked: Vec<bool> = fixture
+        .listings
+        .sub_rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|sub_room| sub_room.listing_marked)
+        .collect();
+    assert_eq!(
+        marked,
+        [true, false, true, true],
+        "有门的要批准才进得来，拆门时再写"
+    );
+
+    // 公开着改别的设置、改回私密再公开：写过的都不再写。
+    fixture.clock.advance(60_000);
+    for listed in [true, false, true] {
+        fixture
+            .service
+            .update(update(owner(), settings(listed, RoomJoinMode::Request)))
+            .await
+            .expect("改设置");
+    }
+    assert_eq!(written(&fixture).len(), 3);
+}
+
+#[tokio::test]
+async fn 公开时子房间写不进_父房间不公开_再点接着做() {
+    let fixture = Fixture::new(true);
+    *fixture.listings.sub_rooms.lock().unwrap() = vec![
+        sub_room(31, false, false, true),
+        sub_room(32, false, false, true),
+    ];
+    *fixture.matrix.failing_room.lock().unwrap() = Some("!sub-32:matrix.test".to_owned());
+    assert_eq!(
+        fixture
+            .service
+            .update(update(owner(), settings(true, RoomJoinMode::Open)))
+            .await
+            .expect_err("有一间写不进")
+            .kind(),
+        ListingFailureKind::DependencyUnavailable
+    );
+    assert_eq!(written(&fixture), [at("!sub-31:matrix.test", "listed")]);
+    assert!(fixture.listings.record.lock().unwrap().is_none(), "没公开");
+
+    *fixture.matrix.failing_room.lock().unwrap() = None;
+    fixture.clock.advance(1_000);
+    fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .expect("再点一次就成了");
+    assert_eq!(
+        written(&fixture)[1..],
+        [at("!sub-32:matrix.test", "listed"), at(CLUB, "listed")]
+    );
+    assert_eq!(
+        fixture.matrix.listed.lock().unwrap().as_slice(),
+        [time(NOW), time(NOW + 1_000), time(NOW + 1_000)],
+        "写过的那一间留着第一次的时间"
+    );
+}
+
 #[tokio::test]
 async fn 子房间不能单独公开_改回私密不拦() {
     let fixture = Fixture::sub_room();
@@ -682,6 +874,10 @@ struct MemoryListings {
     taken_codes: Mutex<u32>,
     attempts: Mutex<u32>,
     encrypted: Arc<Mutex<bool>>,
+    /// 这间房下面的子房间。
+    sub_rooms: Mutex<Vec<SubRoomPrivacy>>,
+    /// 设上以后，下一次存成了设置，这一间子房间跟着出现：摆出“存设置的当口有人建了一间”。
+    appears_after_save: Mutex<Option<SubRoomPrivacy>>,
 }
 
 impl PrivateRoomListingStore for MemoryListings {
@@ -732,6 +928,9 @@ impl PrivateRoomListingStore for MemoryListings {
                 PrivateRoomListingSaveOutcome::ShareCodeTaken
             } else {
                 *stored = Some(record.clone());
+                if let Some(sub_room) = self.appears_after_save.lock().unwrap().take() {
+                    self.sub_rooms.lock().unwrap().push(sub_room);
+                }
                 PrivateRoomListingSaveOutcome::Saved
             }
         };
@@ -758,9 +957,37 @@ impl PrivateRoomListingStore for MemoryListings {
 
     fn mark_room_encrypted(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<()>> {
-        *self.encrypted.lock().unwrap() = true;
+        let mut sub_rooms = self.sub_rooms.lock().unwrap();
+        match sub_rooms
+            .iter_mut()
+            .find(|sub_room| sub_room.catalog_id == catalog_id)
+        {
+            Some(sub_room) => sub_room.end_to_end_encrypted = true,
+            None => *self.encrypted.lock().unwrap() = true,
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn sub_room_privacy(
+        &self,
+        _parent_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomPrivacy>>> {
+        let sub_rooms = self.sub_rooms.lock().unwrap().clone();
+        Box::pin(async move { Ok(sub_rooms) })
+    }
+
+    fn mark_sub_room_listed(
+        &self,
+        catalog_id: RoomCatalogId,
+        _at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        for sub_room in self.sub_rooms.lock().unwrap().iter_mut() {
+            if sub_room.catalog_id == catalog_id {
+                sub_room.listing_marked = true;
+            }
+        }
         Box::pin(async { Ok(()) })
     }
 }
@@ -787,11 +1014,21 @@ struct RecordingMatrix {
     listed: Mutex<Vec<UtcMillis>>,
     encryption: Mutex<u32>,
     failing: Mutex<bool>,
+    /// 只有这一间写不进。
+    failing_room: Mutex<Option<String>>,
+    /// 写进了哪间房、写的是什么，照先后。
+    written: Mutex<Vec<(String, &'static str)>>,
 }
 
 impl RecordingMatrix {
-    fn fail(&self, operation: MatrixOperation) -> MatrixResult<()> {
-        if *self.failing.lock().unwrap() {
+    fn fail(&self, room_id: &MatrixRoomId, operation: MatrixOperation) -> MatrixResult<()> {
+        let room_fails = self
+            .failing_room
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_some_and(|room| room == room_id.as_str());
+        if *self.failing.lock().unwrap() || room_fails {
             Err(MatrixFailure::new(
                 operation,
                 MatrixFailureKind::DependencyUnavailable,
@@ -805,23 +1042,31 @@ impl RecordingMatrix {
 impl PrivateRoomListingMatrix for RecordingMatrix {
     fn mark_listed<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
         first_listed_at: UtcMillis,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        let result = self.fail(MatrixOperation::SendStateEvent);
+        let result = self.fail(room_id, MatrixOperation::SendStateEvent);
         if result.is_ok() {
             self.listed.lock().unwrap().push(first_listed_at);
+            self.written
+                .lock()
+                .unwrap()
+                .push((room_id.as_str().to_owned(), "listed"));
         }
         Box::pin(async move { result })
     }
 
     fn enable_encryption<'a>(
         &'a self,
-        _room_id: &'a MatrixRoomId,
+        room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<()>> {
-        let result = self.fail(MatrixOperation::SendStateEvent);
+        let result = self.fail(room_id, MatrixOperation::SendStateEvent);
         if result.is_ok() {
             *self.encryption.lock().unwrap() += 1;
+            self.written
+                .lock()
+                .unwrap()
+                .push((room_id.as_str().to_owned(), "encrypt"));
         }
         Box::pin(async move { result })
     }

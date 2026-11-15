@@ -7,8 +7,9 @@
 
 use agent_room_application::ports::{
     MatrixRoomEncryption, PrivateRoomListingMatrix, PrivateRoomListingRecord,
-    PrivateRoomListingSaveOutcome, PrivateRoomListingStore,
+    PrivateRoomListingSaveOutcome, PrivateRoomListingStore, SubRoomPrivacy,
 };
+use agent_room_domain::room_listing::{RoomListingSettings, RoomShareCode};
 
 use super::{
     membership::{refusal, sub_room},
@@ -495,13 +496,77 @@ impl PrivateRoomListingMatrix for TestMatrix {
     }
 }
 
-/// 子房间不能公开，这里的房间都没有公开设置；用得上的只有“目录上标成加密”。
+/// 子房间不能公开，父房间公开着只摆出“正公开着”（`set_listed`）；用得上的是“目录上标成加密”和
+/// 子房间跟着父房间写下那一刻（2d-5）。
 impl PrivateRoomListingStore for MemoryRooms {
     fn listing(
         &self,
-        _catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomListingRecord>>> {
-        Box::pin(async { Ok(None) })
+        let listed = self
+            .listed
+            .lock()
+            .expect("公开锁正常")
+            .contains(&catalog_id);
+        let record = listed.then(|| PrivateRoomListingRecord {
+            catalog_id,
+            settings: RoomListingSettings::new(
+                true,
+                RoomJoinMode::Open,
+                RoomListingSettings::DEFAULT_MEMBER_PERMISSIONS,
+                true,
+            )
+            .expect("设置有效"),
+            share_code: RoomShareCode::parse("Par001").expect("分享码有效"),
+            first_listed_at: UtcMillis::new(500).expect("时间有效"),
+            updated_by: principal_id(OWNER),
+            updated_at: UtcMillis::new(500).expect("时间有效"),
+            version: AggregateVersion::INITIAL,
+        });
+        Box::pin(async move { Ok(record) })
+    }
+
+    fn sub_room_privacy(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<SubRoomPrivacy>>> {
+        let rooms = self.rooms.lock().expect("房间锁正常");
+        let sub_rooms = self
+            .links
+            .lock()
+            .expect("关系锁正常")
+            .iter()
+            .filter(|stored| stored.link.parent_catalog_id == parent_catalog_id)
+            .map(|stored| SubRoomPrivacy {
+                catalog_id: stored.link.catalog_id,
+                matrix_room: MatrixRoomId::new(
+                    rooms[&stored.link.catalog_id]
+                        .instance()
+                        .matrix_room_id()
+                        .as_str()
+                        .to_owned(),
+                )
+                .expect("房间有效"),
+                has_door: stored.link.access != RoomJoinMode::Open,
+                listing_marked: stored.link.door_opened_at.is_some(),
+                end_to_end_encrypted: stored.link.end_to_end_encrypted,
+            })
+            .collect();
+        Box::pin(async move { Ok(sub_rooms) })
+    }
+
+    fn mark_sub_room_listed(
+        &self,
+        catalog_id: RoomCatalogId,
+        at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        self.record("store.mark_listed");
+        for stored in self.links.lock().expect("关系锁正常").iter_mut() {
+            if stored.link.catalog_id == catalog_id && stored.link.door_opened_at.is_none() {
+                stored.link.door_opened_at = Some(at);
+            }
+        }
+        Box::pin(async { Ok(()) })
     }
 
     fn listed_rooms_owned_by(

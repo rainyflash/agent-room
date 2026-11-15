@@ -10,6 +10,9 @@
 //! 不带是谁拿掉的。
 //!
 //! 房主能换一个分享码（比如链接被贴到了不想要的地方），旧的马上作废；改回私密时码留着，只有换码才变。
+//!
+//! 子房间跟着它（`sub_room_privacy`）：改回私密时没加密的子房间一起打开加密；公开着的时候没有门的
+//! 子房间写下这一刻。
 
 use std::sync::Arc;
 
@@ -22,6 +25,9 @@ use agent_room_domain::{
     version::AggregateVersion,
 };
 
+use super::sub_room_privacy::{
+    SubRoomPrivacyFailure, encrypt_sub_rooms, mark_open_sub_rooms_listed,
+};
 use crate::{
     authentication::AuthenticatedPrincipal,
     persistence::{RepositoryError, RepositoryErrorKind},
@@ -233,6 +239,9 @@ impl PrivateRoomListingService {
             }
         }
         let now = self.clock.now();
+        // 子房间先写：父房间的这一刻只在第一次公开时写，写过以后再没成也不再挪。
+        self.mark_sub_rooms_listed(request.catalog_id, now, operation)
+            .await?;
         let first_listed_at = if let Some(listing) = &loaded.listing {
             listing.first_listed_at
         } else {
@@ -262,6 +271,9 @@ impl PrivateRoomListingService {
                     record.share_code = self.new_share_code(operation)?;
                 }
                 PrivateRoomListingSaveOutcome::Saved => {
+                    // 存之前刚建好的子房间，建的时候读到的父房间还没公开，这里补上。
+                    self.mark_sub_rooms_listed(request.catalog_id, now, operation)
+                        .await?;
                     return Ok(view(Some(&record), loaded.encrypted, loaded.hold));
                 }
                 // 分享码没换也撞了是库里的数据不对；超限额和版本不对 `save` 已经报了错。
@@ -295,6 +307,15 @@ impl PrivateRoomListingService {
                 .await
                 .map_err(|error| repository(operation, &error))?;
         }
+        // 父房间的加密标记改好以后才读子房间：这以后建的，建的时候读得到父房间加密了，自己就加密。
+        let sub_rooms = self
+            .listings
+            .sub_room_privacy(request.catalog_id)
+            .await
+            .map_err(|error| repository(operation, &error))?;
+        encrypt_sub_rooms(self.listings.as_ref(), self.matrix.as_ref(), &sub_rooms)
+            .await
+            .map_err(|failure| sub_room_privacy(operation, failure))?;
         let record = PrivateRoomListingRecord {
             settings: request.settings,
             updated_by: request.actor.principal_id,
@@ -393,6 +414,24 @@ impl PrivateRoomListingService {
             }
         }
         Err(ListingFailure::new(operation, ListingFailureKind::Internal))
+    }
+
+    /// 公开着：没有门、还没写过这一刻的子房间写下 `at`。每次存公开的设置都看一遍，上一次没写成的
+    /// 这次补上。
+    async fn mark_sub_rooms_listed(
+        &self,
+        parent: RoomCatalogId,
+        at: UtcMillis,
+        operation: &'static str,
+    ) -> ListingResult<()> {
+        let sub_rooms = self
+            .listings
+            .sub_room_privacy(parent)
+            .await
+            .map_err(|error| repository(operation, &error))?;
+        mark_open_sub_rooms_listed(self.listings.as_ref(), self.matrix.as_ref(), &sub_rooms, at)
+            .await
+            .map_err(|failure| sub_room_privacy(operation, failure))
     }
 
     /// 存设置。超了限额、版本对不上直接报错；分享码撞了交给调用方换一个。
@@ -561,6 +600,13 @@ const fn repository(operation: &'static str, error: &RepositoryError) -> Listing
         }
     };
     ListingFailure::new(operation, kind)
+}
+
+fn sub_room_privacy(operation: &'static str, failure: SubRoomPrivacyFailure) -> ListingFailure {
+    match failure {
+        SubRoomPrivacyFailure::Repository(error) => repository(operation, &error),
+        SubRoomPrivacyFailure::Matrix(error) => matrix(operation, error),
+    }
 }
 
 /// Matrix 暂时写不进去的，房主过一会儿再点；别的是配置或数据不对。
