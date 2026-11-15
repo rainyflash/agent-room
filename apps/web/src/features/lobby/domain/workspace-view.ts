@@ -2,10 +2,10 @@ export const roomWorkspaceViews = ['conversation', 'resources', 'space'] as cons
 export type RoomWorkspaceView = (typeof roomWorkspaceViews)[number];
 
 /**
- * 地址里的 `view` 能写的：对话、资料，再加对话版面里展开成整页的 Agent 表格（`agents`）。
- * 场景里没有那一页，写了也按画面算。
+ * 地址里的 `view` 能写的：对话、资料，再加对话版面里展开成整页的 Agent 表格（`agents`）和
+ * “浏览子房间”（`sub-rooms`，只在有子房间的父房间上）。场景里没有这两页，写了也按画面算。
  */
-export const roomPanelViews = ['conversation', 'resources', 'agents'] as const;
+export const roomPanelViews = ['conversation', 'resources', 'agents', 'sub-rooms'] as const;
 export type RoomPanelView = (typeof roomPanelViews)[number];
 
 /** 房间页此刻在看什么：地址里写的那几种，不写就是画面本身（`space`）。 */

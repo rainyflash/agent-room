@@ -60,6 +60,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* “浏览子房间”：图标和 # 一样宽，后面灰的是有几间；没见过的新的是一个点。 */
+.sub-room-places__browse-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+}
+.sub-room-places__total {
+  flex: 0 0 auto;
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.sub-room-places__fresh {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--ar-pill);
+  /* 红的留给找你的：新来的子房间只是一个墨色的点。 */
+  background: var(--color-ink);
+}
 .sub-room-places__count,
 .sub-room-places__mention {
   flex: 0 0 auto;

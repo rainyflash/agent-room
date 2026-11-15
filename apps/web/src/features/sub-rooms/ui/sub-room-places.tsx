@@ -1,7 +1,6 @@
 import { RoomGlyph } from '@agent-room/ui-system';
 import type { TFunction } from 'i18next';
-import { Link } from '@tanstack/react-router';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, LayoutList } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -11,6 +10,7 @@ import {
   subRoomPlaceGroups,
   type SubRoomPlaceGroup,
 } from '@/features/sub-rooms/domain/sub-room-places';
+import { SubRoomLink } from './sub-room-link';
 import './sub-room-places.css';
 
 export type SubRoomPlacesProps = {
@@ -24,6 +24,21 @@ export type SubRoomPlacesProps = {
   readonly onSelectCurrent: () => void;
   /** 在下拉里点了一项要先把下拉关上；左栏里什么都不做。 */
   readonly onNavigate: () => void;
+  /** 最上面“浏览子房间”那一行；这间房下面一间都没有、你也建不了时没有。 */
+  readonly browse: SubRoomBrowseRow | null;
+};
+
+export type SubRoomBrowseRow = {
+  /** 名单上有几间（不算归档的）。 */
+  readonly count: number;
+  /** 有几间你没进、这台设备上又没见过：有就带一个点。 */
+  readonly unseen: number;
+  /** “浏览子房间”这一页正开着。 */
+  readonly selected: boolean;
+  /** 眼前是父房间：点了打开这一页。眼前是子房间时为空，这一行去父房间的这一页。 */
+  readonly onOpen: (() => void) | null;
+  /** 父房间的 Matrix 房间，去父房间时用；不知道就走入场页。 */
+  readonly parentMatrixRoomId: string | undefined;
 };
 
 /**
@@ -36,7 +51,7 @@ export function SubRoomPlaces(props: SubRoomPlacesProps) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
     readCollapsed(props.list.parent.catalogId),
   );
-  if (groups.length === 0) return null;
+  if (groups.length === 0 && props.browse === null) return null;
   const toggle = (categoryId: string): void => {
     const next = new Set(collapsed);
     if (!next.delete(categoryId)) next.add(categoryId);
@@ -45,6 +60,7 @@ export function SubRoomPlaces(props: SubRoomPlacesProps) {
   };
   return (
     <nav aria-label={t('subRooms.places.label')} className="sub-room-places">
+      {props.browse === null ? null : <BrowseRow props={props} row={props.browse} />}
       {groups.map((group) =>
         group.category === null ? (
           <PlaceList group={group} key="uncategorized" props={props} />
@@ -61,6 +77,64 @@ export function SubRoomPlaces(props: SubRoomPlacesProps) {
         ),
       )}
     </nav>
+  );
+}
+
+/** “浏览子房间”：后面是有几间，有没见过的新的带一个点。 */
+function BrowseRow({
+  props,
+  row,
+}: {
+  readonly props: SubRoomPlacesProps;
+  readonly row: SubRoomBrowseRow;
+}) {
+  const { t } = useTranslation();
+  const freshId = useId();
+  const body = (
+    <>
+      <LayoutList aria-hidden="true" className="sub-room-places__browse-icon" />
+      <span className="sub-room-places__name">{t('subRooms.places.browse')}</span>
+      {row.unseen > 0 ? (
+        <span className="sub-room-places__fresh" id={freshId}>
+          <span className="sr-only">{t('subRooms.places.unseen', { count: row.unseen })}</span>
+        </span>
+      ) : null}
+      <span aria-hidden="true" className="sub-room-places__total">
+        {row.count}
+      </span>
+    </>
+  );
+  const shared = {
+    'aria-describedby': row.unseen > 0 ? freshId : undefined,
+    'aria-label': t('subRooms.places.browseCount', { count: row.count }),
+    className: 'room-desk__place sub-room-places__browse',
+  };
+  if (row.onOpen !== null) {
+    const open = row.onOpen;
+    return (
+      <button
+        {...shared}
+        aria-current={row.selected ? 'page' : undefined}
+        onClick={() => {
+          props.onNavigate();
+          open();
+        }}
+        type="button"
+      >
+        {body}
+      </button>
+    );
+  }
+  return (
+    <SubRoomLink
+      {...shared}
+      catalogId={props.list.parent.catalogId}
+      matrixRoomId={row.parentMatrixRoomId}
+      onClick={props.onNavigate}
+      search={{ view: 'sub-rooms' }}
+    >
+      {body}
+    </SubRoomLink>
   );
 }
 
@@ -160,7 +234,7 @@ function SubRoomPlace({
   const shared = {
     'aria-describedby': described.length === 0 ? undefined : described.join(' '),
     className: 'room-desk__place sub-room-places__room',
-    'data-unread': count > 0 || mentioned ? 'true' : undefined,
+    'data-unread': count > 0 || mentioned ? ('true' as const) : undefined,
     title: room.description === '' ? room.name : `${room.name}\n${room.description}`,
   };
   if (current) {
@@ -179,26 +253,16 @@ function SubRoomPlace({
       </button>
     );
   }
-  return found === undefined ? (
-    <Link
+  return (
+    <SubRoomLink
       {...shared}
       aria-label={room.name}
+      catalogId={room.catalogId}
+      matrixRoomId={found?.roomId}
       onClick={props.onNavigate}
-      params={{ catalogId: room.catalogId }}
-      to="/lobby/$catalogId"
     >
       {body}
-    </Link>
-  ) : (
-    <Link
-      {...shared}
-      aria-label={room.name}
-      onClick={props.onNavigate}
-      params={{ catalogId: room.catalogId, roomId: found.roomId }}
-      to="/lobby/$catalogId/instance/$roomId"
-    >
-      {body}
-    </Link>
+    </SubRoomLink>
   );
 }
 

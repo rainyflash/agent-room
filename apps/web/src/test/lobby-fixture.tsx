@@ -1146,15 +1146,93 @@ function fixtureSubRoomList(): SubRoomList {
             },
           ]
         : []),
-      fixtureSubRoom('51', 'Release checklist', { categoryId: FIXTURE_WORK_CATEGORY }),
-      fixtureSubRoom('52', 'Backups', { access: 'request', categoryId: FIXTURE_OPS_CATEGORY }),
-      fixtureSubRoom('53', 'Loose ends'),
-      fixtureSubRoom('54', 'Not mine', { joined: false, categoryId: FIXTURE_WORK_CATEGORY }),
+      fixtureSubRoom('51', 'Release checklist', {
+        categoryId: FIXTURE_WORK_CATEGORY,
+        description: 'What ships in this release and who runs the checks.',
+        memberCount: 3,
+        agentCount: 4,
+      }),
+      fixtureSubRoom('52', 'Backups', {
+        access: 'request',
+        categoryId: FIXTURE_OPS_CATEGORY,
+        description: 'Where backups go and when we rehearse a restore.',
+        memberCount: 2,
+        agentCount: 1,
+      }),
+      fixtureSubRoom('53', 'Loose ends', {
+        description: 'Anything that has nothing to do with the project.',
+        memberCount: 3,
+        agentCount: 2,
+      }),
+      fixtureSubRoom('54', 'Not mine', {
+        joined: false,
+        categoryId: FIXTURE_WORK_CATEGORY,
+        description: 'Fresh drafts go here first.',
+        memberCount: 3,
+        agentCount: 1,
+      }),
+      fixtureSubRoom('55', 'Alerts', {
+        joined: false,
+        access: 'request',
+        categoryId: FIXTURE_OPS_CATEGORY,
+        description: 'Talk about a firing alert here, not in the main room.',
+        ...(fixtureSubRoomRequests.has('55') ? { requestedAtUnixMs: 1_763_100_000_000 } : {}),
+      }),
+      fixtureSubRoom('56', 'Security', {
+        joined: false,
+        access: 'invite_only',
+        categoryId: FIXTURE_OPS_CATEGORY,
+        description: 'Security problems that are not public yet.',
+      }),
+      ...fixtureArchivedSubRooms
+        .filter((entry) => fixtureRestoredSubRooms.has(entry.catalogId))
+        .map((entry) =>
+          fixtureSubRoom(fixtureSubRoomSuffix(entry.catalogId), entry.name, {
+            access: entry.access,
+            joined: entry.joined,
+            ...(entry.categoryId === undefined ? {} : { categoryId: entry.categoryId }),
+          }),
+        ),
     ],
+  };
+}
+// “浏览子房间”上申请、撤回、恢复都真的改这一页的名单；加入照服务器没接上那样报错，看出错的样子。
+const fixtureSubRoomRequests = new Set<string>(['55']);
+const fixtureRestoredSubRooms = new Set<string>();
+const fixtureArchivedSubRooms: readonly SubRoom[] = [
+  fixtureSubRoom('71', 'Alpha 94', {
+    categoryId: FIXTURE_WORK_CATEGORY,
+    archivedAtUnixMs: 1_794_300_000_000,
+    archivedByPrincipalId: fixtureMember,
+    archivedReason: 'manual',
+    canRestore: true,
+  }),
+  fixtureSubRoom('72', 'Handles ran out', {
+    access: 'request',
+    joined: false,
+    categoryId: FIXTURE_OPS_CATEGORY,
+    archivedAtUnixMs: 1_794_350_000_000,
+    archivedByPrincipalId: fixtureOwner,
+    archivedReason: 'manual',
+    canRestore: true,
+  }),
+  fixtureSubRoom('73', 'Launch week', {
+    archivedAtUnixMs: 1_793_900_000_000,
+    archivedReason: 'inactive',
+    canRestore: false,
+  }),
+];
+function fixtureArchivedSubRoomList(): SubRoomList {
+  return {
+    ...fixtureSubRoomList(),
+    subRooms: fixtureArchivedSubRooms.filter(
+      (entry) => !fixtureRestoredSubRooms.has(entry.catalogId),
+    ),
   };
 }
 const unavailableSubRoom = () =>
   Promise.resolve(err({ code: 'sub_room.unavailable', retryable: false }));
+const fixtureSubRoomSuffix = (catalogId: string) => catalogId.slice(-2);
 const fixtureSubRooms: SubRoomGateway = {
   admit: unavailableSubRoom,
   answerJoinRequest: unavailableSubRoom,
@@ -1170,14 +1248,28 @@ const fixtureSubRooms: SubRoomGateway = {
   leave: unavailableSubRoom,
   policy: unavailableSubRoom,
   remove: unavailableSubRoom,
-  requestToJoin: unavailableSubRoom,
-  restore: unavailableSubRoom,
+  requestToJoin: ({ subRoomId }) => {
+    fixtureSubRoomRequests.add(fixtureSubRoomSuffix(subRoomId));
+    return Promise.resolve(
+      ok({ catalogId: subRoomId, membership: 'pending', requestedAtUnixMs: Date.now() }),
+    );
+  },
+  restore: ({ subRoomId }) => {
+    fixtureRestoredSubRooms.add(subRoomId);
+    return Promise.resolve(ok(undefined));
+  },
   revise: unavailableSubRoom,
   reviseCategory: unavailableSubRoom,
   revokeManager: unavailableSubRoom,
-  subRooms: () => Promise.resolve(ok(fixtureSubRoomList())),
+  subRooms: (_roomId, options) =>
+    Promise.resolve(
+      ok(options?.archived === true ? fixtureArchivedSubRoomList() : fixtureSubRoomList()),
+    ),
   unban: unavailableSubRoom,
-  withdrawJoinRequest: unavailableSubRoom,
+  withdrawJoinRequest: ({ subRoomId }) => {
+    fixtureSubRoomRequests.delete(fixtureSubRoomSuffix(subRoomId));
+    return Promise.resolve(ok(undefined));
+  },
 };
 const roomRoleChanges: RoomRoleChangeGateway = {
   roleChanges: () => Promise.resolve(ok(fixtureRoleChanges)),
