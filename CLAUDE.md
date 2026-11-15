@@ -421,6 +421,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed` 先找整间房、再问 `AgentSubRoomManagement`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
   - 子房间第 2h-4b 步（#851）：邀请人在子房间上走 `admit_person_by_agent`（只请父房间里的人、直接进来、批准他在等的申请），不算每天的邀请；整间房照旧发邀请、算每天的。看申请只有子房间有，整间房回空的。
   - 子房间第 2i-2a 步（#854）：子房间不在 `GET /private-rooms` 里（旧版网页认不得），网页列表里找不到这间房时单独问一次（`usePrivateRoomListWith`），入场页在公开大厅入场说找不到以后才问。新加“在列表里找这间房”的地方也用它，别让服务器的列表带上子房间。
+  - 子房间第 2i-2b 步（#855）：左栏里你在的子房间（`features/sub-rooms/ui/sub-room-places.tsx`）。别拆的：子房间那几行的未读和要打开的 Matrix 房间都从收件箱那一套读（`useCatalogUnread`），别另起一套计数；子房间页面里的“主房间”和顶栏的父房间名是回父房间的链接，这一间自己的对话是子房间里那一行。浏览器验收用 `lobby-scene.html?private&subRooms` 和 `?private&subRoom`。
   - 子房间第 2i-1 步（#853）：网页的子房间类型、客户端（`AppServices.subRooms`）和查询。回答别加 `.strict()`（子房间还在加东西）；查询挂在房间列表的键下面，界面刷新房间列表时跟着重问，别另起一套键。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
