@@ -1,4 +1,4 @@
-//! 子房间里的 Agent 成员（2f-2b）：父房间里移出它时子房间里跟着移出、排上踢出去；子房间里只记父房间里
+//! 子房间里的 Agent 成员（2f-2b-1）：父房间里移出它时子房间里跟着移出、排上踢出去；子房间里只记父房间里
 //! 此刻还在的 Agent 成员。测试库是一路用下来的，排着的事只领自己那间房下面的。
 
 use agent_room_application::ports::{
@@ -8,7 +8,7 @@ use agent_room_domain::join_codes::{PrivateRoomAgentJoinedVia, PrivateRoomAgentM
 
 use super::{sync::open, *};
 
-async fn admit_agent(
+pub(super) async fn admit_agent(
     repositories: &PostgresRepositories,
     room: RoomCatalogId,
     agent: AgentId,
@@ -38,7 +38,7 @@ async fn status(
         .map(|member| member.status)
 }
 
-async fn remove(
+pub(super) async fn remove(
     repositories: &PostgresRepositories,
     room: RoomCatalogId,
     agent: AgentId,

@@ -91,8 +91,9 @@ pub(super) async fn person_mutes(
         .collect())
 }
 
-/// 这个房间下面、这个人此刻在里面（受邀或者已经加入）、没归档的子房间，先建的在前，各带着他在那一间
-/// 里自己的禁言。对象不是人、这个房间下面没有子房间时是空的。
+/// 这个房间下面、没归档的子房间里，这个人此刻在里面（受邀或者已经加入）的，和他自己不在、他名下凭
+/// 口令或敲门进来的 Agent 成员在里面的（2f-2b-2），先建的在前，各带着他在那一间里自己的禁言。对象
+/// 不是人、这个房间下面没有子房间时是空的。
 pub(super) async fn sub_room_standings(
     pool: &PgPool,
     room_catalog_id: RoomCatalogId,
@@ -108,12 +109,25 @@ pub(super) async fn sub_room_standings(
             JOIN agent_room.room_instance AS room
               ON room.catalog_entry_id = link.catalog_entry_id
              AND room.state = 'active'
-            JOIN agent_room.private_room_membership AS membership
-              ON membership.catalog_entry_id = link.catalog_entry_id
-             AND membership.principal_id = $2
-             AND membership.membership_status IN ('invited', 'joined')
            WHERE link.parent_catalog_entry_id = $1
              AND link.archived_at IS NULL
+             AND (
+               EXISTS (
+                 SELECT 1 FROM agent_room.private_room_membership AS membership
+                  WHERE membership.catalog_entry_id = link.catalog_entry_id
+                    AND membership.principal_id = $2
+                    AND membership.membership_status IN ('invited', 'joined')
+               )
+               OR EXISTS (
+                 SELECT 1 FROM agent_room.private_room_agent_member AS agent_member
+                   JOIN agent_room.agent_ownership AS ownership
+                     ON ownership.agent_id = agent_member.agent_id
+                  WHERE agent_member.catalog_entry_id = link.catalog_entry_id
+                    AND agent_member.membership_status = 'joined'
+                    AND ownership.principal_id = $2
+                    AND ownership.revoked_at IS NULL
+               )
+             )
            ORDER BY link.created_at ASC, link.catalog_entry_id ASC",
     )
     .bind(room_catalog_id.as_uuid())

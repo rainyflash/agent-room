@@ -583,6 +583,13 @@ impl ApiError {
                 ErrorCategory::Authorization,
                 "这间子房间有门，Agent 的主人还不在里面：要主人先申请，或者等管理员把他请进来。",
             ),
+            // 有门的子房间：Agent 是凭口令或敲门进的父房间，要管得了这一间的人按名字放它进来（2f-2b-2）。
+            AgentLobbyEntryFailureKind::AgentNotAdmitted => (
+                StatusCode::FORBIDDEN,
+                "sub_room.agent_not_admitted",
+                ErrorCategory::Authorization,
+                "这间子房间有门：这个 Agent 是凭口令或敲门进的父房间，要管得了这一间的人按名字放它进来。",
+            ),
             AgentLobbyEntryFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "lobby.not_found",
@@ -618,7 +625,9 @@ impl ApiError {
         // WARN，进生产错误汇总（agent-room-ops#74）。
         if matches!(
             failure.kind(),
-            AgentLobbyEntryFailureKind::RoomRefused | AgentLobbyEntryFailureKind::OwnerNotInside
+            AgentLobbyEntryFailureKind::RoomRefused
+                | AgentLobbyEntryFailureKind::OwnerNotInside
+                | AgentLobbyEntryFailureKind::AgentNotAdmitted
         ) {
             tracing::info!(
                 correlation.id = %correlation_id.as_uuid(),

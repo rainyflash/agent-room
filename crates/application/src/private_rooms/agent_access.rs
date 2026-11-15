@@ -11,6 +11,8 @@
 
 mod sub_room_knocks;
 
+pub use sub_room_knocks::{AgentMemberSeat, SubRoomAgentMemberSeating};
+
 use std::{fmt::Write as _, sync::Arc};
 
 use agent_room_domain::{

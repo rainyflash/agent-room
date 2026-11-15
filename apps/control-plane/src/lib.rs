@@ -1057,7 +1057,7 @@ fn build_agent_room_placements(
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
         provisioning,
-        build_private_room_service(config, dependencies)?,
+        sub_room_seating(config, dependencies)?,
     )?;
     Ok(Arc::new(AgentRoomPlacementService::new(
         AgentRoomPlacementDependencies {
@@ -1850,9 +1850,29 @@ fn build_lobby_entry_with_provisioning(
         dependencies.system_runtime.clone(),
         dependencies.matrix_identities.clone(),
         provisioning.clone(),
-        build_private_room_service(config, dependencies)?,
+        sub_room_seating(config, dependencies)?,
     )?;
     Ok((entries, provisioning))
+}
+
+/// 本机 Agent 进子房间时替它占位置的两样：主人不在里面时替主人加（2f-1a），主人带不了它、它自己是
+/// 父房间里的 Agent 成员时照门把它记上（2f-2b-2）。
+struct SubRoomSeating {
+    owners: Arc<PrivateRoomService>,
+    agent_members: Arc<PrivateRoomAgentAccessService>,
+}
+
+fn sub_room_seating(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<SubRoomSeating, StartupError> {
+    Ok(SubRoomSeating {
+        owners: build_private_room_service(config, dependencies)?,
+        agent_members: build_device_agent_access(
+            dependencies,
+            config.network_agents.seal_key.as_ref(),
+        ),
+    })
 }
 
 fn build_agent_lobby_entry(
@@ -1861,7 +1881,7 @@ fn build_agent_lobby_entry(
     system_runtime: Arc<SystemRuntime>,
     matrix: Arc<MatrixApplicationServiceProvisioner>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
-    sub_room_owners: Arc<PrivateRoomService>,
+    seating: SubRoomSeating,
 ) -> Result<Arc<AgentLobbyEntryService>, StartupError> {
     let reservation_lifetime = domain_duration(config.reservation_lifetime)?;
     let join_policy = LobbyJoinPolicy::new(reservation_lifetime)
@@ -1875,7 +1895,9 @@ fn build_agent_lobby_entry(
             // 凭口令进来的 Agent 成员不随任何成员入场，按它自己的成员记录裁决。
             private_agents: repositories.clone(),
             // 没有门的子房间里主人还不在时，照人自己点“加入”的那一段先把主人加进去。
-            sub_room_owners,
+            sub_room_owners: seating.owners,
+            // 主人带不了它、它自己凭口令进了父房间的，照网络 Agent 敲门的那条规矩记成 Agent 成员。
+            sub_room_agent_members: seating.agent_members,
             private_matrix: matrix.clone(),
             memberships: matrix.clone(),
             provisioning,
