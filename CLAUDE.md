@@ -388,7 +388,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 封禁时在等的申请作废在存储的 `write_members`（存任何一间子房间时，`private_room_parent` 卡着只动子房间），和封禁同一个事务；每小时的清理也兜着。别挪到用例里另做一步。
     - 请进来时他在等的申请记成批准，批准的人记请他的人。
     - 治理台账落在子房间上还走整间房那一套（`remove_as`、`ban_as` 要动手的人在这一间里有“管理”），父房间的管理员没进来时动不了；跟 2f 一起看。
-  - 子房间第 2d-4 步（#PR），连同房间身份的 R5：设、撤子房间管理员（`PUT`、`DELETE .../sub-rooms/{子}/managers/{账户}`），设计文档的“子房间管理员”一节。没有迁移。用例在 `service/sub_room_managers.rs`。别拆的几样：
+  - 子房间第 2d-4 步（#822），连同房间身份的 R5：设、撤子房间管理员（`PUT`、`DELETE .../sub-rooms/{子}/managers/{账户}`），设计文档的“子房间管理员”一节。没有迁移。用例在 `service/sub_room_managers.rs`。别拆的几样：
     - 身上的“管理”和管理员名单（`private_room_sub_room_manager`）在同一个事务里改（存储的 `change_sub_room_manager`）。只改身上的，父房间一变、子房间照着重算（`follow_parent_room` 看名单）就把它冲掉。
     - 谁能设、谁能撤照领域层的 `authorize_sub_room_manager_change`：撤别人要父房间的房主或管理员，子房间管理员只能撤自己；设的人得已经在这一间里，父房间的房主和管理员不让设。和移出、封禁的 `PeerManager` 是一个道理，别只放开一边。
     - 自己不当了不要最近登录过，设、撤别人要；路由只要有效登录。
