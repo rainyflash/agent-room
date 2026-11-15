@@ -8,16 +8,17 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        JoinRequestRecord, NewSubRoom, PortFuture, SubRoomAdmission, SubRoomCreationBlock,
-        SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
-        SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        JoinRequestRecord, NewSubRoom, PortFuture, SubRoomAdmission, SubRoomArchiveRecord,
+        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome,
+        SubRoomLink, SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord,
+        SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
+    sub_room_archive::SubRoomArchiveReason,
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SUB_ROOM_AUTO_ARCHIVE_DAYS,
         SubRoomCreators, SubRoomDoor, SubRoomPolicy,
@@ -64,7 +65,11 @@ impl SubRoomStore for PostgresRepositories {
                          link.created_by_principal_id,
                          link.created_by_agent_id,
                          floor(extract(epoch FROM link.created_at) * 1000)::bigint
-                             AS created_at_ms
+                             AS created_at_ms,
+                         floor(extract(epoch FROM link.archived_at) * 1000)::bigint
+                             AS archived_at_ms,
+                         link.archived_by_principal_id,
+                         link.archived_reason
                     FROM agent_room.private_room_parent AS link
                     JOIN agent_room.room_catalog_entry AS catalog
                       ON catalog.id = link.catalog_entry_id
@@ -1008,7 +1013,28 @@ fn decode_link(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoom
         created_by: PrincipalId::from_uuid(created_by),
         created_by_agent: created_by_agent.map(AgentId::from_uuid),
         created_at: UtcMillis::new(created_at).map_err(|_| corrupt_data(operation))?,
+        archived: decode_archive_record(row, operation)?,
     })
+}
+
+/// 归档的记录：时间和原因要么都有、要么都没有（表上的约束卡着）。
+fn decode_archive_record(
+    row: &PgRow,
+    operation: &'static str,
+) -> RepositoryResult<Option<SubRoomArchiveRecord>> {
+    let at: Option<i64> = decode_column(row, "archived_at_ms", operation)?;
+    let by: Option<uuid::Uuid> = decode_column(row, "archived_by_principal_id", operation)?;
+    let reason: Option<String> = decode_column(row, "archived_reason", operation)?;
+    match (at, reason) {
+        (None, None) => Ok(None),
+        (Some(at), Some(reason)) => Ok(Some(SubRoomArchiveRecord {
+            at: UtcMillis::new(at).map_err(|_| corrupt_data(operation))?,
+            by: by.map(PrincipalId::from_uuid),
+            reason: SubRoomArchiveReason::try_from(reason.as_str())
+                .map_err(|_| corrupt_data(operation))?,
+        })),
+        _ => Err(corrupt_data(operation)),
+    }
 }
 
 fn decode_entry(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoomEntry> {

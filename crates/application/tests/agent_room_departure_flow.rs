@@ -274,6 +274,14 @@ impl PrivateRoomMatrixGateway for 记录私人Matrix {
         Box::pin(async { unreachable!("离开不归档") })
     }
 
+    fn reopen<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { unreachable!("离开不解开归档的房间") })
+    }
+
     fn set_name<'a>(
         &'a self,
         _room_id: &'a MatrixRoomId,

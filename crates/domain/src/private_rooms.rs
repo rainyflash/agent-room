@@ -999,6 +999,21 @@ impl PrivateRoom {
         Ok(true)
     }
 
+    /// 子房间的归档和恢复只改这一样（[`crate::sub_room_archive`]）：谁能做由子房间的规则判断，
+    /// 这里不看是谁。已经是这个状态的回 `false`。
+    pub(crate) fn change_status(
+        &mut self,
+        status: PrivateRoomLifecycleStatus,
+    ) -> DomainResult<bool> {
+        if self.status == status {
+            return Ok(false);
+        }
+        let next_version = self.next_version()?;
+        self.status = status;
+        self.version = next_version;
+        Ok(true)
+    }
+
     fn terminate_membership(
         &mut self,
         principal_id: PrincipalId,

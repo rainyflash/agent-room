@@ -161,6 +161,15 @@ pub trait PrivateRoomMatrixGateway: Send + Sync {
 
     fn archive<'a>(&'a self, room_id: &'a MatrixRoomId) -> PortFuture<'a, MatrixResult<()>>;
 
+    /// 把归档的房间解开（子房间恢复时，`specs/redesign/sub-rooms.md` 第 2e-2 步）：门槛写回“在用”的
+    /// 那一套，每个人该有的发言级别在同一次里写进去，不会有一刻是按归档以前的级别开着的。和
+    /// [`Self::set_speaking_batch`] 不一样，`assignments` 为空也写门槛。
+    fn reopen<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>>;
+
     /// 设置 Matrix 房间名（`m.room.name`），客户端里显示的房间名跟着变。重复设置同名幂等。
     fn set_name<'a>(
         &'a self,

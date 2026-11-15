@@ -455,6 +455,22 @@ impl PrivateRoomMatrixGateway for MatrixApplicationServiceProvisioner {
             .await
         })
     }
+
+    fn reopen<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        assignments: &'a [PrivateMatrixSpeakingAssignment],
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async move {
+            update_power_levels(
+                self,
+                room_id,
+                MatrixOperation::UpdatePowerLevels,
+                |content, operation| apply_active_private_policy(content, assignments, operation),
+            )
+            .await
+        })
+    }
 }
 
 /// 房主改简介时写话题（`specs/public-rooms/design.md`），和改名同一种写法。

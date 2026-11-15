@@ -14,7 +14,8 @@ use agent_room_domain::{
 use crate::{
     persistence::RepositoryResult,
     ports::{
-        JoinRequestRecord, PortFuture, PrivateRoomSnapshot, RoomRoleChange, SubRoomCategoryStore,
+        JoinRequestRecord, PortFuture, PrivateRoomSnapshot, RoomRoleChange, SubRoomArchiveRecord,
+        SubRoomArchiveStore, SubRoomCategoryStore,
     },
 };
 
@@ -106,6 +107,8 @@ pub struct SubRoomLink {
     pub created_by: PrincipalId,
     pub created_by_agent: Option<AgentId>,
     pub created_at: UtcMillis,
+    /// 归档了的时候，什么时候、谁、为什么（2e-2）。没归档为空。
+    pub archived: Option<SubRoomArchiveRecord>,
 }
 
 /// 子房间名单里的一行，带上看的人自己在这一间里的位置。
@@ -250,8 +253,8 @@ pub enum SubRoomSyncScope {
     Under(RoomCatalogId),
 }
 
-/// 分类（2e-1）也是这个存储口子的一部分：建子房间、改分类的用例拿同一份存储。
-pub trait SubRoomStore: SubRoomCategoryStore + Send + Sync {
+/// 分类（2e-1）、归档和恢复（2e-2）也是这个存储口子的一部分：子房间的用例拿同一份存储。
+pub trait SubRoomStore: SubRoomCategoryStore + SubRoomArchiveStore + Send + Sync {
     /// 这间房是子房间时，它的父子关系。
     fn sub_room_link(
         &self,

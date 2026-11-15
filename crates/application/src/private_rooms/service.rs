@@ -41,6 +41,7 @@ mod moderation_members;
 mod public_creation;
 mod public_transfer;
 mod role_changes;
+mod sub_room_archive;
 mod sub_room_categories;
 mod sub_room_managers;
 mod sub_room_members;

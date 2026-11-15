@@ -182,6 +182,10 @@ pub use rooms::{
     NewSubRoomCategory, SubRoomCategory, SubRoomCategoryName, SubRoomCategoryOutcome,
     SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
 };
+pub use rooms::{
+    SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord, SubRoomArchiveStore,
+    SubRoomRestoration,
+};
 pub use runtime::{Clock, IdentifierFactory};
 
 pub type PortFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

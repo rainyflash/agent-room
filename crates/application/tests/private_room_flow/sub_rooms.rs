@@ -9,10 +9,10 @@ use std::collections::BTreeSet;
 
 use agent_room_application::{
     ports::{
-        JoinRequestRecord, NewSubRoom, SubRoomAdmission, SubRoomCreationBlock,
-        SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink,
-        SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord, SubRoomRevision,
-        SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
+        JoinRequestRecord, NewSubRoom, SubRoomAdmission, SubRoomArchiveRecord,
+        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomJoinRequestOutcome,
+        SubRoomLink, SubRoomManagerChange, SubRoomParentFacts, SubRoomPolicyRecord,
+        SubRoomRevision, SubRoomRevisionBlock, SubRoomStore, SubRoomSyncScope, SubRoomSyncTask,
     },
     private_rooms::{
         ChangeSubRoomPolicy, CreateSubRoom, InspectSubRoomPolicy, ListSubRooms, ReviseSubRoom,
@@ -28,6 +28,7 @@ use agent_room_domain::{
         RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind, RoomCatalogStatus,
         RoomCatalogVisibility, RoomInstance, RoomInstanceFields, RoomInstanceState,
     },
+    sub_room_archive::SubRoomArchiveReason,
     sub_rooms::{
         MAXIMUM_OPEN_SUB_ROOMS, MAXIMUM_SUB_ROOMS_PER_CREATOR_PER_HOUR, SubRoomCreators,
         SubRoomPolicy, follow_parent_room,
@@ -36,6 +37,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_archive.rs"]
+mod archive;
 #[path = "sub_room_categories.rs"]
 mod categories;
 #[path = "sub_room_doors.rs"]
@@ -975,6 +978,23 @@ struct StoredLink {
     category: Option<SubRoomCategoryId>,
 }
 
+impl StoredLink {
+    /// 归档或者恢复：父子关系上的记录和比重名、数名额用的那一样一起改。
+    fn mark_archived(&mut self, record: Option<SubRoomArchiveRecord>) {
+        self.archived = record.is_some();
+        self.link.archived = record;
+    }
+}
+
+/// 归档的记录，时间都记在夹具时钟的那一刻。
+fn archive_record(reason: SubRoomArchiveReason, by: Option<PrincipalId>) -> SubRoomArchiveRecord {
+    SubRoomArchiveRecord {
+        at: UtcMillis::new(1_000).expect("时间有效"),
+        by,
+        reason,
+    }
+}
+
 /// 排着的一件要在聊天服务器上跟着做的事，和真实存储的 `private_room_sub_room_sync` 一行一样。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct QueuedSync {
@@ -1190,7 +1210,10 @@ impl MemoryRooms {
             {
                 for link in self.links.lock().expect("关系锁正常").iter_mut() {
                     if link.link.catalog_id == sub_room {
-                        link.archived = true;
+                        link.mark_archived(Some(archive_record(
+                            SubRoomArchiveReason::Parent,
+                            None,
+                        )));
                     }
                 }
                 self.queue_sync(sub_room, None);
@@ -1264,6 +1287,9 @@ impl MemoryRooms {
                 created_by: principal_id(EARLIER),
                 created_by_agent: None,
                 created_at: UtcMillis::new(0).expect("时间有效"),
+                archived: seed
+                    .archived
+                    .then(|| archive_record(SubRoomArchiveReason::Manual, None)),
             },
             managers: Vec::new(),
             archived: seed.archived,
@@ -1295,7 +1321,7 @@ impl MemoryRooms {
         );
         for stored in self.links.lock().expect("关系锁正常").iter_mut() {
             if stored.link.catalog_id == catalog_id(catalog) {
-                stored.archived = true;
+                stored.mark_archived(Some(archive_record(SubRoomArchiveReason::Manual, None)));
             }
         }
     }
@@ -1390,6 +1416,7 @@ impl MemoryRooms {
                 created_by: sub_room.created_by,
                 created_by_agent: sub_room.created_by_agent,
                 created_at: sub_room.created_at,
+                archived: None,
             },
             managers: sub_room.managers.clone(),
             archived: false,
