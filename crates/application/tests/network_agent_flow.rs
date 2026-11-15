@@ -1437,7 +1437,8 @@ struct FakeRooms {
 /// 父房间里有的分类：要别的名字就放进“未分类”。
 const SUB_ROOM_CATEGORY: &str = "进行中";
 
-/// 子房间建在父房间下面，房主照父房间的记。
+/// 子房间建在父房间下面，房主照父房间的记。同一个 Agent 在同一间房下面建过、没归档的同名子房间
+/// （不分大小写）回到那间，和私人房间用例对 Agent 成员一样。
 impl AgentSubRoomCreation for FakeRooms {
     fn create_agent_sub_room(
         &self,
@@ -1453,6 +1454,20 @@ impl AgentSubRoomCreation for FakeRooms {
                     .find(|snapshot| snapshot.catalog().id() == request.parent_catalog_id)
                     .expect("父房间在")
                     .clone();
+                if let Some(existing) = rooms.iter().find(|snapshot| {
+                    snapshot.parent_catalog_id() == Some(request.parent_catalog_id)
+                        && snapshot.catalog().status() == RoomCatalogStatus::Active
+                        && snapshot.room().created_by_agent() == Some(request.created_by_agent)
+                        && snapshot.catalog().name().to_lowercase() == request.name.to_lowercase()
+                }) {
+                    return Ok(AgentSubRoomCreated {
+                        room: existing.clone(),
+                        parent_name: parent.catalog().name().to_owned(),
+                        category: None,
+                        category_missing: false,
+                        created: false,
+                    });
+                }
                 let room = owned_snapshot(
                     request.catalog_id,
                     parent.room().owner_principal_id(),
@@ -1468,6 +1483,7 @@ impl AgentSubRoomCreation for FakeRooms {
                     parent_name: parent.catalog().name().to_owned(),
                     category: found.then(|| SUB_ROOM_CATEGORY.to_owned()),
                     category_missing: request.category.is_some() && !found,
+                    created: true,
                 })
             },
             Err,

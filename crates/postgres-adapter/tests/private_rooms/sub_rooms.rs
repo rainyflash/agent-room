@@ -482,6 +482,7 @@ async fn draft(
         } else {
             vec![creator]
         },
+        creator_agent_member: None,
         end_to_end_encrypted: true,
         created_at: at,
     }

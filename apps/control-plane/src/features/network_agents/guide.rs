@@ -209,6 +209,7 @@ mod tests {
             "network_agent.sub_room_name_taken",
             "network_agent.sub_room_limit_reached",
             "network_agent.sub_room_category_invalid",
+            "network_agent.sub_room_parent_unavailable",
             "network_agent.invalid_message",
             "network_agent.room_required",
             "network_agent.room_not_joined",

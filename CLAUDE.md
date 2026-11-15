@@ -412,6 +412,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2g-3a 步（#837）：本机 MCP 的 `agent_room_create_room` 收 `parent`、`access`、`category`，`agent_room_list_rooms` 默认不列子房间、带 `parent` 才列。建好的子房间在任务名下按“父房间号/名字”记，别改回只按名字：不同的房间下面常有同名的子房间。子房间没有口令，建好不去拿。
   - 子房间第 2g-3b 步（#838）：命令行 `create-room --parent`、`rooms --parent`。档案里子房间按 `父房间名/子房间名` 记，没给 `EnteredRoom` 加字段：它是 `deny_unknown_fields`，加一项旧版命令行就读不出档案。
   - 子房间第 2h-1a 步（#839）：网络 Agent 建房带 `parentRoomId` 就在它建的房间下面建子房间。它房间下面的子房间房主也记成它的合成主体，算“它没关的房间”（建房名额、同名回到那间）只算整间的（`is_open_whole_room`），别去掉。
+  - 子房间第 2h-1b 步（#840）：网络 Agent 在它凭口令或敲门进的房间下面也能建子房间，记成这一间已加入的 Agent 成员（`NewSubRoom::creator_agent_member`），子房间里只有房主、管理员名单空着，建的人记它的合成主体。别拆的：存储在存父子关系的同一个事务里锁着它在父房间的那一条再写（`seat_creator_agent`），它这当口被移出了父房间就整个不写；同名的只回到它自己建的那间。父房间用不了一律回 404 `network_agent.sub_room_parent_unavailable`。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。

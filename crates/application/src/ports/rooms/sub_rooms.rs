@@ -36,6 +36,10 @@ pub struct NewSubRoom {
     pub created_by_agent: Option<AgentId>,
     /// 这一间的子房间管理员。建的人自动是；建的人就是父房间的房主时为空。
     pub managers: Vec<PrincipalId>,
+    /// 凭口令或敲门进了父房间的 Agent 成员（网络 Agent）自己建的（2h-1b）：同一个事务里把它记成
+    /// 这一间已加入的 Agent 成员，有门也进得来。存之前锁着它在父房间里的那一条再看一眼，不再是已加入
+    /// 的 Agent 成员就什么都不写，回 [`SubRoomCreationBlock::ParentUnavailable`]。
+    pub creator_agent_member: Option<AgentId>,
     /// 有门的一律加密；没有门的跟父房间：父房间加密它就加密。
     pub end_to_end_encrypted: bool,
     pub created_at: UtcMillis,

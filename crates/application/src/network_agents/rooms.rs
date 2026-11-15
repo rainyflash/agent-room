@@ -311,34 +311,56 @@ impl NetworkAgentService {
                 NetworkAgentFailureKind::SubRoomCategoryInvalid,
             ));
         }
-        let parent_id = self.room_of(record.id, request.parent).await?;
+        let parent_id = self
+            .room_of(record.id, request.parent)
+            .await
+            .map_err(unavailable_parent)?;
+        let draft = CreateAgentSubRoom {
+            actor: PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?),
+            parent_catalog_id: parent_id,
+            catalog_id: self.identifiers.room_catalog_id(),
+            name,
+            access: request.access,
+            category: request.category.map(str::to_owned),
+            created_by_agent: agent_id,
+        };
+        // 它建的房间（和下面的子房间，房主也记成它）都在它账户的房间里；凭口令或敲门进的不在。
         let rooms = self.account_rooms(record.principal_id).await?;
-        // 只在它自己当房主、还没关的整间房下面建；凭口令或敲门进的房间下面还不行。它房间下面的子房间
-        // 房主也记成它：拿子房间当父房间的照实说不能再开一层。
-        let parent = rooms
+        match rooms
             .iter()
-            .find(|snapshot| {
-                snapshot.catalog().id() == parent_id
-                    && snapshot.room().owner_principal_id() == record.principal_id
-            })
-            .ok_or_else(not_owned)?;
+            .find(|snapshot| snapshot.catalog().id() == parent_id)
+        {
+            Some(parent) => self.sub_room_in_own(record.id, parent, &rooms, draft).await,
+            None => self.sub_room_as_member(record.id, draft).await,
+        }
+    }
+
+    /// 在它建的房间下面建（2h-1a）：它的合成主体就是房主。拿子房间当父房间的照实说不能再开一层；
+    /// 同名、没归档的子房间（谁建的都算，房间是它的）回到那间。
+    async fn sub_room_in_own(
+        &self,
+        id: NetworkAgentId,
+        parent: &PrivateRoomSnapshot,
+        rooms: &[PrivateRoomSnapshot],
+        draft: CreateAgentSubRoom,
+    ) -> NetworkAgentResult<NetworkAgentOwnedSubRoom> {
         if parent.parent_catalog_id().is_some() {
             return Err(NetworkAgentFailure::new(
                 NetworkAgentFailureKind::SubRoomNested,
             ));
         }
-        if !is_open_whole_room(parent, record.principal_id) {
-            return Err(not_owned());
+        if !is_open_whole_room(parent, draft.actor.principal_id()) {
+            return Err(parent_unavailable());
         }
         let parent_room = owned_room(parent);
-        let wanted = sub_room_name_key(&name);
+        let wanted = sub_room_name_key(&draft.name);
         if let Some(existing) = rooms.iter().find(|snapshot| {
-            snapshot.parent_catalog_id() == Some(parent_id)
+            snapshot.parent_catalog_id() == Some(parent_room.catalog_id)
                 && !owned_room(snapshot).archived
                 && sub_room_name_key(snapshot.catalog().name()) == wanted
         }) {
             let room = owned_room(existing);
-            let joined = self.has_joined(record.id, room.catalog_id).await?;
+            let joined = self.has_joined(id, room.catalog_id).await?;
             return Ok(NetworkAgentOwnedSubRoom {
                 room,
                 parent: parent_room,
@@ -350,15 +372,7 @@ impl NetworkAgentService {
         }
         let created = self
             .sub_rooms
-            .create_agent_sub_room(CreateAgentSubRoom {
-                actor: PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?),
-                parent_catalog_id: parent_id,
-                catalog_id: self.identifiers.room_catalog_id(),
-                name,
-                access: request.access,
-                category: request.category.map(str::to_owned),
-                created_by_agent: agent_id,
-            })
+            .create_agent_sub_room(draft)
             .await
             .map_err(sub_room_failure)?;
         Ok(NetworkAgentOwnedSubRoom {
@@ -368,6 +382,43 @@ impl NetworkAgentService {
             category_missing: created.category_missing,
             created: true,
             joined: false,
+        })
+    }
+
+    /// 在它凭口令或敲门进的房间下面建（2h-1b）：它是那里的 Agent 成员，能不能建由私人房间用例照
+    /// 房间的设置把关；同名的只回到它自己在那里建过的那间。父房间关了、它不在里面了都说父房间用不了。
+    async fn sub_room_as_member(
+        &self,
+        id: NetworkAgentId,
+        draft: CreateAgentSubRoom,
+    ) -> NetworkAgentResult<NetworkAgentOwnedSubRoom> {
+        let entered = self
+            .store
+            .rooms(id)
+            .await
+            .map_err(repository)?
+            .into_iter()
+            .find(|room| room.catalog_id == draft.parent_catalog_id && !room.archived)
+            .ok_or_else(parent_unavailable)?;
+        let created = self
+            .sub_rooms
+            .create_agent_sub_room(draft)
+            .await
+            .map_err(sub_room_failure)?;
+        let room = owned_room(&created.room);
+        let joined = !created.created && self.has_joined(id, room.catalog_id).await?;
+        Ok(NetworkAgentOwnedSubRoom {
+            room,
+            parent: NetworkAgentRoom {
+                catalog_id: entered.catalog_id,
+                matrix_room_id: entered.matrix_room_id,
+                name: created.parent_name,
+                archived: false,
+            },
+            category: created.category,
+            category_missing: created.category_missing,
+            created: created.created,
+            joined,
         })
     }
 
@@ -855,10 +906,14 @@ fn is_open_whole_room(snapshot: &PrivateRoomSnapshot, principal_id: PrincipalId)
         && !owned_room(snapshot).archived
 }
 
-/// 建子房间被拒：照子房间的规矩说清楚；不在、归档了、它不是里面的人一律说不是它的房间。
+/// 建子房间被拒：照子房间的规矩说清楚；父房间不在、归档了、它不在里面了（或者在里面说不了话）一律
+/// 说父房间用不了。别的照管房间的说。
 fn sub_room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
     let kind = match failure.kind() {
         PrivateRoomFailureKind::InvalidRequest => NetworkAgentFailureKind::RoomNameInvalid,
+        PrivateRoomFailureKind::NotFound
+        | PrivateRoomFailureKind::Forbidden
+        | PrivateRoomFailureKind::OwnerOnly => NetworkAgentFailureKind::SubRoomParentUnavailable,
         PrivateRoomFailureKind::SubRoom(refusal) => match refusal {
             SubRoomRefusal::Nested => NetworkAgentFailureKind::SubRoomNested,
             SubRoomRefusal::AdminsOnly => NetworkAgentFailureKind::SubRoomAdminsOnly,
@@ -873,7 +928,7 @@ fn sub_room_failure(failure: PrivateRoomFailure) -> NetworkAgentFailure {
                     .map_or_else(dependency, NetworkAgentFailure::rate_limited);
             }
             SubRoomRefusal::Archived | SubRoomRefusal::NotInParent | SubRoomRefusal::Banned => {
-                NetworkAgentFailureKind::RoomNotOwned
+                NetworkAgentFailureKind::SubRoomParentUnavailable
             }
             _ => NetworkAgentFailureKind::Internal,
         },
@@ -967,4 +1022,18 @@ fn knock_failure(failure: AgentAccessFailure) -> NetworkAgentFailure {
 
 const fn not_owned() -> NetworkAgentFailure {
     NetworkAgentFailure::new(NetworkAgentFailureKind::RoomNotOwned)
+}
+
+/// 建子房间时父房间用不了：不是它建的或进了的房间，关了，或者它不在里面了。
+const fn parent_unavailable() -> NetworkAgentFailure {
+    NetworkAgentFailure::new(NetworkAgentFailureKind::SubRoomParentUnavailable)
+}
+
+/// 认不出父房间（不是房间号，也不是它进过的房间的 Matrix 房间 ID）：照建子房间的说法回答。
+fn unavailable_parent(failure: NetworkAgentFailure) -> NetworkAgentFailure {
+    if failure.kind() == NetworkAgentFailureKind::RoomNotOwned {
+        parent_unavailable()
+    } else {
+        failure
+    }
 }

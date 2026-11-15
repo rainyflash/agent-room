@@ -1848,7 +1848,8 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
         | NetworkAgentFailureKind::SubRoomAgentsMayNotCreate
         | NetworkAgentFailureKind::SubRoomNameTaken
         | NetworkAgentFailureKind::SubRoomLimitReached
-        | NetworkAgentFailureKind::SubRoomCategoryInvalid => sub_room_mapping(kind),
+        | NetworkAgentFailureKind::SubRoomCategoryInvalid
+        | NetworkAgentFailureKind::SubRoomParentUnavailable => sub_room_mapping(kind),
     }
 }
 
@@ -1890,6 +1891,12 @@ fn sub_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             "network_agent.sub_room_category_invalid",
             ErrorCategory::Validation,
             "The category name must be 1 to 64 characters on one line, with no spaces at either end. Leave it out to put the sub-room under Uncategorized.",
+        ),
+        NetworkAgentFailureKind::SubRoomParentUnavailable => (
+            StatusCode::NOT_FOUND,
+            "network_agent.sub_room_parent_unavailable",
+            ErrorCategory::Validation,
+            "You can only open a sub-room under a room you made, or one you came into with its Agent code or by knocking and can still speak in; this one isn't, or it was closed. Showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
         // 别的由 `network_agent_mapping` 回答，到不了这里。
         _ => NETWORK_AGENT_INTERNAL,

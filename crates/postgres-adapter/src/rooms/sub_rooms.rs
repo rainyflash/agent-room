@@ -17,7 +17,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
-    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
+    private_rooms::{PrivateRoom, PrivateRoomMembershipStatus, PrivateRoomPermissions},
     room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     sub_room_archive::SubRoomArchiveReason,
@@ -206,6 +206,12 @@ impl SubRoomStore for PostgresRepositories {
             )
             .await?;
             insert_link(&mut transaction, sub_room, operation).await?;
+            if let Some(agent) = sub_room.creator_agent_member
+                && !seat_creator_agent(&mut transaction, sub_room, agent, operation).await?
+            {
+                // 它这当口被移出了父房间：什么都不写，事务丢掉就是回滚。
+                return Ok(Some(SubRoomCreationBlock::ParentUnavailable));
+            }
             // 这间子房间是照建之前读到的父房间算的；那以后父房间又存过的话，照现在的再算一遍。
             follow_parent_at_creation(&mut transaction, sub_room, operation).await?;
             transaction
@@ -1033,6 +1039,42 @@ async fn insert_link(
         .map_err(|error| map_sqlx_error(operation, &error))?;
     }
     Ok(())
+}
+
+/// 凭口令或敲门进了父房间的 Agent 成员（网络 Agent）自己建的子房间（2h-1b）：锁着它在父房间里的那一条，
+/// 还是已加入的 Agent 成员才把它记成这一间已加入的 Agent 成员。父房间里正在移出它的，等那边提交以后
+/// 再看。进来的方式记成 `knock`：它没拿口令进这一间，和没有门时直接放进来一样。
+async fn seat_creator_agent(
+    transaction: &mut Transaction<'_, Postgres>,
+    sub_room: &NewSubRoom,
+    agent: AgentId,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let seated = sqlx::query(
+        r"INSERT INTO agent_room.private_room_agent_member
+              (catalog_entry_id, agent_id, membership_status, permission_bits,
+               joined_via, created_at, status_changed_at)
+          SELECT $1, $2, 'joined', $3, 'knock',
+                 to_timestamp($4::double precision / 1000.0),
+                 to_timestamp($4::double precision / 1000.0)
+           WHERE EXISTS (
+                     SELECT 1
+                       FROM agent_room.private_room_agent_member AS parent_member
+                      WHERE parent_member.catalog_entry_id = $5
+                        AND parent_member.agent_id = $2
+                        AND parent_member.membership_status = 'joined'
+                        FOR SHARE OF parent_member
+                 )",
+    )
+    .bind(sub_room.snapshot.catalog().id().as_uuid())
+    .bind(agent.as_uuid())
+    .bind(i16::from(PrivateRoomPermissions::AGENT_MEMBER.bits()))
+    .bind(sub_room.created_at.value())
+    .bind(sub_room.parent_catalog_id.as_uuid())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(seated.rows_affected() == 1)
 }
 
 fn decode_link(row: &PgRow, operation: &'static str) -> RepositoryResult<SubRoomLink> {

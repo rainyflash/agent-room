@@ -61,6 +61,8 @@ mod members;
 mod membership;
 #[path = "sub_room_mutes.rs"]
 mod mutes;
+#[path = "sub_room_network_agents.rs"]
+mod network_agents;
 #[path = "sub_room_privacy.rs"]
 mod privacy;
 #[path = "sub_room_sync.rs"]
@@ -989,6 +991,8 @@ struct StoredLink {
     archived: bool,
     /// 在哪个分类里（2e-1b）。
     category: Option<SubRoomCategoryId>,
+    /// 凭口令或敲门进了父房间的 Agent 成员自己建的（2h-1b）：存的时候把它记成这一间的 Agent 成员。
+    creator_agent: Option<AgentId>,
 }
 
 impl StoredLink {
@@ -1336,6 +1340,7 @@ impl MemoryRooms {
             managers: Vec::new(),
             archived: seed.archived,
             category: None,
+            creator_agent: None,
         });
     }
 
@@ -1463,6 +1468,7 @@ impl MemoryRooms {
             managers: sub_room.managers.clone(),
             archived: false,
             category: sub_room.category_id,
+            creator_agent: sub_room.creator_agent_member,
         });
     }
 }

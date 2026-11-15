@@ -9,9 +9,11 @@
 use std::collections::BTreeSet;
 
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId},
+    ids::{AgentId, PrincipalId, RoomCatalogId},
+    join_codes::PrivateRoomAgentMemberStatus,
     private_rooms::{
         PrivateRoom, PrivateRoomLifecycleStatus, PrivateRoomMember, PrivateRoomMembershipStatus,
+        PrivateRoomPermissions,
     },
     room_join_requests::JoinRequestStatus,
     room_listing::RoomJoinMode,
@@ -20,8 +22,9 @@ use agent_room_domain::{
     },
     sub_room_archive::{RestoreStanding, SubRoomArchiveReason, restore_allowed},
     sub_rooms::{
-        SubRoomCreationRefusal, SubRoomDoor, SubRoomPolicy, authorize_sub_room_creation,
-        new_sub_room, runs_parent_room, sub_room_name_key, validate_sub_room_name,
+        SubRoomCreationRefusal, SubRoomDoor, SubRoomPolicy,
+        authorize_agent_member_sub_room_creation, authorize_sub_room_creation, new_sub_room,
+        runs_parent_room, sub_room_name_key, validate_sub_room_name,
     },
     time::UtcMillis,
     version::AggregateVersion,
@@ -354,10 +357,30 @@ struct PreparedSubRoom {
     speakers: Vec<(PrincipalId, MatrixUserId)>,
 }
 
+/// 谁在建（2h-1b）：父房间里的人（本人，或者他的 Agent 替他），或者凭口令、敲门进了父房间的 Agent
+/// 成员（网络 Agent 自己）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SubRoomCreatorSeat {
+    Member,
+    AgentMember(AgentId),
+}
+
+/// 建的人是 Agent 成员时：它是谁、在父房间里能做什么。
+type AgentMemberStanding = Option<(AgentId, PrivateRoomPermissions)>;
+
 impl PrivateRoomService {
     pub(super) async fn create_sub_room_internal(
         &self,
         request: CreateSubRoom,
+    ) -> PrivateRoomResult<PrivateRoomSnapshot> {
+        self.create_sub_room_as(request, SubRoomCreatorSeat::Member)
+            .await
+    }
+
+    pub(super) async fn create_sub_room_as(
+        &self,
+        request: CreateSubRoom,
+        seat: SubRoomCreatorSeat,
     ) -> PrivateRoomResult<PrivateRoomSnapshot> {
         const OPERATION: &str = "sub_room.create";
         let now = self.clock.now();
@@ -367,9 +390,7 @@ impl PrivateRoomService {
         let door = SubRoomDoor::new(request.access, request.hidden)
             .map_err(|error| domain(OPERATION, &error))?;
         let creator = request.actor.principal_id();
-        let parent = self
-            .load_as_member(request.parent_catalog_id, creator, OPERATION)
-            .await?;
+        let (parent, agent_member) = self.creator_parent(&request, seat, OPERATION).await?;
         if parent.parent_catalog_id().is_some() {
             return Err(refused(OPERATION, SubRoomRefusal::Nested));
         }
@@ -382,7 +403,7 @@ impl PrivateRoomService {
             return Ok(existing);
         }
         let facts = self
-            .authorized_parent_facts(&request, &parent, OPERATION)
+            .authorized_parent_facts(&request, &parent, agent_member, OPERATION)
             .await?;
         // 有门的一律加密；没有门的跟父房间。
         let encrypted = facts.end_to_end_encrypted || door.has_door();
@@ -400,7 +421,9 @@ impl PrivateRoomService {
         };
         self.ensure_sub_room_creatable(&check, OPERATION).await?;
 
-        let room = new_sub_room(request.catalog_id, parent.room(), creator)
+        // Agent 成员自己不是房间里的人：子房间里只有房主，它记成这一间的 Agent 成员。
+        let member = agent_member.map_or(creator, |_| parent.room().owner_principal_id());
+        let room = new_sub_room(request.catalog_id, parent.room(), member)
             .map_err(|error| domain(OPERATION, &error))?;
         let prepared = self
             .prepare_sub_room(
@@ -430,7 +453,11 @@ impl PrivateRoomService {
                 OPERATION,
             )?
             .under(request.parent_catalog_id);
-        let sub_room = new_sub_room_record(&request, &parent, snapshot, door, encrypted, now);
+        let mut sub_room = new_sub_room_record(&request, &parent, snapshot, door, encrypted, now);
+        if let Some((agent, _)) = agent_member {
+            sub_room.managers.clear();
+            sub_room.creator_agent_member = Some(agent);
+        }
         let stored = self.store_sub_room(&request, sub_room, OPERATION).await?;
         self.hold_fresh_mutes(&request, &matrix_room_id, &prepared.speakers, OPERATION)
             .await?;
@@ -522,6 +549,7 @@ impl PrivateRoomService {
         &self,
         request: &CreateSubRoom,
         parent: &PrivateRoomSnapshot,
+        agent_member: AgentMemberStanding,
         operation: &'static str,
     ) -> PrivateRoomResult<SubRoomParentFacts> {
         let facts = self
@@ -530,14 +558,48 @@ impl PrivateRoomService {
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))?
             .ok_or_else(|| not_found(operation))?;
-        authorize_sub_room_creation(
-            parent.room(),
-            request.actor.principal_id(),
-            facts.policy,
-            request.created_by_agent.is_some(),
-        )
+        match agent_member {
+            None => authorize_sub_room_creation(
+                parent.room(),
+                request.actor.principal_id(),
+                facts.policy,
+                request.created_by_agent.is_some(),
+            ),
+            Some((_, permissions)) => {
+                authorize_agent_member_sub_room_creation(parent.room(), permissions, facts.policy)
+            }
+        }
         .map_err(|refusal| creation_refused(operation, refusal))?;
         Ok(facts)
+    }
+
+    /// 父房间，和建的人在里面的位置。人得是里面已加入的成员（[`Self::load_as_member`]）；Agent 成员
+    /// 得是父房间里已加入的 Agent 成员，不是的和找不到一样。
+    async fn creator_parent(
+        &self,
+        request: &CreateSubRoom,
+        seat: SubRoomCreatorSeat,
+        operation: &'static str,
+    ) -> PrivateRoomResult<(PrivateRoomSnapshot, AgentMemberStanding)> {
+        let SubRoomCreatorSeat::AgentMember(agent) = seat else {
+            let parent = self
+                .load_as_member(
+                    request.parent_catalog_id,
+                    request.actor.principal_id(),
+                    operation,
+                )
+                .await?;
+            return Ok((parent, None));
+        };
+        let parent = self.load(request.parent_catalog_id, operation).await?;
+        let member = self
+            .agent_members
+            .agent_member_in(request.parent_catalog_id, agent)
+            .await
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?
+            .filter(|member| member.status == PrivateRoomAgentMemberStatus::Joined)
+            .ok_or_else(|| not_found(operation))?;
+        Ok((parent, Some((agent, member.permissions))))
     }
 
     /// 重名、到上限、建得太快的，在建 Matrix 房间之前就说。
@@ -975,6 +1037,7 @@ fn new_sub_room_record(
         } else {
             vec![creator]
         },
+        creator_agent_member: None,
         end_to_end_encrypted,
         created_at,
     }

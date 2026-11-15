@@ -118,6 +118,32 @@ pub fn authorize_sub_room_creation(
     Ok(())
 }
 
+/// 凭口令或敲门进了 `parent` 的 Agent 成员（网络 Agent）自己建子房间（2h-1b）。它在父房间里的权限是
+/// `permissions`：要能发言。它不是管理员，房主定了只有管理员能建、关掉了“Agent 能建”时都不行。
+///
+/// # Errors
+///
+/// 建不了时返回原因。
+pub fn authorize_agent_member_sub_room_creation(
+    parent: &PrivateRoom,
+    permissions: PrivateRoomPermissions,
+    policy: SubRoomPolicy,
+) -> Result<(), SubRoomCreationRefusal> {
+    if parent.status() != PrivateRoomLifecycleStatus::Active {
+        return Err(SubRoomCreationRefusal::ParentArchived);
+    }
+    if !permissions.speak() {
+        return Err(SubRoomCreationRefusal::NotASpeakingMember);
+    }
+    if policy.creators == SubRoomCreators::Admins {
+        return Err(SubRoomCreationRefusal::AdminsOnly);
+    }
+    if !policy.agents_may_create {
+        return Err(SubRoomCreationRefusal::AgentsMayNotCreate);
+    }
+    Ok(())
+}
+
 /// 一个人在子房间里的权限：查看、发言、自动发言照他在父房间里的；“管理”看他管不管这一间
 /// （这一间的子房间管理员，或者父房间的管理员）；“邀请”一律没有，子房间不能往外请人。
 ///

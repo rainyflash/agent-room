@@ -4,6 +4,7 @@ use agent_room_application::network_agents::{
     NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomUseCases,
     NetworkAgentSubRoomRequest,
 };
+use agent_room_application::ports::NetworkAgentRoomRecord;
 
 use super::*;
 
@@ -103,6 +104,92 @@ async fn 同名的没归档子房间回到那间_不分大小写_子房间不算
     assert_ne!(whole.room.catalog_id, first.room.catalog_id);
 }
 
+/// 它凭口令或敲门进了的房间：记在它进过的房间里。
+async fn record_entered(harness: &Harness, catalog_id: RoomCatalogId, archived: bool) {
+    let id = harness.store.only().id;
+    harness
+        .store
+        .record_room(
+            id,
+            &NetworkAgentRoomRecord {
+                catalog_id,
+                matrix_room_id: owned_matrix_room(catalog_id),
+                joined_at: UtcMillis::new(START).unwrap(),
+                name: None,
+                archived,
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn 凭口令进了别人的房间_在它下面建子房间交给私人房间用例_同名的回到它自己建的那间() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let other = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+    record_entered(&harness, other, false).await;
+
+    let owned = sub_room(&harness, &token, &other.to_string(), "设计", Some("进行中"))
+        .await
+        .unwrap();
+
+    assert!(owned.created);
+    assert!(!owned.joined, "由网关让加密客户端就绪后再进");
+    assert_eq!(owned.parent.catalog_id, other);
+    assert_eq!(owned.parent.matrix_room_id, owned_matrix_room(other));
+    assert_eq!(owned.parent.name, "别人的房间");
+    assert_eq!(owned.category.as_deref(), Some("进行中"));
+    let created = harness.rooms.sub_rooms_created.lock().unwrap().clone();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].actor.principal_id(), record.principal_id);
+    assert_eq!(created[0].parent_catalog_id, other);
+
+    let again = sub_room(
+        &harness,
+        &token,
+        owned_matrix_room(other).as_str(),
+        "设计",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!again.created, "按 Matrix 房间 ID 认也行，回到它建的那间");
+    assert!(!again.joined, "还没进去");
+    assert_eq!(again.room, owned.room);
+
+    record_entered(&harness, owned.room.catalog_id, false).await;
+    let entered = sub_room(&harness, &token, &other.to_string(), "设计", None)
+        .await
+        .unwrap();
+    assert!(entered.joined, "进去了的照实说");
+}
+
+#[tokio::test]
+async fn 进了的房间关了_或者没进过_不去建() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let other = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+
+    assert_eq!(
+        kind(sub_room(&harness, &token, &other.to_string(), "设计", None).await),
+        NetworkAgentFailureKind::SubRoomParentUnavailable,
+        "没进过"
+    );
+    record_entered(&harness, other, true).await;
+    assert_eq!(
+        kind(sub_room(&harness, &token, &other.to_string(), "设计", None).await),
+        NetworkAgentFailureKind::SubRoomParentUnavailable,
+        "关了"
+    );
+    assert!(harness.rooms.sub_rooms_created.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn 父房间不是它建的_关了的_或者本身是子房间_什么都不建() {
     let harness = Harness::enabled();
@@ -119,11 +206,11 @@ async fn 父房间不是它建的_关了的_或者本身是子房间_什么都�
 
     assert_eq!(
         kind(sub_room(&harness, &token, &other.to_string(), "设计", None).await),
-        NetworkAgentFailureKind::RoomNotOwned
+        NetworkAgentFailureKind::SubRoomParentUnavailable
     );
     assert_eq!(
         kind(sub_room(&harness, &token, "!nowhere:matrix.test", "设计", None).await),
-        NetworkAgentFailureKind::RoomNotOwned,
+        NetworkAgentFailureKind::SubRoomParentUnavailable,
         "不是房间号、也不是它进过的房间"
     );
     assert_eq!(
@@ -146,7 +233,7 @@ async fn 父房间不是它建的_关了的_或者本身是子房间_什么都�
         .expect("关房成功");
     assert_eq!(
         kind(sub_room(&harness, &token, &number, "设计", None).await),
-        NetworkAgentFailureKind::RoomNotOwned
+        NetworkAgentFailureKind::SubRoomParentUnavailable
     );
     assert!(harness.rooms.sub_rooms_created.lock().unwrap().is_empty());
 }
@@ -208,7 +295,19 @@ async fn 私人房间用例拒绝时照子房间的规矩说清楚() {
         ),
         (
             sub_room_refused(SubRoomRefusal::Archived),
-            NetworkAgentFailureKind::RoomNotOwned,
+            NetworkAgentFailureKind::SubRoomParentUnavailable,
+        ),
+        (
+            room_failure(PrivateRoomFailureKind::NotFound),
+            NetworkAgentFailureKind::SubRoomParentUnavailable,
+        ),
+        (
+            room_failure(PrivateRoomFailureKind::Forbidden),
+            NetworkAgentFailureKind::SubRoomParentUnavailable,
+        ),
+        (
+            room_failure(PrivateRoomFailureKind::Conflict),
+            NetworkAgentFailureKind::DependencyUnavailable,
         ),
         (
             room_failure(PrivateRoomFailureKind::DependencyUnavailable),
