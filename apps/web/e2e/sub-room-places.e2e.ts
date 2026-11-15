@@ -20,10 +20,7 @@ type FixtureSubRoomActions = {
   readonly revisions: readonly Record<string, unknown>[];
   readonly archived: readonly string[];
   readonly answers: readonly { readonly principalId: string; readonly decision: string }[];
-<<<<<<< HEAD
   readonly managers: readonly { readonly kind: string; readonly principalId: string }[];
-=======
->>>>>>> b9cecfee62d45a0ed1d6cc20444dd6c18c47f440
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -454,7 +451,6 @@ test('子房间里有人在等：左栏那一行和齿轮上带点，设置最�
   expect(failures).toEqual([]);
 });
 
-<<<<<<< HEAD
 test('子房间设置：管这一间的人里写着建的人，从里面的人里设一个管理员，再撤掉；不算最近登录过先请人重新登录', async ({
   page,
 }) => {
@@ -499,8 +495,6 @@ test('子房间设置：管这一间的人里写着建的人，从里面的人�
   expect(failures).toEqual([]);
 });
 
-=======
->>>>>>> b9cecfee62d45a0ed1d6cc20444dd6c18c47f440
 test('浏览子房间在手机上：一行拆成两层，不横向滚动', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });
