@@ -15,6 +15,8 @@ const services = {
 };
 
 vi.mock('@/app/app-services', () => ({ useAppServices: () => services }));
+// 在等的那一块自己有测试（sub-room-waiting.spec.tsx）。
+vi.mock('./sub-room-waiting', () => ({ SubRoomWaiting: () => null }));
 
 const { SubRoomSettings, subRoomRevision } = await import('./sub-room-settings');
 

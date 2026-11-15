@@ -15,6 +15,8 @@ import {
 } from '@/features/private-rooms/domain/sub-rooms';
 import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 
+import { SubRoomWaiting } from './sub-room-waiting';
+
 import '@/features/private-rooms/ui/private-room-public-settings.css';
 import './sub-room-settings.css';
 
@@ -79,8 +81,8 @@ export type SubRoomSettingsProps = {
 };
 
 /**
- * 子房间设置（`specs/redesign/sub-rooms.md`“网页”，画布第 8 张）：名字、用途、分类，谁能进和“不在名单里显示”，
- * 最下面是归档。这一间的管理员、父房间的房主和管理员看得到。在等的申请和管这一间的人在后面两步加。
+ * 子房间设置（`specs/redesign/sub-rooms.md`“网页”，画布第 8 张）：最上面在等的申请和敲门，名字、用途、分类，
+ * 谁能进和“不在名单里显示”，最下面是归档。这一间的管理员、父房间的房主和管理员看得到。管这一间的人在下一步加。
  */
 export function SubRoomSettings({ list, onArchived, room }: SubRoomSettingsProps) {
   const { t } = useTranslation();
@@ -144,6 +146,7 @@ export function SubRoomSettings({ list, onArchived, room }: SubRoomSettingsProps
       : 0;
   return (
     <div className="sub-room-settings">
+      <SubRoomWaiting room={room} subRoomRef={ref} />
       <form
         className="sub-room-settings__form"
         id={formId}

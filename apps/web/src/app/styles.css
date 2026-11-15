@@ -1296,10 +1296,11 @@
   color: var(--color-paper);
 }
 
+/* 墨色圆里的机器人跟着圆的纸色：写成墨色时它和圆一个颜色，看不见（敲门、Agent 进门两处）。 */
 .private-room-member__identity svg {
   width: 13px;
   height: 13px;
-  color: var(--color-ink);
+  color: inherit;
 }
 
 .private-room-member__identity strong,

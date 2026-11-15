@@ -19,6 +19,7 @@ type FixtureSubRoomActions = {
   readonly broughtAgents: readonly { readonly agentId: string; readonly catalogId: string }[];
   readonly revisions: readonly Record<string, unknown>[];
   readonly archived: readonly string[];
+  readonly answers: readonly { readonly principalId: string; readonly decision: string }[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -415,6 +416,37 @@ test('子房间设置：管这一间的人改名字、分类和门，名字撞�
     'This sub-room is archived. Earlier messages can still be read, and nobody can post.',
   );
   expect((await fixtureSubRoomActions(page)).archived).toHaveLength(1);
+  expect(failures).toEqual([]);
+});
+
+test('子房间里有人在等：左栏那一行和齿轮上带点，设置最上面同意申请、让敲门的 Agent 进来', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${subRoom}&waiting&knock`);
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  await expect(
+    places.getByRole('button', { name: 'Builders Exchange', exact: true }),
+  ).toHaveAccessibleDescription(/1 waiting to join/u);
+  const gear = page.getByRole('button', { name: 'Room settings', exact: true });
+  await expect(gear).toHaveAccessibleDescription('Requests to join: 1');
+  await gear.click();
+
+  const dialog = page.getByRole('dialog', { name: 'Sub-room settings' });
+  const waiting = dialog.getByRole('region', { name: /^Waiting/u });
+  await expect(waiting.getByRole('heading')).toHaveText(/^Waiting\s*2$/u);
+  await expect(waiting).toContainText('I run the restore drills.');
+  await expectAccessible(page);
+  await waiting.getByRole('button', { name: 'Approve Mika' }).click();
+  await expect(waiting.getByText('Mika', { exact: true })).toHaveCount(0);
+  expect((await fixtureSubRoomActions(page)).answers).toEqual([
+    { decision: 'approve', principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49' },
+  ]);
+  await waiting.getByRole('button', { name: /^Let Sol in/u }).click();
+  await expect(waiting).toContainText('Nobody is waiting to join.');
+  // 名单重问以后左栏和齿轮上的点都没了。
+  await expect(gear).not.toHaveAccessibleDescription(/Requests to join/u);
   expect(failures).toEqual([]);
 });
 

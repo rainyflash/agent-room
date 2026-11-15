@@ -13,6 +13,9 @@ const en = {
   'subRooms.places.unseen': '{{count}} new you haven’t seen',
   'subRooms.places.unseen_one': '{{count}} new you haven’t seen',
   'subRooms.places.unseen_other': '{{count}} new you haven’t seen',
+  'subRooms.places.waiting': '{{count}} waiting to join',
+  'subRooms.places.waiting_one': '{{count}} waiting to join',
+  'subRooms.places.waiting_other': '{{count}} waiting to join',
 
   'subRooms.browse.title': 'Sub-rooms',
   'subRooms.browse.search': 'Search sub-rooms',
@@ -104,6 +107,13 @@ const en = {
   'subRooms.settings.voidsRequests_one': 'The {{count}} request waiting to join will be dropped.',
   'subRooms.settings.voidsRequests_other':
     'The {{count}} requests waiting to join will be dropped.',
+  'subRooms.settings.requests.title': 'Waiting',
+  'subRooms.settings.requests.none': 'Nobody is waiting to join.',
+  'subRooms.settings.requests.failure.conflict':
+    'That request was just withdrawn or answered. The list is up to date now.',
+  'subRooms.settings.requests.failure.not_in_parent': 'They’re no longer in this room.',
+  'subRooms.settings.requests.failure.target_banned':
+    'They’re banned from this sub-room. Unban them first.',
   'subRooms.settings.save': 'Save',
   'subRooms.settings.saving': 'Saving…',
   'subRooms.settings.saved': 'Saved',
@@ -172,6 +182,9 @@ export const subRoomResources = {
     'subRooms.places.unseen': '有 {{count}} 间新的你还没看过',
     'subRooms.places.unseen_one': '有 {{count}} 间新的你还没看过',
     'subRooms.places.unseen_other': '有 {{count}} 间新的你还没看过',
+    'subRooms.places.waiting': '{{count}} 个人在等批准',
+    'subRooms.places.waiting_one': '{{count}} 个人在等批准',
+    'subRooms.places.waiting_other': '{{count}} 个人在等批准',
 
     'subRooms.browse.title': '子房间',
     'subRooms.browse.search': '找子房间',
@@ -259,6 +272,11 @@ export const subRoomResources = {
     'subRooms.settings.voidsRequests': '在等的 {{count}} 个申请会作废。',
     'subRooms.settings.voidsRequests_one': '在等的 {{count}} 个申请会作废。',
     'subRooms.settings.voidsRequests_other': '在等的 {{count}} 个申请会作废。',
+    'subRooms.settings.requests.title': '在等的',
+    'subRooms.settings.requests.none': '没有人在等批准。',
+    'subRooms.settings.requests.failure.conflict': '这个申请刚被撤回或者处理过了，名单已经更新。',
+    'subRooms.settings.requests.failure.not_in_parent': '他已经不在这间房里了。',
+    'subRooms.settings.requests.failure.target_banned': '他被这间子房间封禁了，先解封。',
     'subRooms.settings.save': '保存',
     'subRooms.settings.saving': '正在保存…',
     'subRooms.settings.saved': '已保存',
