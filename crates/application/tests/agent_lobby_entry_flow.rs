@@ -18,6 +18,7 @@ use agent_room_application::{
         RoomReservationOutcome, SealedJoinCode, SealedSecret, SecretDigest, StandingModeration,
         StandingModerationSource,
     },
+    private_rooms::{AgentOwnerSeat, PrivateRoomResult, SubRoomAgentOwnerSeating},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningOperation, LobbyProvisioningOutcome,
         LobbyProvisioningRequest, LobbyProvisioningResult, RoomReservationIdentifierFactory,
@@ -441,6 +442,40 @@ impl PrivateRoomStore for 固定私人房间仓储 {
 struct 治理 {
     禁言: Vec<StandingModeration>,
     效果: Arc<记录治理效果>,
+    /// 进子房间时替主人占位置的结果（2f-1a）。
+    主人座位: Arc<固定主人座位>,
+}
+
+/// 本机 Agent 进子房间时替主人占位置：照给的结果回，记下问过哪一间、替谁问的。默认进不来。
+#[derive(Default)]
+struct 固定主人座位 {
+    结果: Option<AgentOwnerSeat>,
+    问过: Mutex<Vec<(RoomCatalogId, PrincipalId)>>,
+}
+
+impl 固定主人座位 {
+    fn 回(结果: AgentOwnerSeat) -> Arc<Self> {
+        Arc::new(Self {
+            结果: Some(结果),
+            问过: Mutex::default(),
+        })
+    }
+
+    fn 问过(&self) -> Vec<(RoomCatalogId, PrincipalId)> {
+        self.问过.lock().expect("锁可用").clone()
+    }
+}
+
+impl SubRoomAgentOwnerSeating for 固定主人座位 {
+    fn seat_agent_owner(
+        &self,
+        catalog_id: RoomCatalogId,
+        owner: PrincipalId,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentOwnerSeat>> {
+        self.问过.lock().expect("锁可用").push((catalog_id, owner));
+        let seat = self.结果.unwrap_or(AgentOwnerSeat::Refused);
+        Box::pin(async move { Ok(seat) })
+    }
 }
 
 struct 固定禁言(Vec<StandingModeration>);
@@ -768,6 +803,7 @@ fn private_service(
             }),
             private_rooms: Arc::new(固定私人房间仓储(snapshot)),
             private_agents: Arc::new(固定口令成员仓储(agent_member)),
+            sub_room_owners: moderation.主人座位.clone(),
             private_matrix,
             memberships,
             provisioning: Arc::new(禁止供给),
@@ -1256,4 +1292,86 @@ fn room_instance_id() -> RoomInstanceId {
 
 fn time(value: i64) -> UtcMillis {
     UtcMillis::new(value).expect("测试时间有效")
+}
+
+/// 挂在另一间房下面的子房间（2f-1a）。
+fn 子房间快照(成员: Option<(PrincipalId, PrivateRoomPermissions)>) -> PrivateRoomSnapshot {
+    私人房间快照(成员).under(RoomCatalogId::from_uuid(Uuid::from_u128(9_999)))
+}
+
+#[tokio::test]
+async fn 主人还不在没有门的子房间里_先替他占好位置再让_agent_进来() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let moderation = 治理 {
+        主人座位: 固定主人座位::回(AgentOwnerSeat::Inside),
+        ..治理::default()
+    };
+    let (service, request, membership) =
+        private_request_moderated(Some(子房间快照(None)), None, &matrix, &moderation);
+
+    service
+        .enter(request)
+        .await
+        .expect("替主人占好位置以后 Agent 进得来");
+
+    assert_eq!(
+        moderation.主人座位.问过(),
+        [(private_catalog_id(), operator_principal_id())]
+    );
+    assert_eq!(matrix.邀请记录(), [matrix_user_id().as_str()]);
+    assert_eq!(
+        *membership.joins.lock().expect("锁可用"),
+        [private_matrix_room().as_str()]
+    );
+}
+
+#[tokio::test]
+async fn 有门的子房间主人不在里面_说要主人先申请_别的进不来照旧说房间不接() {
+    for (seat, expected) in [
+        (
+            AgentOwnerSeat::DoorClosed,
+            AgentLobbyEntryFailureKind::OwnerNotInside,
+        ),
+        (
+            AgentOwnerSeat::Refused,
+            AgentLobbyEntryFailureKind::RoomRefused,
+        ),
+    ] {
+        let matrix = Arc::new(记录私人Matrix::new(false));
+        let moderation = 治理 {
+            主人座位: 固定主人座位::回(seat),
+            ..治理::default()
+        };
+        let (service, request, membership) =
+            private_request_moderated(Some(子房间快照(None)), None, &matrix, &moderation);
+
+        let failure = service.enter(request).await.expect_err("进不来");
+
+        assert_eq!(failure.kind(), expected, "{seat:?}");
+        assert!(matrix.邀请记录().is_empty(), "进不来时不发 Matrix 邀请");
+        assert!(matrix.发言授予记录().is_empty());
+        assert!(membership.joins.lock().expect("锁可用").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn 不是子房间的_和主人已经在子房间里的_都不去替主人占位置() {
+    let matrix = Arc::new(记录私人Matrix::new(false));
+    let moderation = 治理 {
+        主人座位: 固定主人座位::回(AgentOwnerSeat::Inside),
+        ..治理::default()
+    };
+    let (service, request, _) =
+        private_request_moderated(Some(私人房间快照(None)), None, &matrix, &moderation);
+    let failure = service.enter(request).await.expect_err("主人不在房间里");
+    assert_eq!(failure.kind(), AgentLobbyEntryFailureKind::RoomRefused);
+
+    let inside = 子房间快照(Some((operator_principal_id(), 可发言权限())));
+    let (service, request, _) = private_request_moderated(Some(inside), None, &matrix, &moderation);
+    service
+        .enter(request)
+        .await
+        .expect("主人在里面，Agent 照常进");
+
+    assert!(moderation.主人座位.问过().is_empty());
 }

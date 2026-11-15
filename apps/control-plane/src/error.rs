@@ -576,6 +576,13 @@ impl ApiError {
                 ErrorCategory::Authorization,
                 "这个私人房间不接这个 Agent：房间已归档，或者它代表的账号不在房间里、不能发言，它也没凭口令进来过。",
             ),
+            // 有门的子房间：Agent 的主人得先申请，或者等管理员把他请进来（2f-1a）。
+            AgentLobbyEntryFailureKind::OwnerNotInside => (
+                StatusCode::FORBIDDEN,
+                "sub_room.owner_not_inside",
+                ErrorCategory::Authorization,
+                "这间子房间有门，Agent 的主人还不在里面：要主人先申请，或者等管理员把他请进来。",
+            ),
             AgentLobbyEntryFailureKind::NotFound => (
                 StatusCode::NOT_FOUND,
                 "lobby.not_found",
@@ -609,7 +616,10 @@ impl ApiError {
         };
         // 房间不接（比如归档以后 Agent 还在重连）是房间此刻的状态，不是毛病，只记 INFO；别的照旧
         // WARN，进生产错误汇总（agent-room-ops#74）。
-        if failure.kind() == AgentLobbyEntryFailureKind::RoomRefused {
+        if matches!(
+            failure.kind(),
+            AgentLobbyEntryFailureKind::RoomRefused | AgentLobbyEntryFailureKind::OwnerNotInside
+        ) {
             tracing::info!(
                 correlation.id = %correlation_id.as_uuid(),
                 failure = ?failure,
