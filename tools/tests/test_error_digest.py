@@ -458,6 +458,20 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn("Invalid scopes", digest.findings[0].sample)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_browser_dropping_mid_response_is_noise(self) -> None:
+        dropped = [
+            "2026-11-15 13:56:07,100 ERROR [org.keycloak.services.error.KeycloakErrorHandler] (executor-thread-5) "
+            "Uncaught server error: java.io.IOException: java.io.IOException: Failed to write",
+            "2026-11-15 13:56:07,200 ERROR [io.quarkus.vertx.http.runtime.QuarkusErrorHandler] (executor-thread-5) "
+            "HTTP Request to /resources/b5k40/login/agent-room/fonts/geist.woff2 failed, error id: 6f1c2d3e-1: "
+            "java.lang.IllegalStateException: Response has already been written",
+        ]
+        other = dropped[1].replace("/resources/b5k40", "/realms/agent-room")
+        digest = summarize({"identity": [*dropped, other]}, load_noise(NOISE_FILE))
+        self.assertEqual(len(digest.findings), 1)
+        self.assertIn("/realms/", digest.findings[0].sample)
+        self.assertEqual(sum(digest.ignored.values()), 2)
+
     def test_second_use_of_a_chat_sign_in_code_is_noise(self) -> None:
         def exchange(client: str) -> str:
             return (
