@@ -8,6 +8,7 @@ use agent_room_application::ports::{
 use agent_room_domain::{
     private_rooms::{PrivateRoomCapability, PrivateRoomPermissions},
     room_role_changes::standing_changes,
+    sub_rooms::sub_room_permissions,
 };
 
 use super::{
@@ -59,15 +60,18 @@ impl Fixture {
         }
     }
 
-    /// 照用例那样设、撤 `member`：以房主的名义改权限，身份变动记在 `granter` 名下。
+    /// 照用例那样设、撤 `member`：权限照他在父房间里的算，以房主的名义改，身份变动记在 `granter`
+    /// 名下。权限要和用例算的一样：不一样的话，父房间一变、子房间照着重算时会多记一笔。
     async fn set_member_manager(&self, grant: bool, at: UtcMillis) -> bool {
+        let in_parent = load(&self.repositories, self.parent)
+            .await
+            .room()
+            .member(self.member)
+            .expect("在父房间里")
+            .permissions();
+        let permissions = sub_room_permissions(in_parent, grant).expect("在父房间里看得到");
         let before = load(&self.repositories, self.release).await;
         let mut room = before.room().clone();
-        let permissions = if grant {
-            holding(&MANAGER)
-        } else {
-            holding(&MANAGER[..3])
-        };
         room.update_permissions(room.owner_principal_id(), self.member, permissions)
             .expect("房主能改权限");
         let role_changes: Vec<RoomRoleChange> = standing_changes(before.room(), &room)
@@ -143,13 +147,6 @@ impl Fixture {
             .expect("可读")
     }
 }
-
-const MANAGER: [PrivateRoomCapability; 4] = [
-    PrivateRoomCapability::View,
-    PrivateRoomCapability::Speak,
-    PrivateRoomCapability::Automate,
-    PrivateRoomCapability::Manage,
-];
 
 fn holding(capabilities: &[PrivateRoomCapability]) -> PrivateRoomPermissions {
     PrivateRoomPermissions::from_capabilities(capabilities.iter().copied()).expect("权限有效")
@@ -242,7 +239,12 @@ async fn 存的当口他已经被移出了父房间_什么都不写() {
     // 就不写。
     let stale = load(&rooms.repositories, rooms.release).await;
     let mut room = stale.room().clone();
-    room.update_permissions(owner, rooms.granter, holding(&MANAGER))
+    let manages = holding(&[
+        PrivateRoomCapability::View,
+        PrivateRoomCapability::Speak,
+        PrivateRoomCapability::Manage,
+    ]);
+    room.update_permissions(owner, rooms.granter, manages)
         .expect("房主能改权限");
     assert!(
         !rooms
