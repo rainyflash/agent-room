@@ -1,6 +1,6 @@
 //! 父房间的禁言在子房间里一起算（`specs/redesign/sub-rooms.md` 的“禁言”，2c-3）。这里查存储读的
-//! 那一半：一个人的禁言情况带上他在里面的子房间、子房间里连父房间的禁言一起读、他此刻是不是被禁言
-//! 着、禁言锁一家子共用一把。
+//! 那一半：一个人的禁言情况带上他在里面的子房间（他自己不在、只有他名下的 Agent 成员在的也算，
+//! 2f-2b-2）、子房间里连父房间的禁言一起读、他此刻是不是被禁言着、禁言锁一家子共用一把。
 
 use agent_room_application::ports::{
     ModerationMuteLedger, ModerationMuteLock, ModerationMuteStanding, ModerationRepository,
@@ -8,6 +8,7 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     ids::{AuditEventId, ModerationActionId},
+    join_codes::PrivateRoomAgentJoinedVia,
     moderation::{
         ModerationAction, ModerationActionKind, ModerationAuditEvent, ModerationAuditOutcome,
         ModerationReason, ModerationTarget, ModerationTargetKind,
@@ -15,6 +16,7 @@ use agent_room_domain::{
 };
 
 use super::{
+    agent_members::{admit_agent, remove},
     membership::{change, enter},
     sync::open,
     *,
@@ -152,6 +154,93 @@ async fn 他已经出去的子房间和归档了的子房间不在里面() {
     assert!(
         closed.sub_rooms.is_empty(),
         "归档了的子房间一动发言级别就等于解开了，不能给出去"
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 他自己不在_他名下的_agent_成员在的子房间也算进去_移出了的_收回了的和别人的不算() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let pool = &database.runtime;
+    let owner = seed_principal(pool, "sub-room-mutes-agents-owner").await;
+    let outsider = seed_principal(pool, "sub-room-mutes-agents-outsider").await;
+    let stranger = seed_principal(pool, "sub-room-mutes-agents-stranger").await;
+    let agent = seed_agent(pool, outsider).await;
+    let strangers = seed_agent(pool, stranger).await;
+    let parent = create_room(&repositories, owner).await;
+    let alpha = open(&repositories, parent, "Alpha", 10).await;
+    let beta = open(&repositories, parent, "Beta", 11).await;
+    let gamma = open(&repositories, parent, "Gamma", 12).await;
+    for each in [agent, strangers] {
+        admit_agent(
+            &repositories,
+            parent,
+            each,
+            PrivateRoomAgentJoinedVia::Code,
+            20,
+        )
+        .await;
+    }
+    for (sub_room, each, at) in [
+        (alpha, agent, 30),
+        (beta, agent, 31),
+        (gamma, strangers, 32),
+    ] {
+        admit_agent(
+            &repositories,
+            sub_room,
+            each,
+            PrivateRoomAgentJoinedVia::Knock,
+            at,
+        )
+        .await;
+    }
+    let own = applied(&repositories, owner, alpha, &person(outsider), 40, None).await;
+    let rooms_of = |standing: ModerationMuteStanding| {
+        standing
+            .sub_rooms
+            .into_iter()
+            .map(|sub_room| {
+                (
+                    sub_room.matrix_room_id.as_str().to_owned(),
+                    action_ids(&sub_room.mutes),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        rooms_of(standing_in(&repositories, parent, &person(outsider)).await),
+        [
+            (matrix_room(&repositories, alpha).await, vec![own.id()]),
+            (matrix_room(&repositories, beta).await, Vec::new()),
+        ],
+        "他不在这几间里，他的 Agent 在：禁言落的时候要连它一起压"
+    );
+
+    assert!(remove(&repositories, beta, agent, 50).await);
+    assert_eq!(
+        rooms_of(standing_in(&repositories, parent, &person(outsider)).await),
+        [(matrix_room(&repositories, alpha).await, vec![own.id()])],
+        "在那一间里移出了的不算"
+    );
+
+    sqlx::query(
+        "UPDATE agent_room.agent_ownership SET revoked_at = clock_timestamp() WHERE agent_id = $1",
+    )
+    .bind(agent.as_uuid())
+    .execute(pool)
+    .await
+    .expect("收回 Agent");
+    assert!(
+        standing_in(&repositories, parent, &person(outsider))
+            .await
+            .sub_rooms
+            .is_empty(),
+        "不再是他的 Agent 了"
     );
 
     database.close().await;

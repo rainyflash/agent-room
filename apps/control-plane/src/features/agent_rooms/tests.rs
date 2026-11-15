@@ -445,6 +445,18 @@ async fn 带进房间时大厅正忙回_503_带_retry_after_带不了回_403() {
         response_json(owner_outside).await["code"],
         "sub_room.owner_not_inside"
     );
+
+    // 有门的子房间、Agent 是凭口令进的父房间（2f-2b-2）：403，说要管理者按名字放它进来。
+    *placements.failure.lock().unwrap() = Some(AgentLobbyEntryFailure::AgentNotAdmitted);
+    let not_admitted = test_router(placements.clone())
+        .oneshot(web_with_body(Method::POST, &path, true, &body))
+        .await
+        .unwrap();
+    assert_eq!(not_admitted.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response_json(not_admitted).await["code"],
+        "sub_room.agent_not_admitted"
+    );
 }
 
 #[tokio::test]

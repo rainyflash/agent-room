@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agent_room_domain::{
     ids::{AgentId, AgentInstanceId, PrincipalId, RoomCatalogId, RoomInstanceId},
     moderation::ModerationActionKind,
+    private_rooms::PrivateRoomMembershipStatus,
     rooms::{MatrixRoomReference, RoomCatalogKind, RoomInstance, RoomLanguage, RoomRegion},
 };
 
@@ -17,7 +18,9 @@ use crate::{
         RoomAllocationStore, StandingModeration, StandingModerationSource,
     },
     private_rooms::{
-        AgentOwnerSeat, PrivateRoomFailure, PrivateRoomFailureKind, SubRoomAgentOwnerSeating,
+        AgentAccessFailure, AgentAccessFailureKind, AgentMemberSeat, AgentOwnerSeat,
+        PrivateRoomFailure, PrivateRoomFailureKind, SubRoomAgentMemberSeating,
+        SubRoomAgentOwnerSeating,
     },
     rooms::{
         EnterLobbyDependencies, EnterLobbyFailure, EnterLobbyOutcome, EnterLobbyService,
@@ -47,6 +50,9 @@ pub enum AgentLobbyEntryFailureKind {
     /// 进的是有门的子房间，它的主人不在里面：要主人先申请，或者等管理员把他请进来
     /// （`specs/redesign/sub-rooms.md` 的“进门”，2f-1a）。
     OwnerNotInside,
+    /// 进的是有门的子房间，这个 Agent 是凭口令或敲门进的父房间（主人带不了它进来）：要管得了这一间的
+    /// 人按名字放它进来（2f-2b-2）。
+    AgentNotAdmitted,
     NotFound,
     Conflict,
     DependencyUnavailable,
@@ -59,12 +65,15 @@ pub enum AgentLobbyEntryFailure {
     Unauthorized,
     RoomRefused,
     OwnerNotInside,
+    AgentNotAdmitted,
     NotFound,
     Access(RepositoryError),
     Membership(MatrixFailure),
     Lobby(EnterLobbyFailure),
     /// 没有门的子房间里替主人占位置时出了错。
     SubRoomOwner(PrivateRoomFailure),
+    /// 把凭口令进了父房间的 Agent 记成子房间的 Agent 成员时出了错。
+    SubRoomAgentMember(AgentAccessFailure),
 }
 
 impl AgentLobbyEntryFailure {
@@ -73,11 +82,13 @@ impl AgentLobbyEntryFailure {
             Self::Unauthorized => AgentLobbyEntryFailureKind::Unauthorized,
             Self::RoomRefused => AgentLobbyEntryFailureKind::RoomRefused,
             Self::OwnerNotInside => AgentLobbyEntryFailureKind::OwnerNotInside,
+            Self::AgentNotAdmitted => AgentLobbyEntryFailureKind::AgentNotAdmitted,
             Self::NotFound => AgentLobbyEntryFailureKind::NotFound,
             Self::Access(error) => repository_failure_kind(error.kind()),
             Self::Membership(error) => matrix_failure_kind(error.kind()),
             Self::Lobby(error) => lobby_failure_kind(error),
             Self::SubRoomOwner(failure) => private_room_failure_kind(failure.kind()),
+            Self::SubRoomAgentMember(failure) => agent_access_failure_kind(failure.kind()),
         }
     }
 }
@@ -111,6 +122,8 @@ pub struct AgentLobbyEntryDependencies {
     pub private_agents: Arc<dyn PrivateRoomAgentAccessStore>,
     /// 本机 Agent 进没有门的子房间时，先把还不在里面的主人加进去。
     pub sub_room_owners: Arc<dyn SubRoomAgentOwnerSeating>,
+    /// 主人带不了它进来、它自己是父房间里的 Agent 成员时，照门把它记成子房间的 Agent 成员。
+    pub sub_room_agent_members: Arc<dyn SubRoomAgentMemberSeating>,
     pub private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     pub memberships: Arc<dyn AgentRoomMembershipFactory>,
     pub provisioning: Arc<dyn LobbyProvisioningOperation>,
@@ -137,6 +150,7 @@ pub struct AgentLobbyEntryService {
     private_rooms: Arc<dyn PrivateRoomStore>,
     private_agents: Arc<dyn PrivateRoomAgentAccessStore>,
     sub_room_owners: Arc<dyn SubRoomAgentOwnerSeating>,
+    sub_room_agent_members: Arc<dyn SubRoomAgentMemberSeating>,
     private_matrix: Arc<dyn PrivateRoomMatrixGateway>,
     memberships: Arc<dyn AgentRoomMembershipFactory>,
     provisioning: Arc<dyn LobbyProvisioningOperation>,
@@ -155,6 +169,7 @@ impl AgentLobbyEntryService {
             private_rooms: dependencies.private_rooms,
             private_agents: dependencies.private_agents,
             sub_room_owners: dependencies.sub_room_owners,
+            sub_room_agent_members: dependencies.sub_room_agent_members,
             private_matrix: dependencies.private_matrix,
             memberships: dependencies.memberships,
             provisioning: dependencies.provisioning,
@@ -379,7 +394,7 @@ impl AgentLobbyEntryService {
         if !snapshot.room().admits_agent_of(access.principal_id)
             && !self.admitted_by_code(snapshot, access.agent_id).await?
         {
-            self.seat_owner(snapshot, access.principal_id).await?;
+            self.seat_in_sub_room(snapshot, access).await?;
         }
         let matrix_room =
             MatrixRoomId::new(snapshot.instance().matrix_room_id().as_str().to_owned())
@@ -417,25 +432,52 @@ impl AgentLobbyEntryService {
         Ok(snapshot.instance().id())
     }
 
-    /// 主人此刻不在房间里、Agent 也不是 Agent 成员时：是没有门的子房间，就先把主人加进去（2f-1a），
-    /// 别的照旧不接。有门的子房间说清楚要主人先申请。
-    async fn seat_owner(
+    /// 主人此刻不在房间里、Agent 也不是这一间的 Agent 成员时：是没有门的子房间，就先把主人加进去
+    /// （2f-1a）；主人带不了它进来的，它自己是父房间里的 Agent 成员就照门把它记成这一间的 Agent 成员
+    /// （2f-2b-2）。别的照旧不接。有门的说清楚要主人先申请，或者要管理者按名字放它进来。
+    async fn seat_in_sub_room(
         &self,
         snapshot: &crate::ports::PrivateRoomSnapshot,
-        owner: PrincipalId,
+        access: &AgentLobbyAccessRecord,
     ) -> AgentLobbyEntryResult<()> {
         if snapshot.parent_catalog_id().is_none() {
             return Err(AgentLobbyEntryFailure::RoomRefused);
         }
         match self
             .sub_room_owners
-            .seat_agent_owner(snapshot.catalog().id(), owner)
+            .seat_agent_owner(snapshot.catalog().id(), access.principal_id)
             .await
             .map_err(AgentLobbyEntryFailure::SubRoomOwner)?
         {
             AgentOwnerSeat::Inside => Ok(()),
             AgentOwnerSeat::DoorClosed => Err(AgentLobbyEntryFailure::OwnerNotInside),
-            AgentOwnerSeat::Refused => Err(AgentLobbyEntryFailure::RoomRefused),
+            AgentOwnerSeat::Refused => self.seat_agent_member(snapshot, access).await,
+        }
+    }
+
+    /// 凭口令或敲门进了父房间的本机 Agent 自己进子房间（2f-2b-2）。主人在这一间里被封禁着的不接：
+    /// 封禁连人带他的 Agent 一起算，它没进来过就没有被一起移出的记录。
+    async fn seat_agent_member(
+        &self,
+        snapshot: &crate::ports::PrivateRoomSnapshot,
+        access: &AgentLobbyAccessRecord,
+    ) -> AgentLobbyEntryResult<()> {
+        if snapshot
+            .room()
+            .member(access.principal_id)
+            .is_some_and(|member| member.status() == PrivateRoomMembershipStatus::Banned)
+        {
+            return Err(AgentLobbyEntryFailure::RoomRefused);
+        }
+        match self
+            .sub_room_agent_members
+            .seat_agent_member(snapshot.catalog().id(), access.agent_id)
+            .await
+            .map_err(AgentLobbyEntryFailure::SubRoomAgentMember)?
+        {
+            AgentMemberSeat::Inside => Ok(()),
+            AgentMemberSeat::DoorClosed => Err(AgentLobbyEntryFailure::AgentNotAdmitted),
+            AgentMemberSeat::Refused => Err(AgentLobbyEntryFailure::RoomRefused),
         }
     }
 
@@ -493,6 +535,24 @@ const fn private_room_failure_kind(kind: PrivateRoomFailureKind) -> AgentLobbyEn
         | PrivateRoomFailureKind::ReauthenticationRequired
         | PrivateRoomFailureKind::PublicRoomLimitReached
         | PrivateRoomFailureKind::Internal => AgentLobbyEntryFailureKind::Internal,
+    }
+}
+
+const fn agent_access_failure_kind(kind: AgentAccessFailureKind) -> AgentLobbyEntryFailureKind {
+    match kind {
+        AgentAccessFailureKind::NotFound => AgentLobbyEntryFailureKind::NotFound,
+        AgentAccessFailureKind::Conflict => AgentLobbyEntryFailureKind::Conflict,
+        AgentAccessFailureKind::DependencyUnavailable | AgentAccessFailureKind::RateLimited => {
+            AgentLobbyEntryFailureKind::DependencyUnavailable
+        }
+        AgentAccessFailureKind::UnknownCommit => AgentLobbyEntryFailureKind::UnknownCommit,
+        AgentAccessFailureKind::Forbidden
+        | AgentAccessFailureKind::ClosedToNetworkAgents
+        | AgentAccessFailureKind::ParentOnly => AgentLobbyEntryFailureKind::RoomRefused,
+        AgentAccessFailureKind::InviteOnly => AgentLobbyEntryFailureKind::AgentNotAdmitted,
+        AgentAccessFailureKind::InvalidRequest
+        | AgentAccessFailureKind::NotRevealable
+        | AgentAccessFailureKind::Internal => AgentLobbyEntryFailureKind::Internal,
     }
 }
 

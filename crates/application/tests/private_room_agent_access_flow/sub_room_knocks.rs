@@ -2,10 +2,15 @@
 //! 成员拿房间号进子房间。没有门的直接进；要批准的敲门、等管得了这一间的人放行；只能请进来的和藏起来的
 //! 不收敲门，由管理者按名字放行；不是父房间里的 Agent 成员的当找不到。
 //!
+//! 凭口令进了父房间的本机 Agent 没有敲门这条路，进门那一步问 `seat_agent_member`（2f-2b-2）：同一条
+//! 规矩，没有门的直接记上，要等放行的说门关着。
+//!
 //! 夹具：父房间（房主、能发言的成员、一个普通成员 `manager`）下面一间子房间，`manager` 是这一间的
 //! 子房间管理员，能发言的成员在里面但管不了。
 
-use agent_room_application::private_rooms::AgentAccessFailure;
+use agent_room_application::private_rooms::{
+    AgentAccessFailure, AgentMemberSeat, SubRoomAgentMemberSeating,
+};
 use agent_room_domain::{ids::PrincipalId, sub_rooms::SubRoomDoor};
 
 use super::*;
@@ -90,6 +95,14 @@ impl Fixture {
             .knock(knock_request())
             .await
             .map_err(AgentAccessFailure::kind)
+    }
+
+    /// 本机 Agent 自己进这间子房间（2f-2b-2）。
+    async fn seat(&self) -> AgentMemberSeat {
+        self.service
+            .seat_agent_member(catalog_id(), agent_id())
+            .await
+            .expect("问得到")
     }
 
     async fn admit(&self, actor: PrincipalId) -> Result<(), AgentAccessFailureKind> {
@@ -335,5 +348,97 @@ async fn 这一间归档了_敲门当找不到_管理者也放行不了() {
         fixture.admit(owner()).await.unwrap_err(),
         AgentAccessFailureKind::Conflict
     );
+    assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
+}
+
+#[tokio::test]
+async fn 本机_agent_自己进没有门的子房间_父房间里的_agent_成员直接记上_不碰聊天服务器() {
+    let fixture = family(RoomJoinMode::Open, false);
+    assert_eq!(
+        fixture.seat().await,
+        AgentMemberSeat::Refused,
+        "不是父房间里的 Agent 成员"
+    );
+    assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
+
+    fixture.in_parent().await;
+    assert_eq!(fixture.seat().await, AgentMemberSeat::Inside);
+    assert_eq!(
+        fixture.store.status_in(catalog_id(), agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Joined)
+    );
+    assert_eq!(
+        fixture.store.joined_via(agent_id()),
+        Some(PrivateRoomAgentJoinedVia::Knock),
+        "和网络 Agent 敲门直接进来的记法一样"
+    );
+    assert_eq!(
+        fixture.seat().await,
+        AgentMemberSeat::Inside,
+        "再进一次照旧"
+    );
+    assert!(
+        fixture.matrix.events().is_empty(),
+        "进聊天服务器上的房间是进门那一步的事"
+    );
+}
+
+#[tokio::test]
+async fn 本机_agent_自己进有门的子房间_说门关着_不记也不留敲门_放行以后进得来() {
+    for (access, hidden) in [
+        (RoomJoinMode::Request, false),
+        (RoomJoinMode::Request, true),
+        (RoomJoinMode::InviteOnly, false),
+    ] {
+        let fixture = family(access, hidden);
+        fixture.in_parent().await;
+        assert_eq!(
+            fixture.seat().await,
+            AgentMemberSeat::DoorClosed,
+            "{access:?} {hidden}"
+        );
+        assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
+        assert_eq!(fixture.store.knock_status(agent_id()), None);
+
+        fixture.admit(manager()).await.expect("管理者按名字放行");
+        assert_eq!(fixture.seat().await, AgentMemberSeat::Inside);
+    }
+}
+
+#[tokio::test]
+async fn 本机_agent_在没有门的子房间里被移出过_自己进不来_说门关着() {
+    let fixture = family(RoomJoinMode::Open, false);
+    fixture.in_parent().await;
+    assert_eq!(fixture.seat().await, AgentMemberSeat::Inside);
+    fixture
+        .service
+        .remove_agent(RemoveAgentMember {
+            actor: principal_actor(manager()).into(),
+            catalog_id: catalog_id(),
+            agent_id: agent_id(),
+        })
+        .await
+        .expect("这一间的管理员能移出");
+
+    assert_eq!(fixture.seat().await, AgentMemberSeat::DoorClosed);
+    assert_eq!(
+        fixture.store.status_in(catalog_id(), agent_id()),
+        Some(PrivateRoomAgentMemberStatus::Removed),
+        "不替它记回去"
+    );
+}
+
+#[tokio::test]
+async fn 本机_agent_自己进归档了的子房间_进不来() {
+    use PrivateRoomCapability::{Manage, Speak, View};
+    let mut parent = with_speaker(PrivateRoom::create(parent_id(), owner()));
+    join(&mut parent, manager(), &[View, Speak]);
+    let mut sub_room = active_room();
+    join(&mut sub_room, manager(), &[View, Speak, Manage]);
+    sub_room.archive(owner()).unwrap();
+    let fixture = family_of(parent, sub_room, RoomJoinMode::Open, false);
+    fixture.in_parent().await;
+
+    assert_eq!(fixture.seat().await, AgentMemberSeat::Refused);
     assert_eq!(fixture.store.status_in(catalog_id(), agent_id()), None);
 }
