@@ -116,6 +116,11 @@ reason = "发信服务拒收了这个收件地址（550），是这一个地址�
 
 [[ignore]]
 service = "identity"
+summary = '^ERROR org\.keycloak\.services KC-SERVICES0029: Failed to send email: org\.eclipse\.angus\.mail\.smtp\.SMTPSendFailedException: \S+ Invalid \S+to\S+ field\. Please use our testing email address'
+reason = "发信服务拒收了测试用的收件域名（example.com 之类，550），是这一个地址的事：2026-11-15 生产上那次，有人（或测试脚本）拿 example.com 的地址注册。发信整体出问题是别的异常（连不上、握手超时、认证失败），照旧报；这次失败另外两行（Failed to send verification email、email_send_failed）也照旧报，发信告警也不受影响"
+
+[[ignore]]
+service = "identity"
 summary = "^LOGIN_ERROR error=invalid_request clientId=null reason=Parameter 'client_id' not present or present multiple times in the HTTP request parameters"
 reason = "有人打开了没带任何参数的身份服务登录地址（扫描器、手敲的网址、被截掉参数的书签）。我们的网页和桌面端发起登录时一定带 client_id，所以这不是正常登录被挡；2026-10-30 生产上那次只有一条。别和 Invalid scopes 那种混：那个 clientId 是 agent-room-web，不在这条规则里，仍会报出来"
 

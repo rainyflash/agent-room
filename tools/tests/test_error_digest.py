@@ -497,6 +497,11 @@ class NoiseTableTests(unittest.TestCase):
             {
                 "identity": [
                     failure("jakarta.mail.SendFailedException: Invalid Addresses;"),
+                    failure(
+                        "org.eclipse.angus.mail.smtp.SMTPSendFailedException: 550 Invalid `to` field. "
+                        "Please use our testing email address instead of domains like `example.com`. "
+                        "See our documentation for more information."
+                    ),
                     failure("org.keycloak.email.EmailException: Password based SMTP connect failed"),
                 ]
             },
@@ -509,7 +514,7 @@ class NoiseTableTests(unittest.TestCase):
                 "org.keycloak.email.EmailException: Password based SMTP connect failed"
             ],
         )
-        self.assertEqual(sum(digest.ignored.values()), 1)
+        self.assertEqual(sum(digest.ignored.values()), 2)
 
     def test_token_replaced_while_polling_for_handoffs_is_noise(self) -> None:
         def failure(path: str) -> str:
