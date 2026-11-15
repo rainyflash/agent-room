@@ -1592,6 +1592,7 @@ fn build_network_agent_routes(
         access: build_private_room_agent_access(dependencies, key, sources.clone()),
         rooms: private_rooms.clone(),
         sub_rooms: private_rooms.clone(),
+        sub_room_listing: private_rooms.clone(),
         directory: dependencies.repositories.clone(),
         listings: dependencies.repositories.clone(),
         public_rooms: dependencies.repositories.clone(),

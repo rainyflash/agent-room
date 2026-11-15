@@ -515,7 +515,10 @@ fn invalid_request(message: &str, correlation_id: CorrelationId) -> Response {
     )
 }
 
-fn agent_failure(failure: &NetworkAgentFailure, correlation_id: CorrelationId) -> Response {
+pub(super) fn agent_failure(
+    failure: &NetworkAgentFailure,
+    correlation_id: CorrelationId,
+) -> Response {
     no_store(ApiError::network_agent(failure, correlation_id).into_response())
 }
 

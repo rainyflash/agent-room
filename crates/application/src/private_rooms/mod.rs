@@ -71,6 +71,7 @@ pub use public_join::{
 };
 pub use service::{
     AccessibleSubRoom, AccountSubRoomListing, AgentOwnerSeat, AgentSubRoomCreation,
+    AgentSubRoomItem, AgentSubRoomListing, AgentSubRooms, ListAgentSubRooms,
     PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService,
     PrivateRoomUseCases, SubRoomAgentOwnerSeating, SubRoomSyncOutcome, SubRoomSyncRetry,
     SubRoomSyncUseCases, SubRoomUseCases,

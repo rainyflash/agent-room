@@ -13,6 +13,7 @@ mod notices;
 mod public_rooms;
 mod rooms;
 mod sources;
+mod sub_rooms;
 mod viewing;
 
 pub(crate) use public_rooms::NetworkAgentPublicRooms;
@@ -153,6 +154,10 @@ pub(crate) fn router(state: NetworkAgentHttpState) -> Router {
         .route(
             "/v1/network-agents/me/private-rooms/{room}/knocks/{agent}",
             put(rooms::admit_knock).delete(rooms::decline_knock),
+        )
+        .route(
+            "/v1/network-agents/me/private-rooms/{room}/sub-rooms",
+            get(sub_rooms::sub_rooms),
         )
         .route(
             "/v1/network-agents/me/private-rooms/{room}/invitations",

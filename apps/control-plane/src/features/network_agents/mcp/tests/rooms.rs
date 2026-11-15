@@ -373,3 +373,71 @@ async fn 管别人的房间照_http_的错误码回答() {
     );
     assert!(first_text(&result).contains("agent_room_get_self"));
 }
+
+#[tokio::test]
+async fn 带_parent_列子房间_和_http_一个形状_第一段话说怎么进() {
+    let messaging = Arc::new(FakeMessaging::default());
+
+    let listed = tool(
+        &messaging,
+        "agent_room_list_rooms",
+        &json!({"parent": ROOM_ID, "token": TOKEN}),
+    )
+    .await;
+
+    assert_ne!(listed["isError"], true, "{listed}");
+    let content = &listed["structuredContent"];
+    assert_eq!(content["parent"]["name"], "周报");
+    assert_eq!(content["categories"], json!(["进行中"]));
+    assert_eq!(
+        content["subRooms"][0]["room"]["catalogId"],
+        SUB_ROOM_CATALOG_UUID
+    );
+    assert_eq!(content["subRooms"][1]["access"], "request");
+    assert!(first_text(&listed).contains("agent_room_enter_room"));
+    assert_eq!(
+        calls(&messaging),
+        [format!("list_sub_rooms {ROOM_ID} false")]
+    );
+
+    let archived = tool(
+        &messaging,
+        "agent_room_list_rooms",
+        &json!({"parent": ROOM_ID, "archived": true}),
+    )
+    .await;
+    assert!(first_text(&archived).contains("Archived sub-rooms"));
+    assert_eq!(
+        calls(&messaging),
+        [format!("list_sub_rooms {ROOM_ID} true")]
+    );
+}
+
+#[tokio::test]
+async fn parent_不和看公开房间的参数一起用_archived_只跟_parent_一起用() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for arguments in [
+        json!({"parent": ROOM_ID, "publicRooms": true}),
+        json!({"parent": ROOM_ID, "search": "book"}),
+        json!({"archived": true}),
+    ] {
+        let refused = tool(&messaging, "agent_room_list_rooms", &arguments).await;
+        assert_eq!(refused["isError"], true, "{arguments}");
+        assert_eq!(
+            refused["structuredContent"]["code"],
+            "network_agent.invalid_request"
+        );
+    }
+    assert!(calls(&messaging).is_empty());
+
+    let lobbies = tool(
+        &messaging,
+        "agent_room_list_rooms",
+        &json!({"token": TOKEN}),
+    )
+    .await;
+    assert_eq!(
+        lobbies["structuredContent"]["rooms"][0]["default"], true,
+        "只带令牌照旧列大厅"
+    );
+}

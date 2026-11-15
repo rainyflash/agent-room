@@ -3,7 +3,8 @@
 //! 存的当口它被移出父房间时什么都不写，由真实存储的测试看（`sub_room_agent_members.rs`）。
 
 use agent_room_application::private_rooms::{
-    AgentSubRoomCreated, CreateAgentSubRoom, PrivateRoomResult,
+    AgentSubRoomCreated, AgentSubRoomListing, AgentSubRooms, CreateAgentSubRoom, ListAgentSubRooms,
+    PrivateRoomResult,
 };
 
 use super::*;
@@ -178,4 +179,126 @@ async fn 不是父房间里已加入的_agent_成员说找不到_房主收紧了
             .all(|catalog| !has_link(&rooms, catalog)),
         "被拒的一间也没存"
     );
+}
+
+// ---- 看子房间名单（2h-2）
+
+async fn listed(rooms: &Rooms, catalog: u128, archived: bool) -> PrivateRoomResult<AgentSubRooms> {
+    rooms
+        .service
+        .agent_sub_rooms(ListAgentSubRooms {
+            viewer: principal_id(NETWORK),
+            agent_id: network_agent(),
+            catalog_id: catalog_id(catalog),
+            archived,
+        })
+        .await
+}
+
+fn names(list: &AgentSubRooms) -> Vec<&str> {
+    list.rooms
+        .iter()
+        .map(|item| item.entry.name.as_str())
+        .collect()
+}
+
+/// 管子房间的人后来把它藏起来了。
+fn hide(rooms: &Rooms, catalog: u128) {
+    for stored in rooms.store.links.lock().expect("关系锁正常").iter_mut() {
+        if stored.link.catalog_id == catalog_id(catalog) {
+            stored.link.hidden = true;
+        }
+    }
+}
+
+fn behind_door(catalog: u128, name: &str) -> Seed {
+    Seed {
+        access: RoomJoinMode::Request,
+        hidden: true,
+        ..Seed::open(catalog, name)
+    }
+}
+
+#[tokio::test]
+async fn 凭口令进来的网络_agent_看子房间_藏起来的只看得到它建的和它在里面的_分类写名字() {
+    let rooms = with_network_agent();
+    rooms
+        .create_category(ADMIN, 60, "Release")
+        .await
+        .expect("建了分类");
+    rooms.store.seed(&Seed::open(20, "open"));
+    rooms.store.seed(&behind_door(21, "hidden-inside"));
+    rooms.store.seed(&behind_door(22, "hidden-elsewhere"));
+    rooms.store.seed(&Seed {
+        archived: true,
+        ..Seed::open(23, "archived")
+    });
+    admit(&rooms, 21);
+    create(
+        &rooms,
+        CreateAgentSubRoom {
+            category: Some("release".to_owned()),
+            ..by_network(PARENT, 24, "its-own")
+        },
+    )
+    .await
+    .expect("它建了一间");
+    hide(&rooms, 24);
+
+    let list = listed(&rooms, PARENT, false).await.expect("看得到");
+    assert_eq!(list.parent.catalog().id(), catalog_id(PARENT));
+    assert_eq!(names(&list), ["open", "hidden-inside", "its-own"]);
+    assert_eq!(list.categories, ["Release"]);
+    assert_eq!(list.rooms[2].category.as_deref(), Some("Release"));
+    assert_eq!(list.rooms[0].category, None);
+
+    let from_sub_room = listed(&rooms, 20, false).await.expect("拿子房间号也行");
+    assert_eq!(names(&from_sub_room), names(&list));
+    assert_eq!(
+        names(&listed(&rooms, PARENT, true).await.expect("归档的")),
+        ["archived"]
+    );
+}
+
+#[tokio::test]
+async fn 不是父房间里已加入的_agent_成员看不了名单() {
+    let rooms = Rooms::new();
+    rooms.agents.own(principal_id(NETWORK), network_agent());
+    rooms.store.seed(&Seed::open(20, "open"));
+
+    assert_eq!(
+        listed(&rooms, PARENT, false).await.unwrap_err().kind(),
+        PrivateRoomFailureKind::NotFound
+    );
+    admit(&rooms, 20);
+    assert_eq!(
+        listed(&rooms, 20, false).await.unwrap_err().kind(),
+        PrivateRoomFailureKind::NotFound,
+        "只在子房间里不算：要在父房间里"
+    );
+}
+
+#[tokio::test]
+async fn 合成主体是父房间里的人时照网页的规矩看_管父房间的看得到藏起来的() {
+    let rooms = Rooms::new();
+    rooms.store.seed(&behind_door(21, "hidden"));
+    let as_viewer = |viewer: u128| ListAgentSubRooms {
+        viewer: principal_id(viewer),
+        agent_id: network_agent(),
+        catalog_id: catalog_id(PARENT),
+        archived: false,
+    };
+
+    let owner = rooms
+        .service
+        .agent_sub_rooms(as_viewer(OWNER))
+        .await
+        .expect("房主看得到");
+    assert_eq!(names(&owner), ["hidden"]);
+    let member = rooms
+        .service
+        .agent_sub_rooms(as_viewer(MEMBER))
+        .await
+        .expect("成员看得到名单");
+    assert!(names(&member).is_empty(), "藏起来的成员看不到");
 }

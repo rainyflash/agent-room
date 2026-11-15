@@ -12,7 +12,8 @@ use agent_room_application::{
         NetworkAgentMatrixDevice, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom,
         NetworkAgentPendingExit, NetworkAgentPlacement, NetworkAgentResult, NetworkAgentRoom,
         NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomRequest,
-        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomRequest,
+        NetworkAgentRoomUseCases, NetworkAgentSession, NetworkAgentSubRoomActivity,
+        NetworkAgentSubRoomList, NetworkAgentSubRoomRequest, NetworkAgentSubRoomSummary,
         NetworkAgentTarget, NetworkAgentUseCases, NetworkAgentView,
     },
     ports::{
@@ -26,6 +27,7 @@ use agent_room_domain::{
     ids::{AgentId, NetworkAgentId, PrincipalId, RoomCatalogId},
     join_codes::{PrivateRoomAgentKnockStatus, PrivateRoomAgentMemberStatus},
     private_rooms::PrivateRoomPermissions,
+    room_listing::RoomJoinMode,
     rooms::MatrixRoomReference,
     time::UtcMillis,
 };
@@ -360,6 +362,50 @@ impl FakeMessaging {
     }
 }
 
+/// 周报下面的两间：它建的、在里面的“设计”，别人建的、有门的“评审”。
+pub(super) fn sub_room_list() -> NetworkAgentSubRoomList {
+    NetworkAgentSubRoomList {
+        parent: owned_room("周报"),
+        categories: vec!["进行中".to_owned()],
+        rooms: vec![
+            NetworkAgentSubRoomSummary {
+                room: NetworkAgentRoom {
+                    catalog_id: RoomCatalogId::from_uuid(uuid(SUB_ROOM_CATALOG_UUID)),
+                    matrix_room_id: MatrixRoomReference::new("!sub:matrix.test".to_owned())
+                        .unwrap(),
+                    name: "设计".to_owned(),
+                    archived: false,
+                },
+                description: "画图".to_owned(),
+                category: Some("进行中".to_owned()),
+                access: RoomJoinMode::Open,
+                joined: true,
+                created_by_you: true,
+                activity: Some(NetworkAgentSubRoomActivity {
+                    people: 2,
+                    agents: 1,
+                    last_message_at: Some(UtcMillis::new(KNOCKED_AT).unwrap()),
+                }),
+            },
+            NetworkAgentSubRoomSummary {
+                room: NetworkAgentRoom {
+                    catalog_id: RoomCatalogId::from_uuid(uuid(CATALOG_UUID)),
+                    matrix_room_id: MatrixRoomReference::new("!review:matrix.test".to_owned())
+                        .unwrap(),
+                    name: "评审".to_owned(),
+                    archived: false,
+                },
+                description: String::new(),
+                category: None,
+                access: RoomJoinMode::Request,
+                joined: false,
+                created_by_you: false,
+                activity: None,
+            },
+        ],
+    }
+}
+
 pub(super) fn owned_room(name: &str) -> NetworkAgentRoom {
     NetworkAgentRoom {
         catalog_id: RoomCatalogId::from_uuid(uuid(PRIVATE_CATALOG_UUID)),
@@ -653,6 +699,16 @@ impl NetworkAgentRoomUseCases for FakeMessaging {
         _request: NetworkAgentSubRoomRequest<'a>,
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentOwnedSubRoom>> {
         unreachable!("建子房间走网关")
+    }
+
+    fn list_sub_rooms<'a>(
+        &'a self,
+        token: &'a str,
+        parent: &'a str,
+        archived: bool,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentSubRoomList>> {
+        self.room_call(token, format!("list_sub_rooms {parent} {archived}"));
+        self.owned_result(sub_room_list())
     }
 
     fn close_room<'a>(
