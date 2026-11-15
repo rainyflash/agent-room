@@ -22,7 +22,10 @@ use agent_room_domain::{
 };
 use axum::{
     Json,
-    extract::{Extension, Path, State, rejection::JsonRejection},
+    extract::{
+        Extension, Path, Query, State,
+        rejection::{JsonRejection, QueryRejection},
+    },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -129,7 +132,7 @@ struct SubRoomListResponse {
     /// 这间房的分类，按先后（2e-1）。整间房共用；里面有几间由网页照下面的子房间数，看不到的
     /// 子房间不从这里露出来。
     categories: Vec<CategoryResponse>,
-    /// 按建的先后。归档的不在这里。
+    /// 没归档的，按建的先后；带 `archived=1` 时只有归档的，最近归档的在前（2e-3）。
     sub_rooms: Vec<SubRoomResponse>,
 }
 
@@ -173,6 +176,17 @@ struct SubRoomResponse {
     /// 在等的申请有几个：只给管得了这一间的人。
     #[serde(skip_serializing_if = "Option::is_none")]
     pending_request_count: Option<u32>,
+    /// 下面四项只在“已归档”的名单里写（2e-3）：什么时候、谁、为什么归档的，看的人能不能恢复。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    archived_at_unix_ms: Option<i64>,
+    /// 自动归档的、跟着父房间归档的没有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    archived_by_principal_id: Option<String>,
+    /// `manual`（有人收起来的）、`inactive`（30 天没人说话）、`parent`（跟着父房间）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    archived_reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    can_restore: Option<bool>,
 }
 
 impl From<SubRoomView> for SubRoomResponse {
@@ -181,7 +195,9 @@ impl From<SubRoomView> for SubRoomResponse {
             entry,
             inside_visible,
             manages,
+            restorable,
         } = view;
+        let record = entry.archive_record.filter(|_| entry.archived);
         Self {
             catalog_id: entry.catalog_id.to_string(),
             name: entry.name,
@@ -202,6 +218,26 @@ impl From<SubRoomView> for SubRoomResponse {
                 .map(UtcMillis::value),
             requested_at_unix_ms: entry.viewer_requested_at.map(UtcMillis::value),
             pending_request_count: manages.then_some(entry.pending_requests),
+            archived_at_unix_ms: record.map(|record| record.at.value()),
+            archived_by_principal_id: record.and_then(|record| record.by).map(|by| by.to_string()),
+            archived_reason: record.map(|record| record.reason.as_str()),
+            can_restore: entry.archived.then_some(restorable),
+        }
+    }
+}
+
+/// 名单的查询参数：`archived=1` 要“已归档”的那份（2e-3），不带或者 `0` 是没归档的。
+#[derive(Debug, Deserialize)]
+pub(super) struct ListQuery {
+    archived: Option<String>,
+}
+
+impl ListQuery {
+    fn archived(&self) -> Option<bool> {
+        match self.archived.as_deref() {
+            None | Some("0") => Some(false),
+            Some("1") => Some(true),
+            Some(_) => None,
         }
     }
 }
@@ -331,10 +367,14 @@ pub(super) async fn list(
     State(state): State<PrivateRoomHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
     Path(catalog): Path<String>,
+    query: Result<Query<ListQuery>, QueryRejection>,
     jar: CookieJar,
 ) -> Response {
     let Some(catalog_id) = catalog_id(&catalog) else {
         return invalid_resource(correlation_id);
+    };
+    let Some(archived) = query.ok().and_then(|Query(query)| query.archived()) else {
+        return invalid("private_room.invalid_request", correlation_id);
     };
     let actor = match authenticate_session(
         state.authentication.as_ref(),
@@ -349,7 +389,11 @@ pub(super) async fn list(
     };
     match state
         .sub_rooms
-        .list_sub_rooms(ListSubRooms { actor, catalog_id })
+        .list_sub_rooms(ListSubRooms {
+            actor,
+            catalog_id,
+            archived,
+        })
         .await
     {
         Ok(list) => no_store(Json(SubRoomListResponse::from(list)).into_response()),

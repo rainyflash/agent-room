@@ -347,7 +347,7 @@
 
 都是新加的，不往现有的回答里加字段（`privateRoomSchema` 等都是严格校验的，旧版桌面端多看到一个字段整个列表都读不出来）：
 
-- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。分类的名单 2e-1a 起有（`categories`：`[{ categoryId, name, position }]`，按先后；里面有几间由网页照它看得到的子房间数），每间的分类 2e-1b 起有（`categoryId`，“未分类”的不写），`archived=1` 跟 2e-3；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
+- `GET /private-rooms/{c}/sub-rooms`：`c` 是父房间或它的任何一个子房间，回父房间的名字、分类的名单和你看得到的子房间。每间：名字、用途、分类、哪种门、谁在管、你在不在里面、你有没有在等的申请、你是不是被封禁；没有门的或者你在里面的，再给人数、Agent 数、最近有人说话的时间。带 `archived=1` 回已归档的：名字、原来的分类、谁在什么时候为什么归档的、你原来在不在里面。父房间里已加入的人才能读。另带一个 `canCreate`：照房间的三项设置，你此刻能不能在这间房下面建。分类的名单 2e-1a 起有（`categories`：`[{ categoryId, name, position }]`，按先后；里面有几间由网页照它看得到的子房间数），每间的分类 2e-1b 起有（`categoryId`，“未分类”的不写）；`archived=1` 2e-3 起有：只有归档的，最近归档的在前，每间另带 `archivedAtUnixMs`、`archivedByPrincipalId`（自动归档的、跟着父房间归档的不写）、`archivedReason`（`manual`、`inactive`、`parent`）和 `canRestore`（照恢复的规矩算），`archived` 只认 `0` 和 `1`，别的回 400 `private_room.invalid_request`；在等的申请 2d-2 起有（`requestedAtUnixMs`，管得了的人另有 `pendingRequestCount`）。
 - `POST /private-rooms/{父}/sub-rooms`：建（名字、用途、分类、门、要不要隐藏）。和建房间一样带幂等键（子房间的房间号），回的是照私人房间样子的这一间。建不了时分开说：403 `sub_room.admins_only`、`sub_room.agents_may_not_create`，409 `sub_room.name_taken`、`sub_room.limit_reached`、`sub_room.nested`（在子房间下面建），429 `sub_room.rate_limited`。门（`access`：`open`、`request`、`invite_only`，不带就是 `open`）和隐藏（`hidden`，不带就是不藏）2d-1 起收；没有门又要藏的回 400 `private_room.invalid_request`。分类（`categoryId`）2e-1b 起收，得是这间房里的分类，没有了的回 409 `sub_room.category_missing`，不是分类号的回 400；多带别的字段回 400。
 - `PUT /private-rooms/{父}/sub-rooms/{子}`：改名、改用途、换分类、换门、隐藏；`DELETE`：归档；`POST .../sub-rooms/{子}/restore`：恢复。
   - 每一项都可以不带，不带的不动；一项都没带回 400 `sub_room.invalid_revision_body`。收 `name`、`description`，2d-1 起收 `access` 和 `hidden`（规则见上面“换门”），2e-1b 起收 `categoryId`（写成 `null` 是挪回“未分类”，挪进的分类没有了回 409 `sub_room.category_missing`）；多带别的字段也回 400。
@@ -635,3 +635,8 @@
   - 审计只记两个房间号和原因（`sub_room.archived`、`sub_room.restored`），名字是用户写的字，不进审计；自动归档（2j）没有动手的人，记成服务。
   - 跟着父房间归档的回不来，父房间归档以后哪一间都收不了、拿不回来。
   - “谁归档的”（`archived_by_principal_id`）是和账户连着的记录，删账户和隐私说明页的说法放到 2l 一起改。
+- 2026-11-15 2e-3 做完（#829）：“已归档”的名单（`GET .../sub-rooms?archived=1`）和真实 Synapse 的测试。没有迁移。
+  - 名单里每一间的“能不能恢复”和恢复本身用同一条规矩（领域的 `restore_allowed`）；看的人读得到名单就已经在父房间里，“原来在里面”只看这一间。
+  - 最近归档的排在前面，不照建的先后：多半是刚收错了要拿回来的。
+  - 真实 Synapse 的测试（`crates/matrix-adapter/tests/real_synapse/sub_room_archive.rs`）查 `reopen`：照给的说得了、说不了，没给的人留着原来的级别，一个也没给也解开门槛。归档以后谁都说不了，2c-3b 的测试已经查过。
+  - 以前只改了目录状态、父子关系上没记归档的子房间（2e-2 以前的测试数据会有），名单里照样算归档的，只是不带什么时候、谁、为什么，当成有人收起来的。

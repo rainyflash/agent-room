@@ -122,6 +122,8 @@ pub struct SubRoomEntry {
     /// 在哪个分类里（2e-1b）。“未分类”为空。
     pub category_id: Option<SubRoomCategoryId>,
     pub archived: bool,
+    /// 归档了的：谁、什么时候、为什么（2e-3 的“已归档”名单用）。没归档的为空。
+    pub archive_record: Option<SubRoomArchiveRecord>,
     pub created_by: PrincipalId,
     pub created_at: UtcMillis,
     /// 这一间的子房间管理员，按设的先后。父房间的房主和管理员不在这里。

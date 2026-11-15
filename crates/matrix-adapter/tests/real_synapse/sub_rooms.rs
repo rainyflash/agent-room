@@ -21,6 +21,8 @@ use super::{
     *,
 };
 
+#[path = "sub_room_archive.rs"]
+mod archive;
 #[path = "sub_room_doors.rs"]
 mod doors;
 

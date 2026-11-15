@@ -495,6 +495,7 @@ fn entry(sub_room: &NewSubRoom) -> SubRoomEntry {
         hidden: sub_room.hidden,
         category_id: sub_room.category_id,
         archived: false,
+        archive_record: None,
         created_by: sub_room.created_by,
         created_at: sub_room.created_at,
         managers: sub_room.managers.clone(),

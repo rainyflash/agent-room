@@ -205,6 +205,8 @@ pub struct CreateSubRoom {
 pub struct ListSubRooms {
     pub actor: AuthenticatedPrincipal,
     pub catalog_id: RoomCatalogId,
+    /// 要“已归档”的那份（2e-3）：只有归档了的，最近归档的在前。不要时只有没归档的，按建的先后。
+    pub archived: bool,
 }
 
 /// 子房间的名单：父房间是谁，和看的人看得到的那些。
@@ -255,6 +257,8 @@ pub struct SubRoomView {
     pub entry: SubRoomEntry,
     pub inside_visible: bool,
     pub manages: bool,
+    /// 看的人此刻能不能把它恢复。没归档的为假。
+    pub restorable: bool,
 }
 
 /// 人自己进一间子房间，或者从里面退出（`specs/redesign/sub-rooms.md` 第 2b 步）。地址里带着它

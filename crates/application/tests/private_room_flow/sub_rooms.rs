@@ -39,6 +39,8 @@ use super::*;
 
 #[path = "sub_room_archive.rs"]
 mod archive;
+#[path = "sub_room_archived_list.rs"]
+mod archived_list;
 #[path = "sub_room_categories.rs"]
 mod categories;
 #[path = "sub_room_doors.rs"]
@@ -734,6 +736,7 @@ impl Rooms {
             .list_sub_rooms(ListSubRooms {
                 actor: person(viewer),
                 catalog_id: catalog_id(catalog),
+                archived: false,
             })
             .await
     }
@@ -1570,6 +1573,7 @@ impl SubRoomStore for MemoryRooms {
                     hidden: stored.link.hidden,
                     category_id: stored.category,
                     archived: room.status() == PrivateRoomLifecycleStatus::Archived,
+                    archive_record: stored.link.archived,
                     created_by: stored.link.created_by,
                     created_at: stored.link.created_at,
                     managers: stored.managers.clone(),

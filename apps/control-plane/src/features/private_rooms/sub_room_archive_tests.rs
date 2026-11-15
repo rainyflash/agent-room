@@ -1,5 +1,8 @@
-//! 子房间的归档和恢复（`specs/redesign/sub-rooms.md` 第 2e-2 步）的接口。规则在用例里，这里看路由
-//! 把什么交给了用例、回答长什么样、被拒时回哪个码。
+//! 子房间的归档和恢复（`specs/redesign/sub-rooms.md` 第 2e-2 步）和“已归档”的名单（2e-3）的接口。
+//! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
+
+use agent_room_application::ports::SubRoomArchiveRecord;
+use agent_room_domain::sub_room_archive::SubRoomArchiveReason;
 
 use super::*;
 
@@ -123,4 +126,163 @@ async fn 管不了_归档了_撞了名字_满了_别人刚改过时说清楚() {
         assert_eq!(response.status(), status, "{code}");
         assert_eq!(response_json(response).await["code"], code);
     }
+}
+
+/// “已归档”的名单：一间是目标收起来的、看的人管着它；一间是 30 天没人说话自动收起来的、看的人
+/// 没进过。
+pub(super) fn archived_list() -> SubRoomList {
+    let mut listed = list();
+    let template = listed.sub_rooms.remove(0).entry;
+    listed.sub_rooms = vec![
+        SubRoomView {
+            entry: SubRoomEntry {
+                archived: true,
+                archive_record: Some(SubRoomArchiveRecord {
+                    at: time(ARCHIVED_AT),
+                    by: Some(target_id()),
+                    reason: SubRoomArchiveReason::Manual,
+                }),
+                pending_requests: 0,
+                ..template.clone()
+            },
+            inside_visible: true,
+            manages: true,
+            restorable: true,
+        },
+        SubRoomView {
+            entry: SubRoomEntry {
+                catalog_id: RoomCatalogId::from_uuid(uuid(OTHER_SUB_ROOM_UUID)),
+                name: "notes".to_owned(),
+                description: String::new(),
+                category_id: None,
+                archived: true,
+                archive_record: Some(SubRoomArchiveRecord {
+                    at: time(ARCHIVED_AT - 1_000),
+                    by: None,
+                    reason: SubRoomArchiveReason::Inactive,
+                }),
+                managers: Vec::new(),
+                viewer_status: None,
+                ..template
+            },
+            inside_visible: true,
+            manages: false,
+            restorable: false,
+        },
+    ];
+    listed
+}
+
+const ARCHIVED_AT: i64 = 1_700_000_200_000;
+
+fn list_uri(query: &str) -> String {
+    format!("/private-rooms/{CATALOG_UUID}/sub-rooms{query}")
+}
+
+#[tokio::test]
+async fn 已归档的名单带着什么时候_谁_为什么归档的_看的人能不能恢复() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let response = sub_room_router(sub_rooms.clone(), Arc::default())
+        .oneshot(sub_request(
+            Method::GET,
+            &list_uri("?archived=1"),
+            &json!({}),
+            false,
+            None,
+        ))
+        .await
+        .expect("名单路由可调用");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(
+        body["subRooms"],
+        json!([
+            {
+                "catalogId": SUB_ROOM_UUID,
+                "name": "release",
+                "description": "Ship Alpha 95",
+                "access": "open",
+                "hidden": false,
+                "categoryId": OTHER_CATEGORY_UUID,
+                "createdByPrincipalId": TARGET_UUID,
+                "createdAtUnixMs": 1_700_000_000_000_i64,
+                "managerPrincipalIds": [TARGET_UUID],
+                "joined": true,
+                "banned": false,
+                "memberCount": 3,
+                "agentCount": 2,
+                "lastMessageAtUnixMs": 1_700_000_100_000_i64,
+                "pendingRequestCount": 0,
+                "archivedAtUnixMs": ARCHIVED_AT,
+                "archivedByPrincipalId": TARGET_UUID,
+                "archivedReason": "manual",
+                "canRestore": true
+            },
+            {
+                "catalogId": OTHER_SUB_ROOM_UUID,
+                "name": "notes",
+                "description": "",
+                "access": "open",
+                "hidden": false,
+                "createdByPrincipalId": TARGET_UUID,
+                "createdAtUnixMs": 1_700_000_000_000_i64,
+                "managerPrincipalIds": [],
+                "joined": false,
+                "banned": false,
+                "memberCount": 3,
+                "agentCount": 2,
+                "lastMessageAtUnixMs": 1_700_000_100_000_i64,
+                "archivedAtUnixMs": ARCHIVED_AT - 1_000,
+                "archivedReason": "inactive",
+                "canRestore": false
+            }
+        ]),
+        "自动归档的没有谁归档的"
+    );
+    assert_eq!(body["parent"]["catalogId"], CATALOG_UUID);
+    assert_eq!(
+        sub_rooms.listed.lock().unwrap().as_slice(),
+        &[(catalog_id(), true)]
+    );
+}
+
+#[tokio::test]
+async fn 名单的_archived_只认_0_和_1_别的不收() {
+    let sub_rooms = Arc::new(FakeSubRooms::default());
+    let app = sub_room_router(sub_rooms.clone(), Arc::default());
+    let response = app
+        .clone()
+        .oneshot(sub_request(
+            Method::GET,
+            &list_uri("?archived=0"),
+            &json!({}),
+            false,
+            None,
+        ))
+        .await
+        .expect("名单路由可调用");
+    assert_eq!(response.status(), StatusCode::OK);
+    for query in ["?archived=yes", "?archived=", "?archived=1&archived=0"] {
+        let response = app
+            .clone()
+            .oneshot(sub_request(
+                Method::GET,
+                &list_uri(query),
+                &json!({}),
+                false,
+                None,
+            ))
+            .await
+            .expect("名单路由可调用");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
+        assert_eq!(
+            response_json(response).await["code"],
+            "private_room.invalid_request"
+        );
+    }
+    assert_eq!(
+        sub_rooms.listed.lock().unwrap().as_slice(),
+        &[(catalog_id(), false)],
+        "不收的没到用例"
+    );
 }
