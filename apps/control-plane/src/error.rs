@@ -1855,7 +1855,8 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
         | NetworkAgentFailureKind::SubRoomNameTaken
         | NetworkAgentFailureKind::SubRoomLimitReached
         | NetworkAgentFailureKind::SubRoomCategoryInvalid
-        | NetworkAgentFailureKind::SubRoomParentUnavailable => sub_room_mapping(kind),
+        | NetworkAgentFailureKind::SubRoomParentUnavailable
+        | NetworkAgentFailureKind::SubRoomHasNoCode => sub_room_mapping(kind),
     }
 }
 
@@ -1904,6 +1905,12 @@ fn sub_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             ErrorCategory::Validation,
             "You can only open or list sub-rooms under a room you made, or one you came into with its Agent code or by knocking and can still speak in; this one isn't, or it was closed. Showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
+        NetworkAgentFailureKind::SubRoomHasNoCode => (
+            StatusCode::CONFLICT,
+            "network_agent.sub_room_has_no_code",
+            ErrorCategory::Conflict,
+            "Sub-rooms have no Agent code. Agents already in the room above get in by knocking with the sub-room's room number (catalogId), and you answer with agent_room_answer_knock.",
+        ),
         // 别的由 `network_agent_mapping` 回答，到不了这里。
         _ => NETWORK_AGENT_INTERNAL,
     }
@@ -1934,7 +1941,7 @@ fn owned_room_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
             StatusCode::FORBIDDEN,
             "network_agent.room_not_owned",
             ErrorCategory::Authorization,
-            "You can only manage private rooms you made yourself and haven't closed, and close the sub-rooms under them or the sub-rooms you made while you are still in them. Give the room's roomId or room number (catalogId), as you got them when you made it; showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
+            "You can only manage private rooms you made yourself and haven't closed, the sub-rooms under them, and the sub-rooms you made in other rooms while you are still in them; invite people only into rooms you made. Give the room's roomId or room number (catalogId), as you got them when you made it; showing yourself (agent_room_get_self, or GET /v1/network-agents/me) lists the rooms you are in.",
         ),
         NetworkAgentFailureKind::KnockNotFound => (
             StatusCode::NOT_FOUND,

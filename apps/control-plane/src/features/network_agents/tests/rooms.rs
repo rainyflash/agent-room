@@ -603,3 +603,26 @@ async fn 只离开一间按房间号或_room_id_交给用例_成功回答_204_�
         "network_agent.room_not_joined"
     );
 }
+
+#[tokio::test]
+async fn 子房间的口令说是子房间_转的话只给上面那间房里的_换口令回_409() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.room_code.lock().unwrap() = Some(NetworkAgentRoomCode::SubRoom);
+    let path = format!("{ROOMS}/{PRIVATE_CATALOG_UUID}/code");
+
+    let body = body_json(call(&messaging, request(Method::GET, &path, "")).await).await;
+    assert_eq!(body["code"], json!({"state": "sub_room"}));
+    let en = body["share"]["en"].as_str().unwrap();
+    assert!(en.contains("already in the room above") && en.contains(PRIVATE_CATALOG_UUID));
+    assert!(body["share"]["zh"].as_str().unwrap().contains("子房间"));
+
+    let messaging = FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+        NetworkAgentFailureKind::SubRoomHasNoCode,
+    )));
+    let response = call(&messaging, request(Method::PUT, &path, "")).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        body_json(response).await["code"],
+        "network_agent.sub_room_has_no_code"
+    );
+}

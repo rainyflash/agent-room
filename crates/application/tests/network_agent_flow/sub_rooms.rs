@@ -1,8 +1,9 @@
 //! 网络 Agent 在它建的房间下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）。
 
 use agent_room_application::network_agents::{
-    NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomUseCases,
-    NetworkAgentSubRoomActivity, NetworkAgentSubRoomList, NetworkAgentSubRoomRequest,
+    NetworkAgentFailure, NetworkAgentOwnedRoom, NetworkAgentOwnedSubRoom, NetworkAgentRoomCode,
+    NetworkAgentRoomUseCases, NetworkAgentSubRoomActivity, NetworkAgentSubRoomList,
+    NetworkAgentSubRoomRequest,
 };
 use agent_room_application::{
     ports::{NetworkAgentRoomParent, NetworkAgentRoomRecord, SubRoomEntry},
@@ -607,4 +608,162 @@ async fn 关子房间交给私人房间用例归档_不再照整间房关_管不
         );
     }
     assert!(harness.rooms.archived.lock().unwrap().is_empty());
+}
+
+// ---- 管它管得了的子房间（2h-4a）
+
+/// 它在这间子房间里做过的管房间的事（看敲门、放行、移出……）。
+fn managed_actions(harness: &Harness, catalog_id: RoomCatalogId) -> Vec<&'static str> {
+    harness
+        .access
+        .managed
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, room, _)| *room == catalog_id)
+        .map(|(_, _, action)| *action)
+        .collect()
+}
+
+#[tokio::test]
+async fn 它自己房间下面的子房间_看口令说是子房间_换口令说没有口令_看敲门放行移出照做() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let record = harness.store.only();
+    let room = parent(&harness, &token, "项目").await;
+    let below = sub_room(
+        &harness,
+        &token,
+        &room.room.catalog_id.to_string(),
+        "设计",
+        None,
+    )
+    .await
+    .unwrap()
+    .room;
+    let number = below.catalog_id.to_string();
+
+    let view = harness.service.room_code(&token, &number).await.unwrap();
+    assert_eq!(view.room, below);
+    assert!(matches!(view.code, NetworkAgentRoomCode::SubRoom));
+    for failure in [
+        kind(harness.service.replace_code(&token, &number).await),
+        kind(harness.service.disable_code(&token, &number).await),
+    ] {
+        assert_eq!(failure, NetworkAgentFailureKind::SubRoomHasNoCode);
+    }
+    assert!(
+        managed_actions(&harness, below.catalog_id).is_empty(),
+        "口令碰都不碰"
+    );
+
+    let knocker = AgentId::from_uuid(Uuid::now_v7());
+    harness.access.knocks.lock().unwrap().push(waiting_knock_on(
+        below.catalog_id,
+        knocker,
+        "Critic",
+    ));
+    let waiting = harness
+        .service
+        .waiting_knocks(&token, &number)
+        .await
+        .unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].display_name, "Critic");
+    let incoming = harness.service.incoming_knocks(&token).await.unwrap();
+    assert!(incoming.owns_rooms);
+    assert_eq!(incoming.knocks.len(), 1, "子房间的敲门也叫醒它");
+    assert_eq!(incoming.knocks[0].room, below);
+
+    harness
+        .service
+        .admit_knock(&token, &number, knocker)
+        .await
+        .expect("放行");
+    harness.access.members.lock().unwrap().insert(knocker);
+    harness
+        .service
+        .remove_agent(&token, &number, knocker)
+        .await
+        .expect("移出");
+    assert_eq!(
+        managed_actions(&harness, below.catalog_id),
+        ["knocks", "knocks", "admit", "remove"]
+    );
+    let asked = harness.rooms.sub_rooms_managed.lock().unwrap().clone();
+    assert!(asked.iter().all(|request| {
+        request.catalog_id == below.catalog_id
+            && Some(request.agent_id) == record.agent_id
+            && request.actor.principal_id() == record.principal_id
+    }));
+    assert_eq!(
+        kind(
+            harness
+                .service
+                .invite_person(&token, &number, PrincipalId::from_uuid(Uuid::now_v7()))
+                .await
+        ),
+        NetworkAgentFailureKind::RoomNotOwned,
+        "邀请人还只认整间房"
+    );
+}
+
+#[tokio::test]
+async fn 它在别人房间下面建的子房间_看敲门_敲门也叫醒它_管不了的说不是它的() {
+    let harness = Harness::enabled();
+    let token = agent(&harness).await;
+    let id = harness.store.only().id;
+    let other = harness
+        .rooms
+        .seed_other(PrincipalId::from_uuid(Uuid::now_v7()));
+    record_entered(&harness, other, false).await;
+    let below = sub_room(&harness, &token, &other.to_string(), "设计", None)
+        .await
+        .unwrap()
+        .room;
+    harness
+        .store
+        .record_room(
+            id,
+            &NetworkAgentRoomRecord {
+                catalog_id: below.catalog_id,
+                matrix_room_id: below.matrix_room_id.clone(),
+                joined_at: UtcMillis::new(START).unwrap(),
+                name: None,
+                archived: false,
+                parent: Some(NetworkAgentRoomParent {
+                    catalog_id: other,
+                    name: "别人的房间".to_owned(),
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    harness.access.knocks.lock().unwrap().push(waiting_knock_on(
+        below.catalog_id,
+        AgentId::from_uuid(Uuid::now_v7()),
+        "Critic",
+    ));
+
+    let waiting = harness
+        .service
+        .waiting_knocks(&token, below.matrix_room_id.as_str())
+        .await
+        .expect("按进过的 Matrix 房间 ID 认也行");
+    assert_eq!(waiting.len(), 1);
+    let incoming = harness.service.incoming_knocks(&token).await.unwrap();
+    assert!(incoming.owns_rooms);
+    assert_eq!(incoming.knocks.len(), 1);
+    assert_eq!(incoming.knocks[0].room.catalog_id, below.catalog_id);
+
+    assert_eq!(
+        kind(
+            harness
+                .service
+                .waiting_knocks(&token, &other.to_string())
+                .await
+        ),
+        NetworkAgentFailureKind::RoomNotOwned,
+        "别人的整间房管不了"
+    );
 }

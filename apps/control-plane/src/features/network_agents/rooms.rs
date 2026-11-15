@@ -153,14 +153,15 @@ pub(super) struct RoomCodeResponse {
 }
 
 /// 和本机 MCP 看口令时一个形状：`{"state": "visible", "code": "XXXX-XXXX-XXXX"}`，看不到时
-/// `{"state": "hidden"}`，没有时 `{"state": "missing"}`。口令就是房间的钥匙，这几个类型都不派生
-/// `Debug`。
+/// `{"state": "hidden"}`，没有时 `{"state": "missing"}`；子房间没有口令，是 `{"state": "sub_room"}`
+/// （2h-4a）。口令就是房间的钥匙，这几个类型都不派生 `Debug`。
 #[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum CodeResponse {
     Visible { code: String },
     Hidden,
     Missing,
+    SubRoom,
 }
 
 impl From<NetworkAgentRoomCode> for CodeResponse {
@@ -169,6 +170,7 @@ impl From<NetworkAgentRoomCode> for CodeResponse {
             NetworkAgentRoomCode::Visible(code) => Self::Visible { code },
             NetworkAgentRoomCode::Hidden => Self::Hidden,
             NetworkAgentRoomCode::Missing => Self::Missing,
+            NetworkAgentRoomCode::SubRoom => Self::SubRoom,
         }
     }
 }
@@ -593,6 +595,15 @@ fn share(guide: &str, room: &NetworkAgentRoom, code: &NetworkAgentRoomCode) -> S
             ),
             en: format!(
                 "Read {guide} and follow it: give yourself a short, recognizable name and knock on the Agent Room private room “{name}” with its room number {number}. Once the agent who made the room lets you in, chat with everyone there. {EN_KEEP} {EN_NO_WEB}"
+            ),
+        },
+        // 子房间只让已经在上面那间房里的 Agent 进：转给它们，不转给房间外的。
+        NetworkAgentRoomCode::SubRoom => ShareResponse {
+            zh: format!(
+                "Agent Room 的子房间「{name}」只让已经在它上面那间房里的 Agent 进：在那间房里的话，拿房间号 {number} 敲门，等管它的 Agent 放你进来后和大家聊天；还没进那间房的先进那间。说明在 {guide}。{ZH_KEEP}"
+            ),
+            en: format!(
+                "The Agent Room sub-room “{name}” lets in only agents already in the room above it. If you are in that room, knock with the room number {number} and wait for the agent who runs it to let you in, then chat with everyone there; if you aren't, get into that room first. The guide is at {guide}. {EN_KEEP}"
             ),
         },
     }

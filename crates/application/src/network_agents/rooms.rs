@@ -11,6 +11,11 @@
 //!
 //! 能放行的只有它自己，所以有人敲它建的房间的门时，网关在它等消息时叫醒它，等消息的回答和 `/me`
 //! 都列出在等的敲门（`incoming_knocks`）。不然敲门放一小时没人回答就作废了。
+//!
+//! 它管得了的子房间（`specs/redesign/sub-rooms.md` 第 2h-4a 步）也用看口令、敲门、移出 Agent 这几样：
+//! 它自己的房间下面每一间，和它在别人房间下面建的、它还在里面的（私人房间那边的
+//! `AgentSubRoomManagement` 认）。子房间没有口令：看口令说是子房间，换口令、停用口令说子房间没有口令。
+//! 这些子房间里的敲门也叫醒它。邀请人还只认整间房（2h-4b）。
 
 use std::fmt;
 
@@ -32,9 +37,9 @@ use crate::{
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AnswerKnock,
         ArchiveAgentSubRoom, ArchivePrivateRoom, CreateAgentSubRoom, CreatePrivateRoom,
-        InspectAgentAccess, InvitePrivateRoomMember, ListPrivateRoomsForAccount, ManageJoinCode,
-        PrivateRoomActor, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
-        RemoveAgentMember, SubRoomRefusal,
+        FindAgentManagedSubRoom, InspectAgentAccess, InvitePrivateRoomMember,
+        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, RemoveAgentMember, SubRoomRefusal,
     },
 };
 
@@ -87,7 +92,8 @@ pub trait NetworkAgentRoomUseCases: Send + Sync {
     ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>>;
 
     /// 看它建的房间现在的口令。没有口令时回答 `Missing`，不替它生成：看口令不该有副作用。
-    /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID。
+    /// 下面管房间的几样，`room` 都是它当房主、还没关的房间的房间号或 Matrix 房间 ID；看口令、敲门、
+    /// 移出 Agent 也认它管得了的子房间（2h-4a，子房间回答 `SubRoom`），邀请人只认整间房。
     fn room_code<'a>(
         &'a self,
         token: &'a str,
@@ -210,6 +216,8 @@ pub enum NetworkAgentRoomCode {
     Hidden,
     /// 没有口令：停用了，或者还没生成。只能敲门进来。
     Missing,
+    /// 子房间（2h-4a）：子房间没有口令，上面那间房里的 Agent 拿房间号敲门。
+    SubRoom,
 }
 
 // 口令就是房间的钥匙，调试输出里不能出现。
@@ -219,6 +227,7 @@ impl fmt::Debug for NetworkAgentRoomCode {
             Self::Visible(_) => formatter.write_str("Visible([已脱敏])"),
             Self::Hidden => formatter.write_str("Hidden"),
             Self::Missing => formatter.write_str("Missing"),
+            Self::SubRoom => formatter.write_str("SubRoom"),
         }
     }
 }
@@ -252,6 +261,8 @@ struct ManagedRoom {
     agent: NetworkAgentId,
     actor: PrivateRoomActor,
     room: NetworkAgentRoom,
+    /// 是它管得了的子房间（2h-4a），不是它当房主的整间房。
+    sub_room: bool,
 }
 
 impl NetworkAgentService {
@@ -476,7 +487,18 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom {
+            actor,
+            room,
+            sub_room,
+            ..
+        } = self.managed_with_sub_rooms(token, room).await?;
+        if sub_room {
+            return Ok(NetworkAgentRoomCodeView {
+                room,
+                code: NetworkAgentRoomCode::SubRoom,
+            });
+        }
         let revealed = self
             .access
             .reveal_code(ManageJoinCode {
@@ -502,13 +524,13 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<NetworkAgentRoomCodeView> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed_with_code(token, room).await?;
         let code = self.new_code(actor, room.catalog_id).await?;
         Ok(NetworkAgentRoomCodeView { room, code })
     }
 
     async fn disable_code_internal(&self, token: &str, room: &str) -> NetworkAgentResult<()> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed_with_code(token, room).await?;
         self.access
             .disable_code(ManageJoinCode {
                 actor,
@@ -523,7 +545,7 @@ impl NetworkAgentService {
         token: &str,
         room: &str,
     ) -> NetworkAgentResult<Vec<PrivateRoomAgentKnockRecord>> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
         self.access
             .waiting_knocks(InspectAgentAccess {
                 actor,
@@ -540,7 +562,7 @@ impl NetworkAgentService {
         room: &str,
         agent_id: AgentId,
     ) -> NetworkAgentResult<AnswerKnock> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
         Ok(AnswerKnock {
             actor,
             catalog_id: room.catalog_id,
@@ -554,7 +576,9 @@ impl NetworkAgentService {
         room: &str,
         account_id: PrincipalId,
     ) -> NetworkAgentResult<()> {
-        let ManagedRoom { agent, actor, room } = self.managed(token, room).await?;
+        let ManagedRoom {
+            agent, actor, room, ..
+        } = self.managed(token, room).await?;
         // 邀请会弹到对方的应用里：每天发的有上限。没有这个账户的也算一次，免得拿它一个个试账户 ID。
         self.take(
             &format!("invite:day:{}", agent.as_uuid().simple()),
@@ -580,7 +604,7 @@ impl NetworkAgentService {
         room: &str,
         agent_id: AgentId,
     ) -> NetworkAgentResult<()> {
-        let ManagedRoom { actor, room, .. } = self.managed(token, room).await?;
+        let ManagedRoom { actor, room, .. } = self.managed_with_sub_rooms(token, room).await?;
         self.access
             .remove_agent(RemoveAgentMember {
                 actor,
@@ -591,8 +615,37 @@ impl NetworkAgentService {
             .map_err(removal_failure)
     }
 
-    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的房间。
+    /// 管房间的请求先认令牌、记一次活动，再认出房间：只认它当房主、还没关的整间房。
     async fn managed(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
+        self.managed_room(token, room, false).await
+    }
+
+    /// 和 [`Self::managed`] 一样，另认它管得了的子房间（2h-4a）。看口令、敲门、移出 Agent 用这个。
+    async fn managed_with_sub_rooms(
+        &self,
+        token: &str,
+        room: &str,
+    ) -> NetworkAgentResult<ManagedRoom> {
+        self.managed_room(token, room, true).await
+    }
+
+    /// 换口令、停用口令：子房间认得出，但说子房间没有口令。
+    async fn managed_with_code(&self, token: &str, room: &str) -> NetworkAgentResult<ManagedRoom> {
+        let managed = self.managed_with_sub_rooms(token, room).await?;
+        if managed.sub_room {
+            return Err(NetworkAgentFailure::new(
+                NetworkAgentFailureKind::SubRoomHasNoCode,
+            ));
+        }
+        Ok(managed)
+    }
+
+    async fn managed_room(
+        &self,
+        token: &str,
+        room: &str,
+        sub_rooms: bool,
+    ) -> NetworkAgentResult<ManagedRoom> {
         let record = self.authenticated(token).await?;
         let now = self.clock.now();
         self.store
@@ -602,7 +655,7 @@ impl NetworkAgentService {
         let actor = PrivateRoomActor::NetworkAgent(self.actor_of(&record, now)?);
         let wanted = parse_room_number(room);
         let matrix_room_id = room.trim();
-        let room = self
+        let whole = self
             .open_rooms(record.principal_id)
             .await?
             .iter()
@@ -612,12 +665,34 @@ impl NetworkAgentService {
                     |catalog_id| snapshot.catalog().id() == catalog_id,
                 )
             })
-            .map(owned_room)
+            .map(owned_room);
+        if let Some(room) = whole {
+            return Ok(ManagedRoom {
+                agent: record.id,
+                actor,
+                room,
+                sub_room: false,
+            });
+        }
+        if !sub_rooms {
+            return Err(not_owned());
+        }
+        let catalog_id = self.room_of(record.id, room).await?;
+        let snapshot = self
+            .sub_room_management
+            .agent_managed_sub_room(FindAgentManagedSubRoom {
+                actor: actor.clone(),
+                agent_id: record.agent_id.ok_or_else(internal)?,
+                catalog_id,
+            })
+            .await
+            .map_err(sub_room_archive_failure)?
             .ok_or_else(not_owned)?;
         Ok(ManagedRoom {
             agent: record.id,
             actor,
-            room,
+            room: owned_room(&snapshot),
+            sub_room: true,
         })
     }
 
@@ -628,14 +703,13 @@ impl NetworkAgentService {
         &self,
         record: &NetworkAgentRecord,
     ) -> NetworkAgentResult<NetworkAgentIncomingKnocks> {
-        let rooms = self.open_rooms(record.principal_id).await?;
+        let rooms = self.knock_rooms(record).await?;
         if rooms.is_empty() {
             return Ok(NetworkAgentIncomingKnocks::default());
         }
         let actor = PrivateRoomActor::NetworkAgent(self.actor_of(record, self.clock.now())?);
         let mut knocks = Vec::new();
-        for snapshot in &rooms {
-            let room = owned_room(snapshot);
+        for room in rooms {
             let waiting = match self
                 .access
                 .waiting_knocks(InspectAgentAccess {
@@ -667,6 +741,37 @@ impl NetworkAgentService {
             owns_rooms: true,
             knocks,
         })
+    }
+
+    /// 有人敲门要它回答的房间：它当房主、还没关的整间房和下面没归档的子房间，加上它进了的、别人
+    /// 房间下面的子房间（2h-4a）。别人房间下面的是不是它建的由看敲门那一步认，不是的说找不到、跳过。
+    async fn knock_rooms(
+        &self,
+        record: &NetworkAgentRecord,
+    ) -> NetworkAgentResult<Vec<NetworkAgentRoom>> {
+        let principal_id = record.principal_id;
+        let mut rooms: Vec<NetworkAgentRoom> = self
+            .account_rooms(principal_id)
+            .await?
+            .iter()
+            .filter(|snapshot| {
+                snapshot.room().owner_principal_id() == principal_id
+                    && !owned_room(snapshot).archived
+            })
+            .map(owned_room)
+            .collect();
+        let joined = self.store.rooms(record.id).await.map_err(repository)?;
+        for room in joined {
+            if room.parent.is_some()
+                && !room.archived
+                && !rooms
+                    .iter()
+                    .any(|known| known.catalog_id == room.catalog_id)
+            {
+                rooms.push(self.named(room).await?);
+            }
+        }
+        Ok(rooms)
     }
 
     /// 它没关的整间房。它房间下面的子房间房主也记成它，不算在这里：子房间不占建房的名额，同名
