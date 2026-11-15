@@ -29,7 +29,7 @@ impl FamilyAgentMembers {
     }
 
     /// 记一个已加入的 Agent 成员，能看能说。
-    fn join(&self, catalog: u128, agent_id: AgentId, user: &MatrixUserId) {
+    pub(super) fn join(&self, catalog: u128, agent_id: AgentId, user: &MatrixUserId) {
         self.members
             .lock()
             .expect("Agent 成员锁正常")

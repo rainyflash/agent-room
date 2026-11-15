@@ -224,3 +224,63 @@ async fn 子房间里只记父房间里此刻还在的_agent_成员_父房间照
 
     database.close().await;
 }
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn agent_成员自己建的子房间_同一个事务里记成这一间的_agent_成员_父房间里刚移出的什么都不写() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let pool = &database.runtime;
+    let owner = seed_principal(pool, "sub-room-agent-creator-owner").await;
+    let network = seed_principal(pool, "sub-room-agent-creator-network").await;
+    let agent = seed_agent(pool, network).await;
+    let parent = create_room(&repositories, owner).await;
+    admit_agent(
+        &repositories,
+        parent,
+        agent,
+        PrivateRoomAgentJoinedVia::Code,
+        1_000,
+    )
+    .await;
+    let by_agent_member = |draft: NewSubRoom| NewSubRoom {
+        created_by: network,
+        created_by_agent: Some(agent),
+        managers: Vec::new(),
+        creator_agent_member: Some(agent),
+        ..draft
+    };
+
+    let own = by_agent_member(draft(&repositories, parent, owner, "Its own", time(2_000)).await);
+    assert_eq!(
+        SubRoomStore::create_sub_room(&repositories, &own)
+            .await
+            .expect("存得下"),
+        None
+    );
+    let sub_room = own.snapshot.catalog().id();
+    assert_eq!(
+        status(&repositories, sub_room, agent).await,
+        Some(PrivateRoomAgentMemberStatus::Joined),
+        "建的 Agent 成员在这一间里"
+    );
+    let recorded = link(&repositories, sub_room).await.expect("有父子关系");
+    assert_eq!(recorded.created_by, network);
+    assert_eq!(recorded.created_by_agent, Some(agent));
+
+    assert!(remove(&repositories, parent, agent, 3_000).await);
+    let late = by_agent_member(draft(&repositories, parent, owner, "Too late", time(4_000)).await);
+    assert_eq!(
+        SubRoomStore::create_sub_room(&repositories, &late)
+            .await
+            .expect("读得出"),
+        Some(SubRoomCreationBlock::ParentUnavailable)
+    );
+    assert_eq!(
+        link(&repositories, late.snapshot.catalog().id()).await,
+        None,
+        "父房间里已经移出了它：什么都没写"
+    );
+
+    database.close().await;
+}

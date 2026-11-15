@@ -380,6 +380,8 @@ pub enum NetworkAgentFailureKind {
     SubRoomLimitReached,
     /// 建子房间：分类的名字不对（1 到 64 个字符，不能有换行，两头不能有空白）。
     SubRoomCategoryInvalid,
+    /// 建子房间：父房间不是它建的、也不是它凭口令或敲门进了的，关了，或者它在里面说不了话（2h-1b）。
+    SubRoomParentUnavailable,
     /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
     /// 不往外说。
     NotNetworkAgent,

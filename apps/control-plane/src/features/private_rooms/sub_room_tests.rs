@@ -153,6 +153,7 @@ impl SubRoomUseCases for FakeSubRooms {
             parent_name: "Weekly".to_owned(),
             category: known.then(|| "Release".to_owned()),
             category_missing: request.category.is_some() && !known,
+            created: true,
         };
         let result = self.refusal().map_or(Ok(created), Err);
         self.agent_created.lock().unwrap().push(request);

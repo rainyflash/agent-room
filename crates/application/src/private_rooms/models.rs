@@ -223,6 +223,8 @@ pub struct AgentSubRoomCreated {
     pub category: Option<String>,
     /// 要了分类，这间房里却没有叫这个名字的：放进了“未分类”。
     pub category_missing: bool,
+    /// 新建的；为 false 时回到了同一个 Agent 成员在这间房下面建过、没归档的同名子房间（2h-1b）。
+    pub created: bool,
 }
 
 /// 读一间房下面的子房间。`catalog_id` 是父房间，或者它的任何一间子房间。
