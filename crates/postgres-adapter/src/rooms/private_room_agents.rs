@@ -22,6 +22,7 @@ use crate::{
     PostgresRepositories,
     agents::decode_column,
     error::{map_domain_error, map_sqlx_error},
+    transaction::finish,
 };
 
 use super::decode::corrupt_data;
@@ -241,13 +242,31 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
         Box::pin(async move {
             let operation = "private_room.agent_member.admit";
             // 已加入的保持原来的状态时间和进来的方式；以前被移出的重新加入时从现在算起。
+            //
+            // 子房间里只记父房间里此刻还是已加入的 Agent 成员（2f-2b），锁住父房间的那一条：父房间里
+            // 正在移出它的，等那边提交以后再看，已经移出了就不记；这边先记上的，那边移出时跟着移出。
             sqlx::query(
                 r"INSERT INTO agent_room.private_room_agent_member
                       (catalog_entry_id, agent_id, membership_status, permission_bits,
                        joined_via, created_at, status_changed_at)
-                  VALUES ($1, $2, 'joined', $3, $5,
-                          to_timestamp($4::double precision / 1000.0),
-                          to_timestamp($4::double precision / 1000.0))
+                  SELECT $1, $2, 'joined', $3, $5,
+                         to_timestamp($4::double precision / 1000.0),
+                         to_timestamp($4::double precision / 1000.0)
+                   WHERE NOT EXISTS (
+                             SELECT 1
+                               FROM agent_room.private_room_parent AS link
+                              WHERE link.catalog_entry_id = $1
+                         )
+                      OR EXISTS (
+                             SELECT 1
+                               FROM agent_room.private_room_parent AS link
+                               JOIN agent_room.private_room_agent_member AS parent_member
+                                 ON parent_member.catalog_entry_id = link.parent_catalog_entry_id
+                                AND parent_member.agent_id = $2
+                                AND parent_member.membership_status = 'joined'
+                              WHERE link.catalog_entry_id = $1
+                                FOR SHARE OF parent_member
+                         )
                   ON CONFLICT (catalog_entry_id, agent_id) DO UPDATE
                      SET permission_bits = EXCLUDED.permission_bits,
                          status_changed_at = CASE
@@ -283,25 +302,14 @@ impl PrivateRoomAgentAccessStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<bool>> {
         Box::pin(async move {
             let operation = "private_room.agent_member.remove";
-            let result = sqlx::query(
-                r"UPDATE agent_room.private_room_agent_member
-                     SET membership_status = 'removed',
-                         permission_bits = 0,
-                         status_changed_at = greatest(
-                             status_changed_at,
-                             to_timestamp($3::double precision / 1000.0)
-                         )
-                   WHERE catalog_entry_id = $1
-                     AND agent_id = $2
-                     AND membership_status = 'joined'",
-            )
-            .bind(catalog_id.as_uuid())
-            .bind(agent_id.as_uuid())
-            .bind(now.value())
-            .execute(self.pool())
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-            Ok(result.rows_affected() > 0)
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            let result =
+                remove_with_sub_rooms(&mut transaction, catalog_id, agent_id, now, operation).await;
+            finish(transaction, result, operation).await
         })
     }
 
@@ -746,4 +754,72 @@ pub(super) fn permissions(
 ) -> RepositoryResult<PrivateRoomPermissions> {
     let bits = u8::try_from(bits).map_err(|_| corrupt_data(operation))?;
     PrivateRoomPermissions::from_bits(bits).map_err(|_| corrupt_data(operation))
+}
+
+/// 记成已移出，连这间房下面的子房间一起（2f-2b）：子房间里它已加入的那几条也改成已移出，把它从聊天
+/// 服务器上的那几间里踢出去这件事排进 `private_room_sub_room_sync`，事务外面做。父房间这一条原本不是
+/// 已加入时子房间照样跟着改：以前留下的对不上的，借这一次补上。回的是父房间这一条改没改。
+async fn remove_with_sub_rooms(
+    transaction: &mut Transaction<'_, Postgres>,
+    catalog_id: RoomCatalogId,
+    agent_id: AgentId,
+    now: UtcMillis,
+    operation: &'static str,
+) -> RepositoryResult<bool> {
+    let removed = sqlx::query(
+        r"UPDATE agent_room.private_room_agent_member
+             SET membership_status = 'removed',
+                 permission_bits = 0,
+                 status_changed_at = greatest(
+                     status_changed_at,
+                     to_timestamp($3::double precision / 1000.0)
+                 )
+           WHERE catalog_entry_id = $1
+             AND agent_id = $2
+             AND membership_status = 'joined'",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(agent_id.as_uuid())
+    .bind(now.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?
+    .rows_affected()
+        > 0;
+    sqlx::query(
+        r"WITH removed AS (
+              UPDATE agent_room.private_room_agent_member AS member
+                 SET membership_status = 'removed',
+                     permission_bits = 0,
+                     status_changed_at = greatest(
+                         member.status_changed_at,
+                         to_timestamp($3::double precision / 1000.0)
+                     )
+                FROM agent_room.private_room_parent AS link
+               WHERE link.parent_catalog_entry_id = $1
+                 AND member.catalog_entry_id = link.catalog_entry_id
+                 AND member.agent_id = $2
+                 AND member.membership_status = 'joined'
+           RETURNING member.catalog_entry_id
+          )
+          INSERT INTO agent_room.private_room_sub_room_sync AS queued (
+              catalog_entry_id, agent_id, queued_at
+          )
+          SELECT removed.catalog_entry_id, $2, to_timestamp($3::double precision / 1000.0)
+            FROM removed
+          ON CONFLICT (catalog_entry_id, agent_id) WHERE agent_id IS NOT NULL
+          DO UPDATE
+          SET generation = queued.generation + 1,
+              queued_at = EXCLUDED.queued_at,
+              attempts = 0,
+              next_attempt_at = NULL,
+              failure_code = NULL",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(agent_id.as_uuid())
+    .bind(now.value())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    Ok(removed)
 }

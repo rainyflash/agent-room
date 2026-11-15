@@ -39,6 +39,8 @@ use super::*;
 
 #[path = "sub_room_accessible.rs"]
 mod accessible;
+#[path = "sub_room_agent_members.rs"]
+mod agent_members_follow;
 #[path = "sub_room_agent_owner.rs"]
 mod agent_owner;
 #[path = "sub_room_archive.rs"]
@@ -654,6 +656,8 @@ struct Rooms {
     store: Arc<MemoryRooms>,
     matrix: Arc<TestMatrix>,
     agents: Arc<TestAgentDirectory>,
+    /// 凭口令或敲门进来的 Agent 成员（2f-2b）：父房间里移出时子房间里跟着移出。
+    agent_members: Arc<agent_members_follow::FamilyAgentMembers>,
     events: Arc<Mutex<Vec<&'static str>>>,
 }
 
@@ -671,6 +675,7 @@ impl Rooms {
                 .collect(),
         ));
         let agents = Arc::new(TestAgentDirectory::default());
+        let agent_members = Arc::new(agent_members_follow::FamilyAgentMembers::new(store.clone()));
         let listings = Arc::new(TestListings::new(
             Arc::new(TestStore::new(events.clone())),
             events.clone(),
@@ -682,7 +687,7 @@ impl Rooms {
             matrix: matrix.clone(),
             principals,
             agents: agents.clone(),
-            agent_members: Arc::new(agent_members::TestAgentMembers::default()),
+            agent_members: agent_members.clone(),
             trusted_matrix_readers: vec![
                 MatrixUserId::new("@content-authority:matrix.test").expect("服务身份有效"),
             ],
@@ -702,6 +707,7 @@ impl Rooms {
             store,
             matrix,
             agents,
+            agent_members,
             events,
         }
     }
@@ -1008,6 +1014,7 @@ struct QueuedSync {
     id: i64,
     catalog_id: RoomCatalogId,
     principal: Option<PrincipalId>,
+    agent: Option<AgentId>,
     generation: i64,
     attempts: u32,
     /// 空着就是马上能领；领走以后是租约到期的时间，没做成以后是下次再试的时间。
@@ -1021,6 +1028,7 @@ impl QueuedSync {
             id: self.id,
             catalog_id: self.catalog_id,
             principal: self.principal,
+            agent: self.agent,
             generation: self.generation,
             attempt: self.attempts,
         }
@@ -1139,11 +1147,26 @@ impl MemoryRooms {
 
     /// 排上一件要在聊天服务器上跟着做的事。已经排着的换成新的一版、从头再试。
     fn queue_sync(&self, catalog_id: RoomCatalogId, principal: Option<PrincipalId>) {
+        self.queue_sync_for(catalog_id, principal, None);
+    }
+
+    /// 这个 Agent 在这间子房间里的 Agent 成员记录变了（2f-2b）。
+    fn queue_agent_sync(&self, catalog_id: RoomCatalogId, agent: AgentId) {
+        self.queue_sync_for(catalog_id, None, Some(agent));
+    }
+
+    fn queue_sync_for(
+        &self,
+        catalog_id: RoomCatalogId,
+        principal: Option<PrincipalId>,
+        agent: Option<AgentId>,
+    ) {
         let mut sync = self.sync.lock().expect("任务锁正常");
-        if let Some(queued) = sync
-            .iter_mut()
-            .find(|queued| queued.catalog_id == catalog_id && queued.principal == principal)
-        {
+        if let Some(queued) = sync.iter_mut().find(|queued| {
+            queued.catalog_id == catalog_id
+                && queued.principal == principal
+                && queued.agent == agent
+        }) {
             queued.generation += 1;
             queued.attempts = 0;
             queued.next_attempt_at = None;
@@ -1156,6 +1179,7 @@ impl MemoryRooms {
             id: *ids,
             catalog_id,
             principal,
+            agent,
             generation: 1,
             attempts: 0,
             next_attempt_at: None,
@@ -1165,6 +1189,17 @@ impl MemoryRooms {
 
     fn queued_sync(&self) -> Vec<QueuedSync> {
         self.sync.lock().expect("任务锁正常").clone()
+    }
+
+    /// 这间房下面的子房间，归档了的也在。
+    fn sub_rooms_of(&self, parent: RoomCatalogId) -> Vec<RoomCatalogId> {
+        self.links
+            .lock()
+            .expect("关系锁正常")
+            .iter()
+            .filter(|stored| stored.link.parent_catalog_id == parent)
+            .map(|stored| stored.link.catalog_id)
+            .collect()
     }
 
     /// 过了足够久：租约都到期了，退避的也都到点了。
@@ -1854,7 +1889,7 @@ impl SubRoomStore for MemoryRooms {
         let done = sync.len() < before;
         drop(sync);
         if !done {
-            self.queue_sync(task.catalog_id, task.principal);
+            self.queue_sync_for(task.catalog_id, task.principal, task.agent);
         }
         Box::pin(async { Ok(()) })
     }
@@ -1876,7 +1911,7 @@ impl SubRoomStore for MemoryRooms {
             .is_some();
         drop(sync);
         if !postponed {
-            self.queue_sync(task.catalog_id, task.principal);
+            self.queue_sync_for(task.catalog_id, task.principal, task.agent);
         }
         Box::pin(async { Ok(()) })
     }

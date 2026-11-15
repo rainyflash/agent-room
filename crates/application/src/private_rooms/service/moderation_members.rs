@@ -109,6 +109,9 @@ impl PrivateRoomService {
                     repository(operation, PrivateRoomFailureStage::Persistence, &error)
                 })?;
         }
+        // 存储连子房间里的一起记成已移出、排上了踢出去（2f-2b）：这个请求结束前先做一遍，它当场就从
+        // 子房间里出去。没做成的后台接着做。
+        self.sync_sub_rooms_under(snapshot).await;
         Ok(())
     }
 

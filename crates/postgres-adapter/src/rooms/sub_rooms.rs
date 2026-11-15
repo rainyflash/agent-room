@@ -55,6 +55,32 @@ impl SubRoomDoorSource for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>> {
         SubRoomStore::sub_room_link(self, catalog_id)
     }
+
+    fn agent_sub_rooms(
+        &self,
+        parent: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
+        Box::pin(async move {
+            let operation = "sub_room.agent_sub_rooms";
+            let rooms: Vec<uuid::Uuid> = sqlx::query_scalar(
+                r"SELECT link.catalog_entry_id
+                    FROM agent_room.private_room_parent AS link
+                    JOIN agent_room.private_room_agent_member AS member
+                      ON member.catalog_entry_id = link.catalog_entry_id
+                     AND member.agent_id = $2
+                     AND member.membership_status = 'joined'
+                   WHERE link.parent_catalog_entry_id = $1
+                   ORDER BY link.created_at ASC, link.catalog_entry_id ASC",
+            )
+            .bind(parent.as_uuid())
+            .bind(agent_id.as_uuid())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            Ok(rooms.into_iter().map(RoomCatalogId::from_uuid).collect())
+        })
+    }
 }
 
 impl SubRoomStore for PostgresRepositories {

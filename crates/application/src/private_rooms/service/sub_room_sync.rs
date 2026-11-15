@@ -8,9 +8,12 @@
 //! 读库里现在的样子，照它把聊天服务器摆成一样，做几遍结果都一样。
 //!
 //! 子房间自己归档、恢复（2e-2）也排这里：归档的锁住，恢复的把门槛和里面每个人的发言级别一次写回去。
+//!
+//! 父房间里移出 Agent 成员时子房间里跟着移出（2f-2b），也排这里：它不在里面了就踢出去。
 
 use agent_room_domain::{
-    ids::PrincipalId,
+    ids::{AgentId, PrincipalId},
+    join_codes::PrivateRoomAgentMemberStatus,
     private_rooms::{PrivateRoom, PrivateRoomLifecycleStatus},
     time::UtcMillis,
 };
@@ -239,16 +242,66 @@ impl PrivateRoomService {
         };
         let matrix_room =
             matrix_room_id(&sub_room, "sub_room.sync_task").map_err(|_| Trouble::Corrupt)?;
-        match task.principal {
-            Some(principal) => {
+        match (task.principal, task.agent) {
+            (Some(principal), _) => {
                 self.sync_sub_room_member(&task, &sub_room, &matrix_room, principal)
                     .await
             }
-            None => {
+            (None, Some(agent)) => self.sync_sub_room_agent(&task, &matrix_room, agent).await,
+            (None, None) => {
                 self.sync_sub_room_lock(&task, &sub_room, &matrix_room)
                     .await
             }
         }
+    }
+
+    /// 这个 Agent 在这间子房间里的 Agent 成员记录变了（父房间里移出它时跟着移出，2f-2b）：不在里面了
+    /// 就踢出去，归档了的子房间里也踢，不然它还读得到里面的话。只踢，不设发言级别：设一次就把归档的
+    /// 房间解开了；它再进来时进门那一步会重新给。还在里面的不动，发言级别也是进门那一步给的。
+    async fn sync_sub_room_agent(
+        &self,
+        task: &SubRoomSyncTask,
+        matrix_room: &MatrixRoomId,
+        agent: AgentId,
+    ) -> Result<(), Trouble> {
+        let member = self
+            .agent_members
+            .agent_member_in(task.catalog_id, agent)
+            .await
+            .map_err(|_| Trouble::Storage)?;
+        let Some(member) = member else {
+            return Ok(());
+        };
+        if member.status == PrivateRoomAgentMemberStatus::Joined {
+            return Ok(());
+        }
+        let membership = self
+            .matrix
+            .membership(matrix_room, &member.matrix_user_id)
+            .await
+            .map_err(Trouble::Matrix)?;
+        if !matches!(
+            membership,
+            Some(PrivateMatrixMembership::Joined | PrivateMatrixMembership::Invited)
+        ) {
+            return Ok(());
+        }
+        self.matrix
+            .kick(matrix_room, &member.matrix_user_id)
+            .await
+            .map_err(Trouble::Matrix)?;
+        // 动完再看一眼：这当口管理者又放它进了这一间，就照进门那一步再邀请它。
+        let readmitted = self
+            .agent_members
+            .agent_member_in(task.catalog_id, agent)
+            .await
+            .map_err(|_| Trouble::Storage)?
+            .is_some_and(|after| after.status == PrivateRoomAgentMemberStatus::Joined);
+        if readmitted {
+            self.invite_if_absent(matrix_room, &member.matrix_user_id)
+                .await?;
+        }
+        Ok(())
     }
 
     /// 这间子房间自己的事：照它现在归没归档，在聊天服务器上锁住或者解开。

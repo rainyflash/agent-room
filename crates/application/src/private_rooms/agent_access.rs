@@ -447,7 +447,12 @@ impl PrivateRoomAgentAccessService {
         if member.status != PrivateRoomAgentMemberStatus::Joined {
             return Ok(());
         }
-        // 先在 Matrix 上收紧再记账：记账失败时重试仍能完成，不会出现账上已移出、人还在房里。
+        // 先在 Matrix 上收紧再记账：记账失败时重试仍能完成，不会出现账上已移出、人还在房里。它在的
+        // 子房间里先踢（2f-2b），记账时存储连那几间的记录一起改。
+        if snapshot.parent_catalog_id().is_none() {
+            self.kick_from_sub_rooms(request.catalog_id, &member, OPERATION)
+                .await?;
+        }
         let matrix_room = matrix_room_id(&snapshot, OPERATION)?;
         self.matrix
             .set_speaking(&matrix_room, &member.matrix_user_id, false)

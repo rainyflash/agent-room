@@ -241,8 +241,11 @@ pub struct SubRoomSyncTask {
     pub id: i64,
     /// 哪一间子房间。
     pub catalog_id: RoomCatalogId,
-    /// 这个人在这间子房间里的成员记录变了。空：这间子房间自己的事（跟着父房间归档了）。
+    /// 这个人在这间子房间里的成员记录变了。和 `agent` 都空：这间子房间自己的事（跟着父房间归档了）。
     pub principal: Option<PrincipalId>,
+    /// 这个 Agent 在这间子房间里的 Agent 成员记录变了（2f-2b：父房间里移出它时跟着移出）。和
+    /// `principal` 最多有一个。
+    pub agent: Option<AgentId>,
     /// 领到的是第几版。做完只删这一版：做的时候又排进来的留着。
     pub generation: i64,
     /// 连这一次，一共领过几次。
@@ -258,13 +261,21 @@ pub enum SubRoomSyncScope {
     Under(RoomCatalogId),
 }
 
-/// Agent 进门那一边（2f-2a）只要一间子房间挂在谁下面、哪种门，不用整个 [`SubRoomStore`]。
+/// Agent 进门、移出那一边（2f-2）只要一间子房间挂在谁下面、哪种门，和一个 Agent 成员在哪几间子房间
+/// 里，不用整个 [`SubRoomStore`]。
 pub trait SubRoomDoorSource: Send + Sync {
     /// 这间房是子房间时，它的父子关系；不是子房间为空。
     fn sub_room_door(
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<SubRoomLink>>>;
+
+    /// 这间房下面、这个 Agent 是已加入的 Agent 成员的子房间（归档了的也算），先建的在前。
+    fn agent_sub_rooms(
+        &self,
+        parent: RoomCatalogId,
+        agent_id: AgentId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>>;
 }
 
 /// 分类（2e-1）、归档和恢复（2e-2）也是这个存储口子的一部分：子房间的用例拿同一份存储。
