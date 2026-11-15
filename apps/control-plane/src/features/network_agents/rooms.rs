@@ -3,17 +3,24 @@
 //! 放行或不让进，按账户 ID 邀请人，移出凭口令或敲门进来的 Agent，最后关掉。它建的房间服务器读得到
 //! 里面所有的消息：接入说明照实写，人进来之前网页上也写。
 //!
+//! 建房时带上 `parentRoomId` 就在它建的那间房下面建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）：
+//! 子房间没有口令，房间里的人和 Agent 在房间的子房间名单里找得到它。
+//!
 //! 建房和放行要替 Agent 进房间，走网关（`state.rooms`）；别的只动账，直接交给用例
 //! （`state.owned_rooms`）。远程 MCP 的同名工具（`mcp/rooms.rs`）用这里的回答形状。
 
 use agent_room_application::{
     network_agents::{
-        NetworkAgentFailure, NetworkAgentIncomingKnock, NetworkAgentOwnedRoom, NetworkAgentRoom,
-        NetworkAgentRoomCode, NetworkAgentRoomCodeView,
+        NetworkAgentFailure, NetworkAgentIncomingKnock, NetworkAgentOwnedRoom,
+        NetworkAgentOwnedSubRoom, NetworkAgentRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
+        NetworkAgentSubRoomRequest,
     },
     ports::{PrivateRoomAgentKnockRecord, PrivateRoomAgentMemberRecord},
 };
-use agent_room_domain::ids::{AgentId, PrincipalId};
+use agent_room_domain::{
+    ids::{AgentId, PrincipalId},
+    room_listing::RoomJoinMode,
+};
 use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Json,
@@ -21,6 +28,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
 use super::{NetworkAgentHttpState, RoomResponse, SCHEMA_VERSION, gateway_failure};
@@ -40,6 +48,49 @@ const EN_NO_WEB: &str = "If you can’t read that page or can’t send web reque
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct CreateRoomBody {
     name: String,
+    /// 给了就在这间房下面建子房间（2h）：它建的房间的房间号或 Matrix 房间 ID。
+    #[serde(default)]
+    parent_room_id: Option<String>,
+    /// 只和 `parentRoomId` 一起用：子房间的门，不给就是没有门。
+    #[serde(default)]
+    access: Option<SubRoomAccess>,
+    /// 只和 `parentRoomId` 一起用：放进父房间里叫这个名字的分类。
+    #[serde(default)]
+    category: Option<String>,
+}
+
+/// Who can come into a sub-room: open (no door) lets anyone in the parent room go in; request makes them ask first; `invite_only` lets in only those its managers let in by name.
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SubRoomAccess {
+    Open,
+    Request,
+    InviteOnly,
+}
+
+impl From<SubRoomAccess> for RoomJoinMode {
+    fn from(access: SubRoomAccess) -> Self {
+        match access {
+            SubRoomAccess::Open => Self::Open,
+            SubRoomAccess::Request => Self::Request,
+            SubRoomAccess::InviteOnly => Self::InviteOnly,
+        }
+    }
+}
+
+/// 建子房间时要的几样；HTTP 接口与远程 MCP 共用。
+pub(super) fn sub_room_request<'a>(
+    parent: &'a str,
+    name: &'a str,
+    access: Option<SubRoomAccess>,
+    category: Option<&'a str>,
+) -> NetworkAgentSubRoomRequest<'a> {
+    NetworkAgentSubRoomRequest {
+        parent,
+        name,
+        access: access.map_or(RoomJoinMode::Open, RoomJoinMode::from),
+        category,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +111,34 @@ pub(super) struct CreatedRoomResponse {
     guide_url: String,
     /// 要转给别的 Agent 的话，中英文各一段。
     share: ShareResponse,
+}
+
+/// 建好的子房间，或回到的同名子房间。子房间没有口令。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CreatedSubRoomResponse {
+    schema_version: u8,
+    /// 新建的；为 false 时回到了这间房下面没归档的同名子房间。
+    created: bool,
+    room: RoomResponse,
+    parent: RoomResponse,
+    /// 放进的分类；“未分类”和回到已有的那间时没有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    /// 要了分类，父房间里却没有叫这个名字的：放进了“未分类”。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    category_missing: bool,
+}
+
+pub(super) fn created_sub_room(owned: NetworkAgentOwnedSubRoom) -> CreatedSubRoomResponse {
+    CreatedSubRoomResponse {
+        schema_version: SCHEMA_VERSION,
+        created: owned.created,
+        room: RoomResponse::from(owned.room),
+        parent: RoomResponse::from(owned.parent),
+        category: owned.category,
+        category_missing: owned.category_missing,
+    }
 }
 
 /// 看口令、换口令时回答房间现在的口令，外加要转给别的 Agent 的话。
@@ -171,7 +250,7 @@ struct ShareResponse {
 }
 
 /// 建一个私人房间，自己当房主，建好就在里面。新建的回答 201；没关的房间里已经有同名的就回到那间，
-/// 回答 200。
+/// 回答 200。带上 `parentRoomId` 就在它建的那间房下面建子房间，同名的照样回到那间。
 pub(super) async fn create_room(
     State(state): State<NetworkAgentHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -179,19 +258,27 @@ pub(super) async fn create_room(
     body: Result<Json<CreateRoomBody>, JsonRejection>,
 ) -> Response {
     let Ok(Json(body)) = body else {
-        return no_store(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "network_agent.invalid_request",
-                ErrorCategory::Validation,
-                "The request body must be a JSON object: {\"name\": the room's name}.",
-                correlation_id,
-            )
-            .into_response(),
-        );
+        return invalid_create(correlation_id);
     };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
+    if let Some(parent) = body.parent_room_id.as_deref() {
+        let request = sub_room_request(parent, &body.name, body.access, body.category.as_deref());
+        return match state.rooms.create_sub_room(token, request).await {
+            Ok(owned) => {
+                let status = if owned.created {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::OK
+                };
+                no_store((status, Json(created_sub_room(owned))).into_response())
+            }
+            Err(failure) => gateway_failure(&failure, correlation_id),
+        };
+    }
+    if body.access.is_some() || body.category.is_some() {
+        return invalid_create(correlation_id);
+    }
     match state.rooms.create_room(token, &body.name).await {
         Ok(owned) => {
             let status = if owned.created {
@@ -203,6 +290,20 @@ pub(super) async fn create_room(
         }
         Err(failure) => gateway_failure(&failure, correlation_id),
     }
+}
+
+/// 建房的请求不对：不是 JSON、多了字段，或者没有 `parentRoomId` 却带了子房间才有的几样。
+fn invalid_create(correlation_id: CorrelationId) -> Response {
+    no_store(
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "network_agent.invalid_request",
+            ErrorCategory::Validation,
+            "The request body must be a JSON object: {\"name\": the room's name}. To make a sub-room under a room you made, add parentRoomId (its room number or roomId), and optionally access (open, request or invite_only) and category; access and category only go with parentRoomId.",
+            correlation_id,
+        )
+        .into_response(),
+    )
 }
 
 /// 关掉自己建的房间：谁都不能再说话，之前的消息照样看得到。已经关了的也回答 204。

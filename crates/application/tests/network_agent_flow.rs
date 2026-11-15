@@ -38,14 +38,15 @@ use agent_room_application::{
     },
     private_rooms::{
         AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind, AgentAccessResult,
-        AgentAccessView, AnswerKnock, ArchivePrivateRoom, ChangePrivateRoomPermissions,
-        CreatePrivateRoom, GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess,
-        InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller, KnockEntry, KnockOnRoom,
-        KnockResult, ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode,
-        PrivateRoomActor, PrivateRoomAgentAccessUseCases, PrivateRoomFailure,
-        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
-        PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
-        RemoveAgentMember, RenamePrivateRoom, ResolveJoinCode, TransferPrivateRoomOwnership,
+        AgentAccessView, AgentSubRoomCreated, AgentSubRoomCreation, AnswerKnock,
+        ArchivePrivateRoom, ChangePrivateRoomPermissions, CreateAgentSubRoom, CreatePrivateRoom,
+        GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom,
+        InvitePrivateRoomMember, JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult,
+        ListPrivateRooms, ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
+        PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
+        PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
+        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember, RenamePrivateRoom,
+        ResolveJoinCode, SubRoomRefusal, TransferPrivateRoomOwnership,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -1428,6 +1429,57 @@ struct FakeRooms {
     created: Mutex<Vec<CreatePrivateRoom>>,
     archived: Mutex<Vec<(PrincipalId, RoomCatalogId)>>,
     invited: Mutex<Vec<InvitePrivateRoomMember>>,
+    /// 建子房间的请求（2h），和下一次要回的拒绝。
+    sub_rooms_created: Mutex<Vec<CreateAgentSubRoom>>,
+    sub_room_refusal: Mutex<Option<PrivateRoomFailure>>,
+}
+
+/// 父房间里有的分类：要别的名字就放进“未分类”。
+const SUB_ROOM_CATEGORY: &str = "进行中";
+
+/// 子房间建在父房间下面，房主照父房间的记。
+impl AgentSubRoomCreation for FakeRooms {
+    fn create_agent_sub_room(
+        &self,
+        request: CreateAgentSubRoom,
+    ) -> PortFuture<'_, PrivateRoomResult<AgentSubRoomCreated>> {
+        assert!(matches!(request.actor, PrivateRoomActor::NetworkAgent(_)));
+        let refusal = self.sub_room_refusal.lock().unwrap().take();
+        let result = refusal.map_or_else(
+            || {
+                let mut rooms = self.rooms.lock().unwrap();
+                let parent = rooms
+                    .iter()
+                    .find(|snapshot| snapshot.catalog().id() == request.parent_catalog_id)
+                    .expect("父房间在")
+                    .clone();
+                let room = owned_snapshot(
+                    request.catalog_id,
+                    parent.room().owner_principal_id(),
+                    Some(request.created_by_agent),
+                    &request.name,
+                    false,
+                )
+                .under(request.parent_catalog_id);
+                rooms.push(room.clone());
+                let found = request.category.as_deref() == Some(SUB_ROOM_CATEGORY);
+                Ok(AgentSubRoomCreated {
+                    room,
+                    parent_name: parent.catalog().name().to_owned(),
+                    category: found.then(|| SUB_ROOM_CATEGORY.to_owned()),
+                    category_missing: request.category.is_some() && !found,
+                })
+            },
+            Err,
+        );
+        self.sub_rooms_created.lock().unwrap().push(request);
+        Box::pin(async move { result })
+    }
+}
+
+/// 建子房间被拒的一种原因。
+fn sub_room_refused(refusal: SubRoomRefusal) -> PrivateRoomFailure {
+    room_failure(PrivateRoomFailureKind::SubRoom(refusal))
 }
 
 /// 没有这个账户：邀请时按主体找不到 Matrix 账号。
@@ -1937,6 +1989,7 @@ impl Harness {
             lobbies: lobbies.clone(),
             access: access.clone(),
             rooms: rooms.clone(),
+            sub_rooms: rooms.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             listings: Arc::new(FakeListings),
             public_rooms: Arc::new(FakePublicRooms),
@@ -4337,3 +4390,5 @@ async fn 已在别的大厅时即使在场人数已满也能回到暂离的其�
 
 #[path = "network_agent_flow/rooms.rs"]
 mod rooms;
+#[path = "network_agent_flow/sub_rooms.rs"]
+mod sub_rooms;

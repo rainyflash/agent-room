@@ -516,7 +516,13 @@
    - 2g-2 Bridge 和 IPC 4.7：房间列表带子房间、建子房间、建房的回答带 `parent`、进不去时分开报；按名字找子房间写 `父房间名/子房间名`；Bridge 同时认 4.4 到 4.7。
    - 2g-3a 本机 MCP：`parent`、`access`、`category` 参数，`父房间名/子房间名`，进不去、建不成时说清楚。
    - 2g-3b 命令行：`create-room --parent`、`rooms --parent`，进不去时说清楚；命令行 `guide` 那一小段（接入说明和 `agents.md` 的挪到 2h）。
-8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间；接入说明和 `agents.md` 的那一小段（从 2g-3 挪过来）。
+8. **2h 网络 Agent 这一路**：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`、只离开一间、归档自己管的子房间；接入说明和 `agents.md` 的那一小段（从 2g-3 挪过来）。拆成：
+   - 2h-1a 在它自己建的房间下面建：HTTP 和远程 MCP 的 `parentRoomId`、`access`、`category`；`agents.md` 先写上用法和新的错误码。
+   - 2h-1b 在它凭口令或敲门进的房间下面建：它自己是这一间的管理员。
+   - 2h-2 列子房间（`agent_room_list_rooms` 的 `parent`）、`agent_room_get_self` 的房间带上父房间、进不去时说清楚。
+   - 2h-3 只离开一间（`agent_room_leave` 的 `roomId`）、归档它管的子房间（`agent_room_close_room` 放宽）。
+   - 2h-4 管它建的有门的子房间：看、回答敲门，把父房间里的人请进来。
+   - 2h-5 接入说明、`agents.md` 和远程 MCP 说明里三种接入共用的那一小段。
 9. **2i 网页**：左栏、浏览子房间、新建、申请的卡片、子房间设置、房间设置的“子房间”一节、免打扰、未读汇总。依赖第 1 块的对话视图。
 10. **2j 自动归档**：记最近说话的时间、每小时一轮、房间设置里的开关。可以晚一版。
 11. **2k 无头验收**（只在派发 `suite=all` 时跑）：人在网页上建子房间、放进分类；本机 Agent 按名字进来、主人这边左栏出现；网络 Agent 建一个要批准的、别的 Agent 敲门、它放行以后加密收发；人申请、管理员批准；归档以后说不了话、恢复以后接着说；把人移出父房间，他和他的 Agent 在子房间里都出去。
@@ -715,3 +721,10 @@
   - `guide` 多一段 `subRooms`：一件事开一个子房间、只进跟手上的事有关的、有门的别硬闯、做完了跟主人说一声可以归档；`commands` 里加了 `rooms --parent` 和 `create-room --parent`。
   - 和设计不一样的一处：接入说明（接入对话框给 Agent 的话）和 `agents.md` 的那一小段挪到 2h。网络 Agent 要到 2h 才能用子房间，三种接入共用的说法现在写上去，网络 Agent 照着做会碰壁。
   - 房间的“地址”（整间的是名字，子房间是 `父房间名/子房间名`）放在 `IpcRoomSummary::address`，MCP 和命令行共用；子房间那两句说法（人怎么找到它、分类没找到）挪到 `agent_room_agent_client::rooms`。
+- 2026-11-15 2h 拆成六步（见“分步交付”）。2h-1a 做完（#839）：网络 Agent 在它自己建的房间下面建子房间。
+  - `POST /me/private-rooms` 带上 `parentRoomId`（它建的、还没关的那间的房间号或 Matrix 房间 ID）就建子房间，可选 `access`、`category`；远程 MCP 的 `agent_room_create_room` 多同名的三个参数。`access`、`category` 不带 `parentRoomId` 不收。
+  - 由私人房间用例建，规矩和本机 Agent 替主人建一样；网络 Agent 的用例只拿建子房间这一样（`AgentSubRoomCreation`）。建好以后网关先让加密客户端就绪再进，和建房一样。
+  - 这间房下面已经有没归档的同名子房间（不分大小写）就回到那间，返回 200，调用超时可以放心再调。拿子房间当父房间回 `sub_room_nested`。
+  - 子房间没有口令：回答里没有 `code` 和 `share`，带着 `parent`、放进的分类，分类没找到时带 `categoryMissing`。
+  - 顺手修了一处：它房间下面的子房间，房主也记成它的合成主体。以前算“它没关的房间”时把子房间也算进去，建整间房的名额和“同名的回到那间”都会算错（这之前网络 Agent 自己建不了子房间，可人能在它的房间下面建）。现在只算整间的。
+  - 建不成的五种各有错误码（`network_agent.sub_room_*`）。和设计不一样的一处：`agents.md` 第 7 节的用法和错误码表这一步就写上，不等 2h-5。HTTP 会回这些码，说明里要有，测试卡着；三种接入共用的那一小段照旧留给 2h-5。

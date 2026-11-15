@@ -4,15 +4,16 @@
 
 use agent_room_application::{
     network_agents::{
-        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentOwnedRoom, NetworkAgentRoom,
-        NetworkAgentRoomCode, NetworkAgentTarget,
+        NetworkAgentFailure, NetworkAgentFailureKind, NetworkAgentOwnedRoom,
+        NetworkAgentOwnedSubRoom, NetworkAgentRoom, NetworkAgentRoomCode,
+        NetworkAgentSubRoomRequest, NetworkAgentTarget,
     },
     ports::{MatrixUserId, PrivateRoomAgentMemberRecord},
     private_rooms::{AdmittedKnock, RedeemedRoom},
 };
 use agent_room_domain::{
     join_codes::PrivateRoomAgentMemberStatus, private_rooms::PrivateRoomPermissions,
-    time::UtcMillis,
+    room_listing::RoomJoinMode, time::UtcMillis,
 };
 
 use super::{
@@ -116,6 +117,73 @@ async fn 进房间没成就照实报错_不停用它_再调一次回到那间接
     assert_eq!(
         *harness.agents.entered.lock().unwrap(),
         [NetworkAgentTarget::Private(private_room())]
+    );
+}
+
+fn owned_sub_room(created: bool, joined: bool) -> NetworkAgentOwnedSubRoom {
+    NetworkAgentOwnedSubRoom {
+        room: NetworkAgentRoom {
+            name: "设计".to_owned(),
+            ..private_room()
+        },
+        parent: private_room(),
+        category: None,
+        category_missing: false,
+        created,
+        joined,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn 建好子房间以后和建房一样_先切到加密客户端再进_回到进过的不再切() {
+    let harness = harness();
+    harness.agents.owned_sub_rooms.lock().unwrap().extend([
+        Ok(owned_sub_room(true, false)),
+        Ok(owned_sub_room(false, true)),
+    ]);
+    let request = NetworkAgentSubRoomRequest {
+        parent: ROOM_NUMBER,
+        name: "设计",
+        access: RoomJoinMode::Open,
+        category: None,
+    };
+
+    let created = harness
+        .gateway
+        .create_sub_room(TOKEN, request)
+        .await
+        .expect("建子房间成功");
+
+    assert!(created.created);
+    assert!(created.joined, "进去了");
+    assert_eq!(
+        harness.agents.log(),
+        [
+            "create_sub_room 设计",
+            "mark_encrypted",
+            "prepare",
+            "enter",
+            "refresh"
+        ],
+        "身份建好之前不进"
+    );
+    let sub = owned_sub_room(true, false).room;
+    assert_eq!(
+        *harness.agents.entered.lock().unwrap(),
+        [NetworkAgentTarget::Private(sub)]
+    );
+    assert_online_announced(&harness);
+
+    let again = harness
+        .gateway
+        .create_sub_room(TOKEN, request)
+        .await
+        .unwrap();
+    assert!(!again.created);
+    assert_eq!(
+        harness.agents.entered.lock().unwrap().len(),
+        1,
+        "进过的不再进"
     );
 }
 

@@ -57,16 +57,17 @@ use crate::{
         RateWindowPolicy, RoomDirectory, RoomDirectoryQuery, SecretFactory, SecretValue,
     },
     private_rooms::{
-        AgentAccessFailure, AgentAccessFailureKind, JoinCodeCaller, KnockEntry, KnockOnRoom,
-        KnockResult, PrivateRoomAgentAccessUseCases, PrivateRoomUseCases, RedeemJoinCode,
-        RedeemedRoom, ResolveJoinCode,
+        AgentAccessFailure, AgentAccessFailureKind, AgentSubRoomCreation, JoinCodeCaller,
+        KnockEntry, KnockOnRoom, KnockResult, PrivateRoomAgentAccessUseCases, PrivateRoomUseCases,
+        RedeemJoinCode, RedeemedRoom, ResolveJoinCode,
     },
     rooms::EnterLobbyOutcome,
 };
 
 pub use rooms::{
     NetworkAgentIncomingKnock, NetworkAgentIncomingKnocks, NetworkAgentOwnedRoom,
-    NetworkAgentRoomCode, NetworkAgentRoomCodeView, NetworkAgentRoomUseCases,
+    NetworkAgentOwnedSubRoom, NetworkAgentRoomCode, NetworkAgentRoomCodeView,
+    NetworkAgentRoomUseCases, NetworkAgentSubRoomRequest,
 };
 
 /// 默认公开大厅的 slug（迁移 `202608280001_default_public_lobby.sql`）。没有这间时默认是目录里的
@@ -367,6 +368,18 @@ pub enum NetworkAgentFailureKind {
     RoomClosed,
     /// 只能请进来（或者不在名单里显示）的子房间不收敲门：要这一间的管理者按名字放它进来（2f-2a）。
     SubRoomInviteOnly,
+    /// 建子房间（2h）：子房间下面不能再开子房间。
+    SubRoomNested,
+    /// 建子房间：房主定了只有管理员能建。
+    SubRoomAdminsOnly,
+    /// 建子房间：房主关掉了“Agent 能建子房间”。
+    SubRoomAgentsMayNotCreate,
+    /// 建子房间：这间房里已经有一间没归档的子房间叫这个名字（不是它能回到的那种）。
+    SubRoomNameTaken,
+    /// 建子房间：这间房里没归档的子房间到上限了。
+    SubRoomLimitReached,
+    /// 建子房间：分类的名字不对（1 到 64 个字符，不能有换行，两头不能有空白）。
+    SubRoomCategoryInvalid,
     /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
     /// 不往外说。
     NotNetworkAgent,
@@ -569,6 +582,8 @@ pub struct NetworkAgentDependencies {
     pub access: Arc<dyn PrivateRoomAgentAccessUseCases>,
     /// 网络 Agent 自己建房间、关房间（`specs/agent-rooms/design.md` 第 4 步）。
     pub rooms: Arc<dyn PrivateRoomUseCases>,
+    /// 网络 Agent 建子房间（`specs/redesign/sub-rooms.md` 第 2h 步）。
+    pub sub_rooms: Arc<dyn AgentSubRoomCreation>,
     pub directory: Arc<dyn RoomDirectory>,
     /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
     pub listings: Arc<dyn PrivateRoomListingStore>,
@@ -595,6 +610,7 @@ pub struct NetworkAgentService {
     lobbies: Arc<dyn AgentLobbyEntryUseCases>,
     access: Arc<dyn PrivateRoomAgentAccessUseCases>,
     rooms: Arc<dyn PrivateRoomUseCases>,
+    sub_rooms: Arc<dyn AgentSubRoomCreation>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
     public_rooms: Arc<dyn PublicRoomDirectoryStore>,
@@ -636,6 +652,7 @@ impl NetworkAgentService {
             lobbies: dependencies.lobbies,
             access: dependencies.access,
             rooms: dependencies.rooms,
+            sub_rooms: dependencies.sub_rooms,
             directory: dependencies.directory,
             listings: dependencies.listings,
             public_rooms: dependencies.public_rooms,
