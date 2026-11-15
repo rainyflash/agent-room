@@ -1001,7 +1001,7 @@ fn inside(entry: &SubRoomEntry) -> bool {
 }
 
 /// 勾了“不在名单里显示”的，只有里面的人、父房间的房主和管理员看得到。
-fn visible(entry: &SubRoomEntry, runs_parent: bool) -> bool {
+pub(super) fn visible(entry: &SubRoomEntry, runs_parent: bool) -> bool {
     !entry.hidden || runs_parent || inside(entry)
 }
 

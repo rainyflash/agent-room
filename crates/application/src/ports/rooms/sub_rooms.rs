@@ -6,6 +6,7 @@ use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId, SubRoomCategoryId},
     private_rooms::{PrivateRoom, PrivateRoomMembershipStatus},
     room_listing::RoomJoinMode,
+    rooms::MatrixRoomReference,
     sub_rooms::{SubRoomDoor, SubRoomPolicy},
     time::UtcMillis,
     version::AggregateVersion,
@@ -115,6 +116,8 @@ pub struct SubRoomLink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubRoomEntry {
     pub catalog_id: RoomCatalogId,
+    /// 聊天服务器上的房间（2f-1b）：Bridge 替 Agent 进门时要它。网页的名单不给。
+    pub matrix_room: MatrixRoomReference,
     pub name: String,
     pub description: String,
     pub access: RoomJoinMode,

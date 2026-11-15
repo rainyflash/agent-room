@@ -37,6 +37,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_accessible.rs"]
+mod accessible;
 #[path = "sub_room_agent_owner.rs"]
 mod agent_owner;
 #[path = "sub_room_archive.rs"]
@@ -1569,6 +1571,7 @@ impl SubRoomStore for MemoryRooms {
                 let room = snapshot.room();
                 SubRoomEntry {
                     catalog_id: stored.link.catalog_id,
+                    matrix_room: snapshot.instance().matrix_room_id().clone(),
                     name: snapshot.catalog().name().to_owned(),
                     description: snapshot.catalog().description().to_owned(),
                     access: stored.link.access,

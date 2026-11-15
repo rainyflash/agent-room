@@ -1039,6 +1039,8 @@ fn sub_request(
 fn list() -> SubRoomList {
     let entry = |catalog: &str, name: &str| SubRoomEntry {
         catalog_id: RoomCatalogId::from_uuid(uuid(catalog)),
+        matrix_room: MatrixRoomReference::new(format!("!{name}:matrix.agent-room.test"))
+            .expect("Matrix 房间标识有效"),
         name: name.to_owned(),
         description: String::new(),
         access: RoomJoinMode::Open,

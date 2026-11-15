@@ -370,7 +370,7 @@
   - 房间的房主和管理员能做，只要有效登录。别人回 403 `sub_room.category_admins_only`；重名、到上限回 409 `sub_room.category_name_taken`、`sub_room.category_limit_reached`，分类没了回 409 `sub_room.category_missing`；地址是子房间回 409 `sub_room.parent_only`，父房间归档了回 409 `private_room.conflict`。
 - `GET`、`PUT /private-rooms/{父}/sub-room-policy`：谁能建、Agent 能不能建、自动归档开没开。只有房主能改。
 - Agent 的敲门、放行用现成的 Agent 进门接口，只是子房间不给口令。
-- 现有的房间列表（`GET /private-rooms`、给 Bridge 的 `/lobbies/accessible`）默认不带子房间：旧版网页和旧版 Bridge 看不到它们，也就不会把它们当成普通房间摆出来。新版 Bridge 带 `subRooms=1` 才拿到，每间带着父房间、分类和哪种门；归档的不给。
+- 现有的房间列表（`GET /private-rooms`、给 Bridge 的 `/lobbies/accessible`）默认不带子房间：旧版网页和旧版 Bridge 看不到它们，也就不会把它们当成普通房间摆出来。新版 Bridge 带 `subRooms=1` 才拿到：每间私人房间后面跟着它下面账号看得到的子房间，带着父房间（号和名字）、分类的名字和哪种门；归档的、被封禁的不给，有门、账号又不在里面的也给（Agent 照着进会被告诉要主人先进去）。别的查询回 400 `lobby.invalid_query`。
 - 子房间的最近说话时间用公开房间那一套读法（应用服务读最新一条消息事件的时间，只要时间，`public_room_activity.rs`），5 分钟一次，记进 `last_message_at`。
 - 自动归档每小时一轮：找出开着自动归档的房间里 `last_message_at` 超过 30 天（没说过话的按建的时间算）的子房间，归档前再向聊天服务器问一次最新一条的时间，确实超过了才归档，原因记 `inactive`，写审计。领取照对账那一套（`FOR UPDATE SKIP LOCKED` 加租约）。
 - 免打扰不经控制面：网页把它记在聊天账户里这间房的账户数据上（新的一种，旧版客户端不认识也没事）。第 4 块做邮件提醒时再把它带给服务器。
@@ -648,3 +648,8 @@
   - 有门的不替主人加，父房间的房主和管理员也一样，回 403 `sub_room.owner_not_inside`；被封禁、归档了、主人在父房间里说不了话的照旧回 403 `lobby.room_refused`。
   - 主人在父房间里只能看的不替他加：加进去他也带不了 Agent。
   - 这台电脑上还没更新的 Bridge 列房间时拿不到子房间（2f-1b 才给），只有知道子房间的房间号才走得到这里。
+- 2026-11-15 2f-1b 做完（#831）：给 Bridge 的房间列表带子房间（`/lobbies/accessible?subRooms=1`）。没有迁移，只有控制面；Bridge 去带它、按 `父房间名/子房间名` 找房间是 2g。
+  - 设备签名签的是带查询的整个地址，所以只认不带查询和 `subRooms=1` 两种问法；别的（`subRooms=0`、多一个参数、只有一个 `?`）回 400 `lobby.invalid_query`，不去认证设备。
+  - 子房间排在它的父房间后面，`kind` 照旧是 `private_room`，没有分享码（`slug`）；多带的 `parent`、`category`、`access` 三项只有子房间才有。
+  - 只看账号的 Agent 进得去的父房间（已加入、能说话）。子房间照网页“浏览子房间”的规矩：藏起来的只有进去过的和管父房间的看得到，归档的、被封禁的不给；有门、账号又不在里面的也给，Agent 照着进会回 `sub_room.owner_not_inside`。
+  - 名单的存储多读了每间子房间的 Matrix 房间号（`SubRoomEntry.matrix_room`，接上 `private_room_state` 和 `room_instance`）；网页的子房间名单不往外给它。
