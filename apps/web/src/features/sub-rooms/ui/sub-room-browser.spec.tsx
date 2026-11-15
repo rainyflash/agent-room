@@ -133,11 +133,11 @@ afterEach(() => {
   cleanup();
 });
 
-function renderBrowser() {
+function renderBrowser(onCreate: (() => void) | null = null) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
-        <SubRoomBrowser list={LIST} principalId={ME} />
+        <SubRoomBrowser list={LIST} onCreate={onCreate} principalId={ME} />
       </QueryClientProvider>
     </I18nextProvider>,
   );
@@ -173,6 +173,17 @@ describe('浏览子房间', () => {
       expect(screen.getByRole('button', { name: 'Archived3' })).toBeVisible();
     });
     expect(screen.getByRole('button', { name: 'All4' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('建得了的人右上角有“新建子房间”', () => {
+    const onCreate = vi.fn();
+    renderBrowser(onCreate);
+    fireEvent.click(screen.getByRole('button', { name: 'New sub-room' }));
+    expect(onCreate).toHaveBeenCalledOnce();
+    cleanup();
+
+    renderBrowser();
+    expect(screen.queryByRole('button', { name: 'New sub-room' })).not.toBeInTheDocument();
   });
 
   it('搜名字和用途；“我在的”只留你在的', () => {

@@ -67,6 +67,9 @@
   flex: 0 0 auto;
   color: var(--ar-muted);
 }
+.sub-room-places__create {
+  color: var(--ar-muted);
+}
 .sub-room-places__total {
   flex: 0 0 auto;
   color: var(--ar-muted);

@@ -1,6 +1,6 @@
 import { Button, RoomGlyph } from '@agent-room/ui-system';
 import type { TFunction } from 'i18next';
-import { Check, LoaderCircle, RotateCcw, Search } from 'lucide-react';
+import { Check, LoaderCircle, Plus, RotateCcw, Search } from 'lucide-react';
 import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -33,13 +33,15 @@ export type SubRoomBrowserProps = {
   /** 这间房下面没归档的子房间（房间页问过的那一份）。 */
   readonly list: SubRoomList;
   readonly principalId: string | null;
+  /** 右上角“新建子房间”；你建不了时为空。 */
+  readonly onCreate: (() => void) | null;
 };
 
 /**
  * “浏览子房间”一页（`specs/redesign/sub-rooms.md`“网页”）：这间房下面你看得到的子房间，按分类排着，
  * 能搜名字和用途；三个标签：全部、我在的、已归档。没进的在这里加入或者申请，归档的在这里打开、恢复。
  */
-export function SubRoomBrowser({ list, principalId }: SubRoomBrowserProps) {
+export function SubRoomBrowser({ list, onCreate, principalId }: SubRoomBrowserProps) {
   const { t } = useTranslation();
   const { subRooms } = useAppServices();
   const headingId = useId();
@@ -63,18 +65,25 @@ export function SubRoomBrowser({ list, principalId }: SubRoomBrowserProps) {
           <h2 id={headingId} tabIndex={-1}>
             {t('subRooms.browse.title')}
           </h2>
-          <label className="sub-room-browser__search">
-            <Search aria-hidden="true" />
-            <span className="sr-only">{t('subRooms.browse.search')}</span>
-            <input
-              onChange={(event) => {
-                setQuery(event.currentTarget.value);
-              }}
-              placeholder={t('subRooms.browse.searchPlaceholder')}
-              type="search"
-              value={query}
-            />
-          </label>
+          <div className="sub-room-browser__tools">
+            <label className="sub-room-browser__search">
+              <Search aria-hidden="true" />
+              <span className="sr-only">{t('subRooms.browse.search')}</span>
+              <input
+                onChange={(event) => {
+                  setQuery(event.currentTarget.value);
+                }}
+                placeholder={t('subRooms.browse.searchPlaceholder')}
+                type="search"
+                value={query}
+              />
+            </label>
+            {onCreate === null ? null : (
+              <Button icon={<Plus aria-hidden="true" />} onClick={onCreate} size="compact">
+                {t('subRooms.create.open')}
+              </Button>
+            )}
+          </div>
         </header>
         <div aria-label={t('subRooms.browse.tabs')} className="sub-room-browser__tabs" role="group">
           {subRoomBrowseTabs.map((value) => (

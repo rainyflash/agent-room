@@ -90,6 +90,7 @@ import {
 } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
+import { NewSubRoomDialog } from '@/features/sub-rooms/ui/new-sub-room-dialog';
 import { SubRoomBrowser } from '@/features/sub-rooms/ui/sub-room-browser';
 import { SubRoomPlaces } from '@/features/sub-rooms/ui/sub-room-places';
 import { useUnseenSubRooms } from '@/features/sub-rooms/ui/use-unseen-sub-rooms';
@@ -296,7 +297,15 @@ function ReadyLobby({
   const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
   const subRoom = family !== null && isSubRoomOf(family, catalogId);
   // 左栏：“浏览子房间”和你在的子房间（眼前是子房间时它也算）；顶栏和“主房间”回到父房间。
-  const hasSubRoomPlaces = family !== null && family.subRooms.length > 0;
+  // 一间都没有时，建得了的人也看得到“浏览子房间”和“新建子房间”。
+  const hasSubRoomPlaces = family !== null && (family.subRooms.length > 0 || family.canCreate);
+  const [creatingSubRoom, setCreatingSubRoom] = useState(false);
+  const createSubRoom =
+    family?.canCreate === true
+      ? () => {
+          setCreatingSubRoom(true);
+        }
+      : null;
   const subRoomParent =
     family !== null && subRoom
       ? {
@@ -575,6 +584,15 @@ function ReadyLobby({
   const layoutSwitch = <RoomLayoutSwitch onChange={changeLayout} value={layout} />;
   const dialogs = (
     <>
+      {creatingSubRoom && family !== null ? (
+        <NewSubRoomDialog
+          list={family}
+          onClose={() => {
+            setCreatingSubRoom(false);
+          }}
+          roomAgents={room.agents}
+        />
+      ) : null}
       {shareOpen && shareRoom !== null ? (
         <ShareRoomDialog
           onClose={() => {
@@ -882,7 +900,11 @@ function ReadyLobby({
                       openRoomPanel('conversation');
                     },
                     content: (
-                      <SubRoomBrowser list={family} principalId={principal?.principalId ?? null} />
+                      <SubRoomBrowser
+                        list={family}
+                        onCreate={createSubRoom}
+                        principalId={principal?.principalId ?? null}
+                      />
                     ),
                   }
                 : null
@@ -898,7 +920,7 @@ function ReadyLobby({
                     {family === null ? null : (
                       <SubRoomPlaces
                         browse={
-                          family.subRooms.length === 0
+                          !hasSubRoomPlaces
                             ? null
                             : {
                                 count: family.subRooms.length,
@@ -917,6 +939,7 @@ function ReadyLobby({
                         currentSelected={selectedDirectSessionId === null && !fullPage}
                         currentUnread={activity.unread}
                         list={family}
+                        onCreate={createSubRoom}
                         onNavigate={onNavigate}
                         onSelectCurrent={() => {
                           openRoomPanel('conversation');
