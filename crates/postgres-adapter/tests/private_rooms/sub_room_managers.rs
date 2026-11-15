@@ -183,18 +183,35 @@ async fn 父房间读得到子房间里有人动手的_写着哪一间_重算带
     let rooms = Fixture::new("sub-room-manager-log").await;
     assert!(rooms.set_member_manager(true, time(30)).await);
 
-    // 父房间里设了一位管理员：子房间里跟着重算，记一笔“谁动的手”为空的。
+    // 房主在父房间里设了一位管理员，照用例那样记在房主名下；子房间里跟着重算，记一笔“谁动的手”
+    // 为空的。
     let (owner, other) = (rooms.owner, rooms.other);
-    change(&rooms.repositories, rooms.parent, time(40), |room| {
-        let admin = holding(&[
-            PrivateRoomCapability::View,
-            PrivateRoomCapability::Speak,
-            PrivateRoomCapability::Manage,
-        ]);
-        room.update_permissions(owner, other, admin)
-            .expect("房主能设管理员");
-    })
-    .await;
+    let before = load(&rooms.repositories, rooms.parent).await;
+    let mut parent = before.room().clone();
+    let admin = holding(&[
+        PrivateRoomCapability::View,
+        PrivateRoomCapability::Speak,
+        PrivateRoomCapability::Manage,
+    ]);
+    parent
+        .update_permissions(owner, other, admin)
+        .expect("房主能设管理员");
+    let by_owner: Vec<RoomRoleChange> = standing_changes(before.room(), &parent)
+        .into_iter()
+        .map(|change| RoomRoleChange {
+            actor: Some(owner),
+            change,
+        })
+        .collect();
+    PrivateRoomStore::save_recording(
+        &rooms.repositories,
+        &parent,
+        before.room().version(),
+        time(40),
+        &by_owner,
+    )
+    .await
+    .expect("存得进去");
     let derived = rooms.log(rooms.release).await;
     assert_eq!(derived.len(), 2, "子房间里照着重算的记了一笔");
     assert_eq!((derived[0].actor, derived[0].target), (None, other));
