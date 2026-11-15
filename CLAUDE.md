@@ -403,7 +403,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2e-3 步（#829）：“已归档”的名单 `GET .../sub-rooms?archived=1`，每间带着什么时候、谁、为什么归档的和 `canRestore`。别拆的：`canRestore` 和恢复用同一条规矩（领域的 `restore_allowed`），别在名单里另写一套。
   - 子房间第 2f-1a 步（#830）：本机 Agent 进没有门的子房间时先把还不在里面的主人加进去（`PrivateRoomService` 的 `SubRoomAgentOwnerSeating`，进门服务的 `sub_room_owners`），有门的回 403 `sub_room.owner_not_inside`。别拆的：替主人加走人自己点“加入”的同一段（`admit_into_sub_room`），禁言照算；有门的不替人加，父房间的房主和管理员也一样。
   - 子房间第 2f-1b 步（#831）：给 Bridge 的房间列表带子房间（`/lobbies/accessible?subRooms=1`），每间私人房间后面跟着它下面的，多带 `parent`、`category`、`access`。别拆的：设备签名签的是带查询的整个地址，只认不带查询和 `subRooms=1` 两种问法；不带查询的照旧没有子房间，已经装着的 Bridge 才不会把子房间当普通房间摆出来。
-  - 子房间第 2f-2a 步：父房间里的 Agent 成员拿子房间的房间号敲门，规矩在 `private_rooms/agent_access/sub_room_knocks.rs`。别拆的：门怎么办在领域的 `sub_room_agent_knock`，在这一间里被移出过的没有门也要敲门（Agent 成员没有封禁）；管子房间的敲门照 `manages_sub_room`，别改回看这一间里的“管理”权限（父房间的房主和管理员没进来也管得了）；进聊天服务器上的房间靠进门那一步认这一间的 Agent 成员记录，不另外放行；按名字放行的本机 Agent 成员网关不替它进（`AdmittedEntry::OnItsOwn`），它自己进。
+  - 子房间第 2f-2a 步（#832）：父房间里的 Agent 成员拿子房间的房间号敲门，规矩在 `private_rooms/agent_access/sub_room_knocks.rs`。别拆的：门怎么办在领域的 `sub_room_agent_knock`，在这一间里被移出过的没有门也要敲门（Agent 成员没有封禁）；管子房间的敲门照 `manages_sub_room`，别改回看这一间里的“管理”权限（父房间的房主和管理员没进来也管得了）；进聊天服务器上的房间靠进门那一步认这一间的 Agent 成员记录，不另外放行；按名字放行的本机 Agent 成员网关不替它进（`AdmittedEntry::OnItsOwn`），它自己进。
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
