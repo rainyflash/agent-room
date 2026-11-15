@@ -635,7 +635,7 @@
   - 审计只记两个房间号和原因（`sub_room.archived`、`sub_room.restored`），名字是用户写的字，不进审计；自动归档（2j）没有动手的人，记成服务。
   - 跟着父房间归档的回不来，父房间归档以后哪一间都收不了、拿不回来。
   - “谁归档的”（`archived_by_principal_id`）是和账户连着的记录，删账户和隐私说明页的说法放到 2l 一起改。
-- 2026-11-15 2e-3 做完（#PR）：“已归档”的名单（`GET .../sub-rooms?archived=1`）和真实 Synapse 的测试。没有迁移。
+- 2026-11-15 2e-3 做完（#829）：“已归档”的名单（`GET .../sub-rooms?archived=1`）和真实 Synapse 的测试。没有迁移。
   - 名单里每一间的“能不能恢复”和恢复本身用同一条规矩（领域的 `restore_allowed`）；看的人读得到名单就已经在父房间里，“原来在里面”只看这一间。
   - 最近归档的排在前面，不照建的先后：多半是刚收错了要拿回来的。
   - 真实 Synapse 的测试（`crates/matrix-adapter/tests/real_synapse/sub_room_archive.rs`）查 `reopen`：照给的说得了、说不了，没给的人留着原来的级别，一个也没给也解开门槛。归档以后谁都说不了，2c-3b 的测试已经查过。
