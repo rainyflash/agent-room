@@ -7,6 +7,10 @@ use agent_room_application::{
     agent_lobbies::{
         AgentLobbyEntryFailure, AgentLobbyEntryResult, AgentLobbyEntryUseCases, EnterAgentLobby,
     },
+    agent_room_placements::{
+        AgentRoom, AgentRoomPlacementUseCases, BringAgentIntoRoom, BroughtAgent, LeaveAgentRoom,
+        LeaveAllAgentRooms, LeftAgentRoom, ListAgentRooms,
+    },
     agents::{
         AgentManagementResult, AgentManagementUseCases, AgentNaming, ChangeAgentMembership,
         CreateAgent, CreateHostAgentForDevice, DeleteAgent, EnsureDefaultAgent,
@@ -113,6 +117,8 @@ struct MemoryStore {
     network_owned: Mutex<HashSet<RoomCatalogId>>,
     /// 闲置时请出、还没回去的公开大厅。
     away: Mutex<Vec<(NetworkAgentId, NetworkAgentLobbyAway)>>,
+    /// 只离开一间时忘掉的房间（2h-3b）。
+    forgotten: Mutex<Vec<(NetworkAgentId, RoomCatalogId)>>,
     /// 接下来这么多次写入都说名字被占了：测试直接设。
     names_taken: Mutex<usize>,
 }
@@ -512,6 +518,21 @@ impl NetworkAgentStore for MemoryStore {
             .map(|(_, room)| room.clone())
             .collect();
         Box::pin(async move { Ok(rooms) })
+    }
+
+    fn forget_room(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let mut rooms = self.rooms.lock().unwrap();
+        let mut away = self.away.lock().unwrap();
+        let before = rooms.len() + away.len();
+        rooms.retain(|(agent, room)| !(*agent == id && room.catalog_id == catalog_id));
+        away.retain(|(agent, lobby)| !(*agent == id && lobby.catalog_id == catalog_id));
+        let forgotten = rooms.len() + away.len() < before;
+        self.forgotten.lock().unwrap().push((id, catalog_id));
+        Box::pin(async move { Ok(forgotten) })
     }
 
     fn disable_stale(
@@ -1997,6 +2018,50 @@ impl NetworkAgentActivity for RecordingActivity {
     }
 }
 
+/// 只离开一间时离开那一半（2h-3b）：记下请求，回测试给的结果，没给时回离开了。
+#[derive(Default)]
+struct FakePlacements {
+    left: Mutex<Vec<LeaveAgentRoom>>,
+    failure: Mutex<Option<AgentLobbyEntryFailure>>,
+}
+
+impl AgentRoomPlacementUseCases for FakePlacements {
+    fn rooms(
+        &self,
+        _request: ListAgentRooms,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<Vec<AgentRoom>>> {
+        unreachable!("网络 Agent 不列它在哪些房间")
+    }
+
+    fn bring(
+        &self,
+        _request: BringAgentIntoRoom,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<BroughtAgent>> {
+        unreachable!("网络 Agent 不由主人带进房间")
+    }
+
+    fn leave(
+        &self,
+        request: LeaveAgentRoom,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<LeftAgentRoom>> {
+        self.left.lock().unwrap().push(request);
+        let result = self
+            .failure
+            .lock()
+            .unwrap()
+            .take()
+            .map_or(Ok(LeftAgentRoom { left: true }), Err);
+        Box::pin(async move { result })
+    }
+
+    fn leave_all(
+        &self,
+        _request: LeaveAllAgentRooms,
+    ) -> PortFuture<'_, AgentLobbyEntryResult<usize>> {
+        unreachable!("网络 Agent 全部离开走停用")
+    }
+}
+
 struct Harness {
     service: NetworkAgentService,
     store: Arc<MemoryStore>,
@@ -2005,6 +2070,7 @@ struct Harness {
     lobbies: Arc<ScriptedLobbies>,
     access: Arc<FakeAccess>,
     rooms: Arc<FakeRooms>,
+    placements: Arc<FakePlacements>,
     runtime: Arc<TestRuntime>,
 }
 
@@ -2036,6 +2102,7 @@ impl Harness {
         let lobbies = Arc::new(lobbies);
         let access = Arc::new(FakeAccess::default());
         let rooms = Arc::new(FakeRooms::default());
+        let placements = Arc::new(FakePlacements::default());
         let runtime = Arc::new(TestRuntime::new());
         let activity = Arc::new(RecordingActivity::default());
         let service = NetworkAgentService::new(NetworkAgentDependencies {
@@ -2049,6 +2116,7 @@ impl Harness {
             sub_rooms: rooms.clone(),
             sub_room_listing: rooms.clone(),
             sub_room_archival: rooms.clone(),
+            placements: placements.clone(),
             directory: Arc::new(FakeDirectory::standard()),
             listings: Arc::new(FakeListings),
             public_rooms: Arc::new(FakePublicRooms),
@@ -2069,6 +2137,7 @@ impl Harness {
             lobbies,
             access,
             rooms,
+            placements,
             runtime,
         }
     }
@@ -4455,6 +4524,8 @@ async fn 已在别的大厅时即使在场人数已满也能回到暂离的其�
     );
 }
 
+#[path = "network_agent_flow/leaving.rs"]
+mod leaving;
 #[path = "network_agent_flow/rooms.rs"]
 mod rooms;
 #[path = "network_agent_flow/sub_rooms.rs"]

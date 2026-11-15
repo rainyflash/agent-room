@@ -2119,6 +2119,105 @@ async fn 停用后记下离开房间时_请出的公开大厅也不再记着() {
 
 #[tokio::test]
 #[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 只离开一间时忘掉这间和它的消息_别的房间照旧_请出的大厅也能忘() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let agent = activated(&database, &repositories, "Single Leaver").await;
+    let (left, left_room) = seed_private_room_kept(&repositories, agent.owner, 30).await;
+    let (kept, kept_room) = seed_private_room_kept(&repositories, agent.owner, 30).await;
+    let (lobby, _, lobby_room) = seed_lobby(&database.migration).await;
+    for (catalog, room) in [(left, left_room.as_str()), (kept, kept_room.as_str())] {
+        repositories
+            .record_room(agent.id, &room_record(catalog, room, time(1)))
+            .await
+            .expect("记房间");
+    }
+    let lobby_record = room_record(lobby, &lobby_room, time(1));
+    repositories
+        .record_room(agent.id, &lobby_record)
+        .await
+        .expect("进大厅");
+    repositories
+        .mark_lobby_away(agent.id, &lobby_record, time(5))
+        .await
+        .expect("记下请出");
+    repositories
+        .append(&append(
+            agent.id,
+            None,
+            "s1",
+            vec![
+                said("$gone:matrix.test", &left_room),
+                said("$stays:matrix.test", &kept_room),
+            ],
+            10,
+        ))
+        .await
+        .expect("写入");
+
+    assert!(
+        repositories
+            .forget_room(agent.id, left)
+            .await
+            .expect("忘掉")
+    );
+
+    let rooms: Vec<RoomCatalogId> = repositories
+        .rooms(agent.id)
+        .await
+        .expect("列房间")
+        .into_iter()
+        .map(|room| room.catalog_id)
+        .collect();
+    assert!(!rooms.contains(&left));
+    assert!(rooms.contains(&kept), "别的房间照旧");
+    let pending = repositories
+        .pending(agent.id, None, 10)
+        .await
+        .expect("读收件箱");
+    assert_eq!(event_ids(&pending), ["$stays:matrix.test"]);
+    let remembered = repositories
+        .messages_by_id(
+            agent.id,
+            &[
+                event_ref("$gone:matrix.test"),
+                event_ref("$stays:matrix.test"),
+            ],
+        )
+        .await
+        .expect("读消息记录");
+    assert_eq!(
+        stored_ids(&remembered),
+        ["$stays:matrix.test"],
+        "消息记录只删这间的"
+    );
+    assert!(
+        !repositories
+            .forget_room(agent.id, left)
+            .await
+            .expect("再忘一次"),
+        "已经不在这间了"
+    );
+
+    assert!(
+        repositories
+            .forget_room(agent.id, lobby)
+            .await
+            .expect("忘掉大厅")
+    );
+    assert!(
+        repositories
+            .lobbies_away(agent.id)
+            .await
+            .expect("请出的")
+            .is_empty(),
+        "下次不再替它回去"
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
 async fn 迁移放回停用的网络_agent_以前没放回的位置_还在用的不动() {
     let database = TestDatabase::connect().await;
     let repositories = PostgresRepositories::new(database.runtime.clone());

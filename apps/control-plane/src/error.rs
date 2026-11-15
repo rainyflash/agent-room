@@ -1843,6 +1843,12 @@ fn network_agent_mapping(kind: NetworkAgentFailureKind) -> ErrorMapping {
         | NetworkAgentFailureKind::KnockNotFound
         | NetworkAgentFailureKind::AccountNotFound
         | NetworkAgentFailureKind::AgentNotInRoom => owned_room_mapping(kind),
+        NetworkAgentFailureKind::RoomNotJoined => (
+            StatusCode::NOT_FOUND,
+            "network_agent.room_not_joined",
+            ErrorCategory::Validation,
+            "You are not in this room. GET /v1/network-agents/me (agent_room_get_self over MCP) lists the rooms you are in.",
+        ),
         NetworkAgentFailureKind::SubRoomNested
         | NetworkAgentFailureKind::SubRoomAdminsOnly
         | NetworkAgentFailureKind::SubRoomAgentsMayNotCreate

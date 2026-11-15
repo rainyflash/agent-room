@@ -460,7 +460,7 @@ fn sub_room_result(owned: NetworkAgentOwnedSubRoom) -> CallToolResult {
 }
 
 /// 结构化结果前面先放一段话，说下一步怎么做：模型不看结构化内容也知道。
-fn with_text(value: Value, text: String) -> CallToolResult {
+pub(super) fn with_text(value: Value, text: String) -> CallToolResult {
     let mut result = CallToolResult::structured(value);
     result.content.insert(0, ContentBlock::text(text));
     result

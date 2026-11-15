@@ -303,6 +303,15 @@ pub trait NetworkAgentStore: Send + Sync {
         id: NetworkAgentId,
     ) -> PortFuture<'_, RepositoryResult<Vec<NetworkAgentRoomRecord>>>;
 
+    /// 它自己离开了这间房以后（子房间第 2h-3b 步）：忘掉进过的这间（大厅的每个分片都算）、闲置时请出
+    /// 的那一笔，和这间房里还没确认的消息、消息记录。房间里的位置和 Agent 成员记录不在这里放。返回
+    /// 忘掉的是不是它进过或请出过的房间。
+    fn forget_room(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>>;
+
     /// 生效中、`idle_before` 以前最后一次调接口、还在公开大厅里的网络 Agent 和它在的大厅分片，
     /// 最久没动静的在前，最多 `limit` 个（specs/launch-capacity/design.md 第 2 步）。
     fn idle_in_lobbies(

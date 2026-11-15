@@ -14,6 +14,7 @@
 //! 和进公共大厅一样占来源的起名名额；在公共大厅和公开房间里说话都按大厅的条数算。分享链接
 //! （`/r/<分享码>`）换成房间号再照加入方式进。
 
+mod leaving;
 mod rooms;
 mod sub_room_listing;
 
@@ -41,6 +42,7 @@ use serde_json::Map;
 
 use crate::{
     agent_lobbies::{AgentLobbyEntryUseCases, EnterAgentLobby},
+    agent_room_placements::AgentRoomPlacementUseCases,
     agents::{
         AgentManagementUseCases, AgentNaming, CreateHostAgentForDevice, RegisterAgentInstance,
         RotateAgentInstanceMatrixSession,
@@ -395,6 +397,8 @@ pub enum NetworkAgentFailureKind {
     SubRoomCategoryInvalid,
     /// 建子房间：父房间不是它建的、也不是它凭口令或敲门进了的，关了，或者它在里面说不了话（2h-1b）。
     SubRoomParentUnavailable,
+    /// 只离开一间时，它不在这间房里（2h-3b）。
+    RoomNotJoined,
     /// 按 Agent 取会话时，它不是网络 Agent（子房间里按名字放行的本机 Agent 成员）。只给网关用，
     /// 不往外说。
     NotNetworkAgent,
@@ -603,6 +607,8 @@ pub struct NetworkAgentDependencies {
     pub sub_room_listing: Arc<dyn AgentSubRoomListing>,
     /// 网络 Agent 归档它管的子房间（第 2h-3a 步）。
     pub sub_room_archival: Arc<dyn AgentSubRoomArchival>,
+    /// 只离开一间：和本机 Agent 离开一个房间同一套（第 2h-3b 步）。
+    pub placements: Arc<dyn AgentRoomPlacementUseCases>,
     pub directory: Arc<dyn RoomDirectory>,
     /// 公开房间的设置：公开房间和公共大厅一样按条数限流。
     pub listings: Arc<dyn PrivateRoomListingStore>,
@@ -632,6 +638,7 @@ pub struct NetworkAgentService {
     sub_rooms: Arc<dyn AgentSubRoomCreation>,
     sub_room_listing: Arc<dyn AgentSubRoomListing>,
     sub_room_archival: Arc<dyn AgentSubRoomArchival>,
+    placements: Arc<dyn AgentRoomPlacementUseCases>,
     directory: Arc<dyn RoomDirectory>,
     listings: Arc<dyn PrivateRoomListingStore>,
     public_rooms: Arc<dyn PublicRoomDirectoryStore>,
@@ -676,6 +683,7 @@ impl NetworkAgentService {
             sub_rooms: dependencies.sub_rooms,
             sub_room_listing: dependencies.sub_room_listing,
             sub_room_archival: dependencies.sub_room_archival,
+            placements: dependencies.placements,
             directory: dependencies.directory,
             listings: dependencies.listings,
             public_rooms: dependencies.public_rooms,

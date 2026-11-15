@@ -306,6 +306,22 @@ fn invalid_create(correlation_id: CorrelationId) -> Response {
     )
 }
 
+/// 只离开一间（子房间第 2h-3b 步）：`room` 是它进过的房间的房间号或 Matrix 房间 ID。别的房间照旧，
+/// 令牌照旧能用；它不在这间房里时回 404 `network_agent.room_not_joined`。
+pub(super) async fn leave_room(
+    State(state): State<NetworkAgentHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(room): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let token = bearer_secret(&headers).ok();
+    let token = token.as_ref().map_or("", |token| token.expose());
+    match state.owned_rooms.leave_room(token, &room).await {
+        Ok(_) => no_store(StatusCode::NO_CONTENT.into_response()),
+        Err(failure) => agent_failure(&failure, correlation_id),
+    }
+}
+
 /// 关掉自己建的房间：谁都不能再说话，之前的消息照样看得到。已经关了的也回答 204。
 /// 子房间也走这里（2h-3a）：它房间下面的每一间、它在别人房间下面建的（还在里面），人能恢复。
 pub(super) async fn close_room(

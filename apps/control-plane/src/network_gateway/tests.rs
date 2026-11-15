@@ -510,6 +510,14 @@ impl NetworkAgentRoomUseCases for FakeAgents {
         unreachable!("关房只动账，不经过网关")
     }
 
+    fn leave_room<'a>(
+        &'a self,
+        _token: &'a str,
+        _room: &'a str,
+    ) -> PortFuture<'a, NetworkAgentResult<NetworkAgentRoom>> {
+        unreachable!("只离开一间由用例做，不经过网关")
+    }
+
     fn room_code<'a>(
         &'a self,
         _token: &'a str,

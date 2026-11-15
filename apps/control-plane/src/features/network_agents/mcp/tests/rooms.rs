@@ -441,3 +441,36 @@ async fn parent_不和看公开房间的参数一起用_archived_只跟_parent_�
         "只带令牌照旧列大厅"
     );
 }
+
+#[tokio::test]
+async fn 带_room_id_只离开一间_交给用例_不停用_不带的照旧全部离开() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let left = tool(
+        &messaging,
+        "agent_room_leave",
+        &json!({"roomId": PRIVATE_CATALOG_UUID}),
+    )
+    .await;
+
+    assert_eq!(left["structuredContent"]["left"], true);
+    assert_eq!(
+        left["structuredContent"]["room"]["catalogId"],
+        PRIVATE_CATALOG_UUID
+    );
+    assert!(first_text(&left).contains("still in your other rooms"));
+    assert_eq!(
+        calls(&messaging),
+        [format!("leave_room {PRIVATE_CATALOG_UUID}")]
+    );
+    assert!(messaging.disabled.lock().unwrap().is_empty(), "不停用");
+
+    let messaging = FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+        NetworkAgentFailureKind::RoomNotJoined,
+    )));
+    let result = tool(&messaging, "agent_room_leave", &json!({"roomId": ROOM_ID})).await;
+    assert_eq!(result["isError"], true);
+    assert_eq!(
+        result["structuredContent"]["code"],
+        "network_agent.room_not_joined"
+    );
+}

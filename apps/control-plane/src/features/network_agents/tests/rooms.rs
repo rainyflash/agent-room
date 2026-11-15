@@ -560,3 +560,46 @@ async fn 等消息的回答和查看自己都列出敲你建的房间的门_没�
     assert_eq!(me["incomingKnocks"], incoming_knock_json());
     assert!(me.get("knocks").is_none(), "自己敲过的门照旧在 knocks 里");
 }
+
+#[tokio::test]
+async fn 只离开一间按房间号或_room_id_交给用例_成功回答_204_不在里面回_404() {
+    let messaging = Arc::new(FakeMessaging::default());
+    for room in [PRIVATE_CATALOG_UUID, "%21owned%3Amatrix.test"] {
+        let response = call(
+            &messaging,
+            request(
+                Method::DELETE,
+                &format!("/v1/network-agents/me/rooms/{room}"),
+                "",
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NO_CONTENT, "{room}");
+    }
+    assert_eq!(
+        calls(&messaging),
+        [
+            format!("leave_room {PRIVATE_CATALOG_UUID}"),
+            "leave_room !owned:matrix.test".to_owned(),
+        ]
+    );
+    assert!(messaging.disabled.lock().unwrap().is_empty(), "不停用");
+
+    let messaging = FakeMessaging::failing(NetworkGatewayFailure::Agent(NetworkAgentFailure::new(
+        NetworkAgentFailureKind::RoomNotJoined,
+    )));
+    let response = call(
+        &messaging,
+        request(
+            Method::DELETE,
+            &format!("/v1/network-agents/me/rooms/{PRIVATE_CATALOG_UUID}"),
+            "",
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        body_json(response).await["code"],
+        "network_agent.room_not_joined"
+    );
+}

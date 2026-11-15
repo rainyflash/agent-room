@@ -404,6 +404,14 @@ impl NetworkAgentStore for PostgresRepositories {
         Box::pin(self.network_agent_rooms(id))
     }
 
+    fn forget_room(
+        &self,
+        id: NetworkAgentId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        Box::pin(self.forget_network_agent_room(id, catalog_id))
+    }
+
     fn idle_in_lobbies(
         &self,
         idle_before: UtcMillis,
