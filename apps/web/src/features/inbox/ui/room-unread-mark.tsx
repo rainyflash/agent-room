@@ -12,6 +12,20 @@ export function useRoomUnread(roomId: string): RoomUnread | undefined {
   return useInbox()?.snapshot.rooms.get(roomId);
 }
 
+/**
+ * 按房间号找收件箱里的这间房：它的 Matrix 房间和没读的。子房间的名单里没有 Matrix 房间，左栏靠它直接
+ * 打开、标没读的。你不在里面、收件箱还没读出来时是 undefined。
+ */
+export function useCatalogUnread(
+  catalogId: string,
+): { readonly roomId: string; readonly unread: RoomUnread } | undefined {
+  const rooms = useInbox()?.snapshot.rooms;
+  if (rooms === undefined) return undefined;
+  for (const [roomId, unread] of rooms)
+    if (unread.catalogId === catalogId) return { roomId, unread };
+  return undefined;
+}
+
 /** 这个公开大厅的哪个分片里有人点名你。 */
 export function useCatalogMentioned(catalogId: string): boolean {
   const rooms = useInbox()?.snapshot.rooms;

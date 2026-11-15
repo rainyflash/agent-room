@@ -77,7 +77,17 @@ export type RoomDeskProps = {
   readonly peopleCount: number;
   readonly pendingJoinRequests: number;
   /**
-   * 主房间下面的东西（私聊）；没有就不出左栏。宽的时候它在左栏，窄了收进房间名旁边的下拉：
+   * 这一页是子房间时它的父房间（`specs/redesign/sub-rooms.md`“网页”）：顶栏写“父房间 / 子房间”，
+   * 左栏的“主房间”回到父房间；这一页自己的对话在左栏里是子房间那一行，回去的路叫它的名字。
+   */
+  readonly parent: {
+    readonly name: string;
+    readonly catalogId: string;
+    /** 父房间的 Matrix 房间：知道就直接打开，不知道走 `/lobby/<房间号>`。 */
+    readonly matrixRoomId: string | null;
+  } | null;
+  /**
+   * 主房间下面的东西（子房间、私聊）；没有就不出左栏。宽的时候它在左栏，窄了收进房间名旁边的下拉：
    * 在下拉里点了一项要把下拉关上，所以画的时候给它一个 `onNavigate`。
    */
   readonly rail: ((onNavigate: () => void) => ReactNode) | null;
@@ -117,6 +127,7 @@ export function RoomDesk({
   onSelectMainRoom,
   onShowScene,
   page,
+  parent,
   peopleCount,
   pendingJoinRequests,
   rail,
@@ -151,26 +162,37 @@ export function RoomDesk({
   }, [menu]);
   // 下拉只在对话上有：展开成整页时，顶栏那里写的是“房间名 / 这一页”，点房间名回对话。
   const placeMenu = rail !== null && page === null;
-  const place = directName ?? t('roomDesk.mainRoom');
+  // 这一页自己的对话叫什么：整间房是“主房间”，子房间是它的名字。
+  const home = parent === null ? t('roomDesk.mainRoom') : roomName;
+  const place = directName ?? home;
+  const backHome =
+    parent === null ? t('roomDesk.backToMainRoom') : t('roomDesk.backToPlace', { place: home });
   const mainRoomPlace = (where: 'rail' | 'menu', onNavigate: () => void) => (
     <nav aria-label={t('roomDesk.places')} className="room-desk__places">
-      <button
-        aria-current={mainRoomSelected ? 'page' : undefined}
-        aria-describedby={unreadElsewhere ? `${unreadId}-${where}` : undefined}
-        aria-label={t('roomDesk.mainRoom')}
-        className="room-desk__place"
-        onClick={() => {
-          onNavigate();
-          onSelectMainRoom();
-        }}
-        type="button"
-      >
-        <RoomGlyph kind="open" />
-        <span>{t('roomDesk.mainRoom')}</span>
-        {unreadElsewhere ? (
-          <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-${where}`} />
-        ) : null}
-      </button>
+      {parent === null ? (
+        <button
+          aria-current={mainRoomSelected ? 'page' : undefined}
+          aria-describedby={unreadElsewhere ? `${unreadId}-${where}` : undefined}
+          aria-label={t('roomDesk.mainRoom')}
+          className="room-desk__place"
+          onClick={() => {
+            onNavigate();
+            onSelectMainRoom();
+          }}
+          type="button"
+        >
+          <RoomGlyph kind="open" />
+          <span>{t('roomDesk.mainRoom')}</span>
+          {unreadElsewhere ? (
+            <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-${where}`} />
+          ) : null}
+        </button>
+      ) : (
+        <ParentRoomLink className="room-desk__place" onNavigate={onNavigate} parent={parent}>
+          <RoomGlyph kind="open" />
+          <span>{t('roomDesk.mainRoom')}</span>
+        </ParentRoomLink>
+      )}
     </nav>
   );
   // “更多”里点了一项：先收起来（焦点回到“更多”），再做那件事；打开的对话框关掉以后焦点也回到“更多”。
@@ -207,7 +229,15 @@ export function RoomDesk({
               手机上它是下拉下面的那一行。 */}
           <div className="room-desk__titles" data-warns={roomKindWarns(kind) ? 'true' : undefined}>
             {page === null ? (
-              <h1>{roomName}</h1>
+              parent === null ? (
+                <h1>{roomName}</h1>
+              ) : (
+                <h1 className="room-desk__crumbs room-desk__crumbs--parent">
+                  <ParentRoomLink parent={parent}>{parent.name}</ParentRoomLink>
+                  <span aria-hidden="true">/</span>
+                  <span>{roomName}</span>
+                </h1>
+              )
             ) : (
               <h1 className="room-desk__crumbs">
                 <button
@@ -439,13 +469,13 @@ export function RoomDesk({
               {mainRoomSelected ? null : (
                 <button
                   aria-describedby={unreadElsewhere ? `${unreadId}-return` : undefined}
-                  aria-label={t('roomDesk.backToMainRoom')}
+                  aria-label={backHome}
                   className="room-desk__return"
                   onClick={onSelectMainRoom}
                   type="button"
                 >
                   <ArrowLeft aria-hidden="true" />
-                  <span>{t('roomDesk.backToMainRoom')}</span>
+                  <span>{backHome}</span>
                   {unreadElsewhere ? (
                     <RoomUnreadCount count={mainRoomUnread} id={`${unreadId}-return`} />
                   ) : null}
@@ -464,6 +494,39 @@ export function RoomDesk({
         {inspector}
       </div>
     </main>
+  );
+}
+
+/** 回到父房间：知道它的 Matrix 房间就直接打开，不然走 `/lobby/<房间号>` 由入场页去找。 */
+function ParentRoomLink({
+  children,
+  className,
+  onNavigate,
+  parent,
+}: {
+  readonly children: ReactNode;
+  readonly className?: string;
+  readonly onNavigate?: () => void;
+  readonly parent: NonNullable<RoomDeskProps['parent']>;
+}) {
+  return parent.matrixRoomId === null ? (
+    <Link
+      className={className}
+      onClick={onNavigate}
+      params={{ catalogId: parent.catalogId }}
+      to="/lobby/$catalogId"
+    >
+      {children}
+    </Link>
+  ) : (
+    <Link
+      className={className}
+      onClick={onNavigate}
+      params={{ catalogId: parent.catalogId, roomId: parent.matrixRoomId }}
+      to="/lobby/$catalogId/instance/$roomId"
+    >
+      {children}
+    </Link>
   );
 }
 

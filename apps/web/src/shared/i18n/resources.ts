@@ -19,6 +19,7 @@ import { roomListingResources } from '@/features/private-rooms/i18n/room-listing
 import { roomDirectoryResources } from '@/features/room-directory/i18n/room-directory-resources';
 import { roomsResources } from '@/features/room-directory/i18n/rooms-resources';
 import { roomSettingsResources } from '@/features/lobby/i18n/room-settings-resources';
+import { subRoomResources } from '@/features/sub-rooms/i18n/sub-room-resources';
 import { applicationResources } from '@/features/updates/i18n/application-resources';
 import { guideResources } from '@/features/guide/i18n/guide-resources';
 import { landingResources } from '@/features/landing/i18n/landing-resources';
@@ -667,6 +668,7 @@ export const resources = {
       ...roomDirectoryResources.en,
       ...roomsResources.en,
       ...roomSettingsResources.en,
+      ...subRoomResources.en,
       ...applicationResources.en,
       ...landingResources.en,
       ...guideResources.en,
@@ -1247,6 +1249,7 @@ export const resources = {
       ...roomDirectoryResources['zh-CN'],
       ...roomsResources['zh-CN'],
       ...roomSettingsResources['zh-CN'],
+      ...subRoomResources['zh-CN'],
       ...applicationResources['zh-CN'],
       ...landingResources['zh-CN'],
       ...guideResources['zh-CN'],

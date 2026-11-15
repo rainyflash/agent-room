@@ -89,6 +89,8 @@ import {
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
+import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
+import { SubRoomPlaces } from '@/features/sub-rooms/ui/sub-room-places';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import type { ShareableRoom } from '@/features/room-share/domain/room-share';
@@ -286,8 +288,27 @@ function ReadyLobby({
     principal?.principalId ?? null,
   );
   // 子房间：邀请链接、往外请人、公开和分享都是整间房才有的（子房间里请人进来在子房间设置里）。
-  const family = useSubRooms(subRooms, catalogId, { enabled: principal !== null && catalogRoom });
-  const subRoom = family.data?.ok === true && family.data.value.parent.catalogId !== catalogId;
+  const familyQuery = useSubRooms(subRooms, catalogId, {
+    enabled: principal !== null && catalogRoom,
+  });
+  const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
+  const subRoom = family !== null && isSubRoomOf(family, catalogId);
+  // 左栏：你在的子房间（眼前是子房间时它也算）；顶栏和“主房间”回到父房间。
+  const hasSubRoomPlaces =
+    family !== null && (subRoom || family.subRooms.some((entry) => entry.joined));
+  const subRoomParent =
+    family !== null && subRoom
+      ? {
+          catalogId: family.parent.catalogId,
+          matrixRoomId:
+            (privateRoomList.data?.ok === true
+              ? privateRoomList.data.value.find(
+                  (entry) => entry.catalogId === family.parent.catalogId,
+                )?.matrixRoomId
+              : undefined) ?? null,
+          name: family.parent.name,
+        }
+      : null;
   const invitable = subRoom
     ? null
     : invitableRoom(
@@ -840,7 +861,28 @@ function ReadyLobby({
           }
           pendingJoinRequests={pendingJoinRequests}
           peopleCount={roster.people.people.length}
-          rail={directSessions.sessions.length === 0 ? null : directNavigation}
+          parent={subRoomParent}
+          rail={
+            directSessions.sessions.length === 0 && !hasSubRoomPlaces
+              ? null
+              : (onNavigate) => (
+                  <>
+                    {family === null ? null : (
+                      <SubRoomPlaces
+                        currentCatalogId={catalogId}
+                        currentSelected={selectedDirectSessionId === null && !agentsPage}
+                        currentUnread={activity.unread}
+                        list={family}
+                        onNavigate={onNavigate}
+                        onSelectCurrent={() => {
+                          openRoomPanel('conversation');
+                        }}
+                      />
+                    )}
+                    {directSessions.sessions.length === 0 ? null : directNavigation(onNavigate)}
+                  </>
+                )
+          }
           roomName={room.name}
           share={
             shareRoom === null

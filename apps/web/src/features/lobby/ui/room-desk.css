@@ -68,7 +68,8 @@
   gap: 7px;
   overflow: visible;
 }
-.room-desk__crumbs > button {
+.room-desk__crumbs > button,
+.room-desk__crumbs > a {
   min-width: 0;
   overflow: hidden;
   padding: 0;
@@ -80,8 +81,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.room-desk__crumbs > button:hover {
+.room-desk__crumbs > button:hover,
+.room-desk__crumbs > a:hover {
   color: var(--color-ink);
+}
+.room-desk__crumbs > a {
+  text-decoration: none;
+}
+/* 子房间：父房间 / 子房间。都放不下时先截父房间，子房间的名字最后才截。 */
+.room-desk__crumbs--parent > a {
+  flex: 0 100 auto;
+}
+.room-desk__crumbs--parent > span:last-child {
+  min-width: 3em;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .room-desk__crumbs > span {
   flex: 0 0 auto;
@@ -351,6 +367,9 @@
 }
 .room-desk__place:hover {
   background: var(--ar-surface-muted);
+}
+a.room-desk__place {
+  text-decoration: none;
 }
 .room-desk__place[aria-current='page'] {
   background: var(--ar-selected);

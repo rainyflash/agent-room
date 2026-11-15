@@ -135,6 +135,11 @@ import type {
   RoomRoleChangeGateway,
   RoomStanding,
 } from '@/features/private-rooms/domain/room-role-changes';
+import type {
+  SubRoom,
+  SubRoomGateway,
+  SubRoomList,
+} from '@/features/private-rooms/domain/sub-rooms';
 import { AccountPreferencesStore } from '@/features/preferences/application/account-preferences-store';
 import type { AccountPreferencesGateway } from '@/features/preferences/domain/account-preferences-gateway';
 import { AccountPreferencesProvider } from '@/features/preferences/ui/account-preferences-provider';
@@ -189,6 +194,11 @@ const requestsFixture =
 // `?private&notice` 里房间有一条 Grace 写的三行公告（时间固定，重新打开还是同一版）；不带时没有公告，
 // 房主能在设置的“公告”里写。
 const noticeFixture = privateFixture && new URLSearchParams(window.location.search).has('notice');
+// `?private&subRooms` 里这间房下面有几间子房间（你在三间里，一间不在）；`?private&subRoom` 里这间房
+// 本身是“Agent Room”下面的子房间，左栏的“主房间”回到父房间、顶栏写“父房间 / 子房间”。
+const subRoomsFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('subRooms');
+const subRoomFixture = privateFixture && new URLSearchParams(window.location.search).has('subRoom');
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -1098,6 +1108,77 @@ function recordFixtureRoleChange(principalId: string, previous: RoomStanding | u
     ...fixtureRoleChanges,
   ];
 }
+const FIXTURE_PARENT_ID = '01990d9e-8400-7000-8000-000000000400';
+const FIXTURE_WORK_CATEGORY = '01990d9e-8400-7000-8000-000000000460';
+const FIXTURE_OPS_CATEGORY = '01990d9e-8400-7000-8000-000000000461';
+function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = {}): SubRoom {
+  return {
+    catalogId: `01990d9e-8400-7000-8000-0000000004${suffix}`,
+    name,
+    description: '',
+    access: 'open',
+    hidden: false,
+    createdByPrincipalId: fixtureOwner,
+    createdAtUnixMs: 1_763_000_000_000,
+    managerPrincipalIds: [],
+    joined: true,
+    banned: false,
+    ...extra,
+  };
+}
+function fixtureSubRoomList(): SubRoomList {
+  const current = fixturePrivateRoom.catalogId;
+  return {
+    parent: subRoomFixture
+      ? { catalogId: FIXTURE_PARENT_ID, name: 'Agent Room' }
+      : { catalogId: current, name: room.name },
+    canCreate: true,
+    categories: [
+      { categoryId: FIXTURE_WORK_CATEGORY, name: 'Work', position: 0 },
+      { categoryId: FIXTURE_OPS_CATEGORY, name: 'Ops', position: 1 },
+    ],
+    subRooms: [
+      ...(subRoomFixture
+        ? [
+            {
+              ...fixtureSubRoom('01', room.name, { categoryId: FIXTURE_WORK_CATEGORY }),
+              catalogId: current,
+            },
+          ]
+        : []),
+      fixtureSubRoom('51', 'Release checklist', { categoryId: FIXTURE_WORK_CATEGORY }),
+      fixtureSubRoom('52', 'Backups', { access: 'request', categoryId: FIXTURE_OPS_CATEGORY }),
+      fixtureSubRoom('53', 'Loose ends'),
+      fixtureSubRoom('54', 'Not mine', { joined: false, categoryId: FIXTURE_WORK_CATEGORY }),
+    ],
+  };
+}
+const unavailableSubRoom = () =>
+  Promise.resolve(err({ code: 'sub_room.unavailable', retryable: false }));
+const fixtureSubRooms: SubRoomGateway = {
+  admit: unavailableSubRoom,
+  answerJoinRequest: unavailableSubRoom,
+  archive: unavailableSubRoom,
+  ban: unavailableSubRoom,
+  changePolicy: unavailableSubRoom,
+  create: unavailableSubRoom,
+  createCategory: unavailableSubRoom,
+  deleteCategory: unavailableSubRoom,
+  grantManager: unavailableSubRoom,
+  join: unavailableSubRoom,
+  joinRequests: unavailableSubRoom,
+  leave: unavailableSubRoom,
+  policy: unavailableSubRoom,
+  remove: unavailableSubRoom,
+  requestToJoin: unavailableSubRoom,
+  restore: unavailableSubRoom,
+  revise: unavailableSubRoom,
+  reviseCategory: unavailableSubRoom,
+  revokeManager: unavailableSubRoom,
+  subRooms: () => Promise.resolve(ok(fixtureSubRoomList())),
+  unban: unavailableSubRoom,
+  withdrawJoinRequest: unavailableSubRoom,
+};
 const roomRoleChanges: RoomRoleChangeGateway = {
   roleChanges: () => Promise.resolve(ok(fixtureRoleChanges)),
 };
@@ -1806,6 +1887,7 @@ const services: AppServices = {
         roomRoleChanges,
       }
     : {}),
+  ...(subRoomsFixture || subRoomFixture ? { subRooms: fixtureSubRooms } : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
