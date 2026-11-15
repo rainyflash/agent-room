@@ -291,8 +291,8 @@ const VOID_PENDING_OF_CLOSED_ROOMS: &str = r"
        )";
 
 /// 子房间不收申请了（拆了门、改成只能请进来、藏起来了）、它或者父房间归档了、申请的人不在父房间
-/// 里了：在等的作废。平时换门、改父房间的事务里就作废了，这里兜底（比如子房间跟着父房间归档、回滚
-/// 到旧版那段时间里改过的）。
+/// 里了、他在这一间里被封禁了：在等的作废。平时换门、改父房间、封禁的事务里就作废了，这里兜底（比如
+/// 子房间跟着父房间归档、回滚到旧版那段时间里改过的）。
 const VOID_PENDING_OF_CLOSED_SUB_ROOMS: &str = r"
     UPDATE agent_room.private_room_join_request AS request
        SET status = 'voided',
@@ -319,6 +319,13 @@ const VOID_PENDING_OF_CLOSED_SUB_ROOMS: &str = r"
                 WHERE member.catalog_entry_id = link.parent_catalog_entry_id
                   AND member.principal_id = request.requester_principal_id
                   AND member.membership_status = 'joined'
+           )
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM agent_room.private_room_membership AS banned
+                WHERE banned.catalog_entry_id = link.catalog_entry_id
+                  AND banned.principal_id = request.requester_principal_id
+                  AND banned.membership_status = 'banned'
            )
        )";
 

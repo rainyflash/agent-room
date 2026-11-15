@@ -26,6 +26,8 @@ mod doors;
 mod follow;
 #[path = "sub_room_join_requests.rs"]
 mod join_requests;
+#[path = "sub_room_members.rs"]
+mod members;
 #[path = "sub_room_membership.rs"]
 mod membership;
 #[path = "sub_room_mutes.rs"]

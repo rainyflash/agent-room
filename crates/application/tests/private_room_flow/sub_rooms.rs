@@ -39,6 +39,8 @@ use super::*;
 mod doors;
 #[path = "sub_room_join_requests.rs"]
 mod join_requests;
+#[path = "sub_room_members.rs"]
+mod members;
 #[path = "sub_room_membership.rs"]
 mod membership;
 #[path = "sub_room_mutes.rs"]
@@ -1819,6 +1821,7 @@ impl PrivateRoomStore for MemoryRooms {
         Box::pin(async move {
             self.record("store.save");
             self.replace(room);
+            self.void_banned_requests(room);
             self.follow_parent(room);
             Ok(())
         })

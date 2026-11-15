@@ -41,6 +41,7 @@ mod moderation_members;
 mod public_creation;
 mod public_transfer;
 mod role_changes;
+mod sub_room_members;
 mod sub_room_membership;
 mod sub_room_requests;
 mod sub_room_sync;

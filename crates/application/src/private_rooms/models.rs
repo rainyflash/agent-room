@@ -264,6 +264,16 @@ pub struct AnswerSubRoomJoinRequest {
     pub approve: bool,
 }
 
+/// 管得了这一间的人把父房间里的一个人请进来、移出、封禁或者解封（`specs/redesign/sub-rooms.md`
+/// 第 2d-3 步）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernSubRoomMember {
+    pub actor: AuthenticatedPrincipal,
+    pub parent_catalog_id: RoomCatalogId,
+    pub catalog_id: RoomCatalogId,
+    pub target: PrincipalId,
+}
+
 /// 申请以后他在这一间的处境。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubRoomJoinState {
