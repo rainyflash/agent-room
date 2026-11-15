@@ -30,18 +30,19 @@ use crate::{
         MatrixCreateRoom, MatrixRoomId, MatrixRoomPowerProfile, MatrixRoomPreset,
         MatrixRoomVisibility, MatrixUserId, NewSubRoom, PendingJoinRequest, PortFuture,
         PrivateMatrixRoomCreation, PrivateMatrixSpeakingAssignment, PrivateRoomSnapshot,
-        SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry, SubRoomParentFacts,
-        SubRoomPolicyRecord, SubRoomPrivacy,
+        SubRoomCategory, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomEntry,
+        SubRoomParentFacts, SubRoomPolicyRecord, SubRoomPrivacy,
     },
 };
 
 use super::{
     super::{
         AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
-        GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms, PrivateRoomFailure,
-        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomResult, RequestSubRoomJoin,
-        ReviseSubRoom, SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView,
-        SubRoomRefusal, SubRoomView,
+        CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy,
+        ListSubRooms, PrivateRoomFailure, PrivateRoomFailureKind, PrivateRoomFailureStage,
+        PrivateRoomResult, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory,
+        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
+        SubRoomView,
         failure::{domain, failure, matrix, repository},
         sub_room_privacy::{SubRoomPrivacyFailure, encrypt_sub_rooms, mark_open_sub_rooms_listed},
     },
@@ -146,6 +147,24 @@ pub trait SubRoomUseCases: Send + Sync {
         &self,
         request: ChangeSubRoomManager,
     ) -> PortFuture<'_, PrivateRoomResult<()>>;
+
+    /// 建一个子房间的分类，排在最后（2e-1）。房间的房主和管理员能建。回这间房此刻所有的分类。
+    fn create_sub_room_category(
+        &self,
+        request: CreateSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>>;
+
+    /// 给分类改名、挪位置。
+    fn revise_sub_room_category(
+        &self,
+        request: ReviseSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>>;
+
+    /// 删一个分类，里面的子房间回到“未分类”。已经删掉的也算成功。
+    fn delete_sub_room_category(
+        &self,
+        request: DeleteSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>>;
 }
 
 impl SubRoomUseCases for PrivateRoomService {
@@ -259,6 +278,27 @@ impl SubRoomUseCases for PrivateRoomService {
         request: ChangeSubRoomManager,
     ) -> PortFuture<'_, PrivateRoomResult<()>> {
         Box::pin(self.change_sub_room_manager_internal(request))
+    }
+
+    fn create_sub_room_category(
+        &self,
+        request: CreateSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        Box::pin(self.create_sub_room_category_internal(request))
+    }
+
+    fn revise_sub_room_category(
+        &self,
+        request: ReviseSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        Box::pin(self.revise_sub_room_category_internal(request))
+    }
+
+    fn delete_sub_room_category(
+        &self,
+        request: DeleteSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        Box::pin(self.delete_sub_room_category_internal(request))
     }
 }
 
@@ -717,6 +757,11 @@ impl PrivateRoomService {
             .ok_or_else(|| not_found(OPERATION))?;
         let can_create =
             authorize_sub_room_creation(parent.room(), viewer, facts.policy, false).is_ok();
+        let categories = self
+            .sub_rooms
+            .sub_room_categories(parent_catalog_id)
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
         let sub_rooms = entries
             .into_iter()
             // 归档的不在这份名单里：它们让出了名字和名额，另有“已归档”的名单。
@@ -733,6 +778,7 @@ impl PrivateRoomService {
             parent_catalog_id,
             parent_name: parent.catalog().name().to_owned(),
             can_create,
+            categories,
             sub_rooms,
         })
     }

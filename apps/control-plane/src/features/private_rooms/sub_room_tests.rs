@@ -1,19 +1,21 @@
 //! 子房间的接口（`specs/redesign/sub-rooms.md`）：建、读名单、三项设置（2a），加入、退出、改名字
 //! 和用途（2b），门和“不在名单里显示”（2d-1），申请和批准（2d-2，在 `sub_room_request_tests.rs`），
 //! 请进来、移出和封禁（2d-3，在 `sub_room_member_tests.rs`），子房间管理员（2d-4，在
-//! `sub_room_manager_tests.rs`）。
+//! `sub_room_manager_tests.rs`），分类（2e-1，在 `sub_room_category_tests.rs`）。
 //! 规则在用例里，这里看路由把什么交给了用例、回答长什么样、被拒时回哪个码。
 
 use agent_room_application::{
-    ports::{JoinRequestRecord, PendingJoinRequest, SubRoomEntry},
+    ports::{JoinRequestRecord, PendingJoinRequest, SubRoomCategory, SubRoomEntry},
     private_rooms::{
         AnswerSubRoomJoinRequest, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateSubRoom,
-        GovernSubRoomMember, InspectSubRoomPolicy, ListSubRooms, RequestSubRoomJoin, ReviseSubRoom,
-        SubRoomJoinState, SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal,
-        SubRoomUseCases, SubRoomView,
+        CreateSubRoomCategory, DeleteSubRoomCategory, GovernSubRoomMember, InspectSubRoomPolicy,
+        ListSubRooms, RequestSubRoomJoin, ReviseSubRoom, ReviseSubRoomCategory, SubRoomJoinState,
+        SubRoomList, SubRoomMembershipAction, SubRoomPolicyView, SubRoomRefusal, SubRoomUseCases,
+        SubRoomView,
     },
 };
 use agent_room_domain::{
+    ids::SubRoomCategoryId,
     private_rooms::PrivateRoomMembershipStatus,
     room_join_requests::{JoinRequestMessage, JoinRequestStatus},
     sub_rooms::{SubRoomCreators, SubRoomPolicy},
@@ -21,6 +23,8 @@ use agent_room_domain::{
 
 use super::*;
 
+#[path = "sub_room_category_tests.rs"]
+mod categories;
 #[path = "sub_room_manager_tests.rs"]
 mod managers;
 #[path = "sub_room_member_tests.rs"]
@@ -31,6 +35,8 @@ mod requests;
 const SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e50";
 const OTHER_SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e51";
 const THIRD_SUB_ROOM_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e52";
+const CATEGORY_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e60";
+const OTHER_CATEGORY_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e61";
 /// 申请记下的时间。
 const REQUESTED_AT: i64 = 1_700_000_200_000;
 
@@ -54,13 +60,49 @@ pub(super) struct FakeSubRooms {
     governed: Mutex<Vec<(&'static str, GovernSubRoomMember)>>,
     /// 设、撤子房间管理员。
     managers_changed: Mutex<Vec<ChangeSubRoomManager>>,
+    /// 建、改、删分类：哪一样，父房间、分类号、名字、位置。
+    categories_changed: Mutex<Vec<CategoryCall>>,
     /// 设上时申请不用等，直接记成已加入（没有门了的、管这间房的）。
     joins_directly: Mutex<bool>,
     /// 设上时每个用例都回答它。
     failure: Mutex<Option<PrivateRoomFailure>>,
 }
 
+/// 交过来的一个分类请求。
+type CategoryCall = (
+    &'static str,
+    RoomCatalogId,
+    SubRoomCategoryId,
+    Option<String>,
+    Option<u8>,
+);
+
+/// 设计和 Release 两个分类。
+fn categories() -> Vec<SubRoomCategory> {
+    vec![
+        SubRoomCategory {
+            id: SubRoomCategoryId::from_uuid(uuid(CATEGORY_UUID)),
+            name: "设计".to_owned(),
+            position: 0,
+        },
+        SubRoomCategory {
+            id: SubRoomCategoryId::from_uuid(uuid(OTHER_CATEGORY_UUID)),
+            name: "Release".to_owned(),
+            position: 1,
+        },
+    ]
+}
+
 impl FakeSubRooms {
+    fn arrange(
+        &self,
+        call: CategoryCall,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        let result = self.refusal().map_or_else(|| Ok(categories()), Err);
+        self.categories_changed.lock().unwrap().push(call);
+        Box::pin(async move { result })
+    }
+
     fn refusal(&self) -> Option<PrivateRoomFailure> {
         *self.failure.lock().unwrap()
     }
@@ -270,6 +312,45 @@ impl SubRoomUseCases for FakeSubRooms {
         self.managers_changed.lock().unwrap().push(request);
         Box::pin(async move { result })
     }
+
+    fn create_sub_room_category(
+        &self,
+        request: CreateSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        self.arrange((
+            "create",
+            request.parent_catalog_id,
+            request.category_id,
+            Some(request.name),
+            None,
+        ))
+    }
+
+    fn revise_sub_room_category(
+        &self,
+        request: ReviseSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        self.arrange((
+            "revise",
+            request.parent_catalog_id,
+            request.category_id,
+            request.name,
+            request.position,
+        ))
+    }
+
+    fn delete_sub_room_category(
+        &self,
+        request: DeleteSubRoomCategory,
+    ) -> PortFuture<'_, PrivateRoomResult<Vec<SubRoomCategory>>> {
+        self.arrange((
+            "delete",
+            request.parent_catalog_id,
+            request.category_id,
+            None,
+            None,
+        ))
+    }
 }
 
 #[tokio::test]
@@ -395,6 +476,10 @@ async fn 名单只要有效登录_有门又没进的不给人数和最近说话�
         json!({
             "parent": { "catalogId": CATALOG_UUID, "name": "Incident Room" },
             "canCreate": true,
+            "categories": [
+                { "categoryId": CATEGORY_UUID, "name": "设计", "position": 0 },
+                { "categoryId": OTHER_CATEGORY_UUID, "name": "Release", "position": 1 }
+            ],
             "subRooms": [
                 {
                     "catalogId": SUB_ROOM_UUID,
@@ -932,6 +1017,7 @@ fn list() -> SubRoomList {
         parent_catalog_id: catalog_id(),
         parent_name: "Incident Room".to_owned(),
         can_create: true,
+        categories: categories(),
         sub_rooms: vec![
             SubRoomView {
                 entry: SubRoomEntry {

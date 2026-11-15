@@ -1,6 +1,7 @@
 //! 子房间（`specs/redesign/sub-rooms.md`）：在一间房下面建子房间、读名单（2a），人自己加入、退出，
 //! 改名字和用途（2b），门和“不在名单里显示”（2d-1），和一间房里子房间的三项设置
-//! （`specs/redesign/room-roles.md` R4）。申请和批准（2d-2）在旁边的 `sub_room_requests`。
+//! （`specs/redesign/room-roles.md` R4）。申请和批准（2d-2）在旁边的 `sub_room_requests`，分类（2e-1）
+//! 在 `sub_room_categories`。
 //!
 //! 都是新的接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段
 //! 整个房间都读不出来。建好的子房间照私人房间的样子回。
@@ -34,6 +35,7 @@ use super::{
         IDEMPOTENCY_KEY_HEADER, invalid, invalid_resource, required_write_context, respond,
     },
     models::catalog_id,
+    sub_room_categories::{CategoryResponse, category_responses},
 };
 use crate::{
     correlation::CorrelationId,
@@ -102,6 +104,9 @@ struct SubRoomListResponse {
     parent: SubRoomParentResponse,
     /// 看的人自己现在能不能在这间房下面建子房间。
     can_create: bool,
+    /// 这间房的分类，按先后（2e-1）。整间房共用；里面有几间由网页照下面的子房间数，看不到的
+    /// 子房间不从这里露出来。
+    categories: Vec<CategoryResponse>,
     /// 按建的先后。归档的不在这里。
     sub_rooms: Vec<SubRoomResponse>,
 }
@@ -183,6 +188,7 @@ impl From<SubRoomList> for SubRoomListResponse {
                 name: list.parent_name,
             },
             can_create: list.can_create,
+            categories: category_responses(list.categories),
             sub_rooms: list
                 .sub_rooms
                 .into_iter()
