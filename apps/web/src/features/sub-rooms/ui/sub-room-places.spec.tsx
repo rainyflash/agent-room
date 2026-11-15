@@ -139,6 +139,19 @@ describe('左栏里的子房间', () => {
     );
   });
 
+  it('你管得了、有人在等批准的那一间：名字后面一个点，读得出来有几个在等', () => {
+    renderPlaces({
+      list: { ...LIST, subRooms: [RELEASE, { ...BACKUPS, pendingRequestCount: 2 }] },
+    });
+
+    expect(screen.getByRole('link', { name: 'Backups' })).toHaveAccessibleDescription(
+      'Has a door 2 waiting to join',
+    );
+    expect(screen.getByRole('link', { name: 'Release' })).not.toHaveAccessibleDescription(
+      /waiting/u,
+    );
+  });
+
   it('没读的写灰色的数，提到你的是红底的', () => {
     unread.set(RELEASE.catalogId, {
       roomId: '!release:matrix.test',

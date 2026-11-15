@@ -1,0 +1,97 @@
+/* 子房间设置最上面“在等的”（画布第 8 张）：浅底的一块，一行一个人，按钮在右边；敲门的 Agent 跟在后面。 */
+.sub-room-waiting {
+  display: grid;
+  gap: 8px;
+}
+
+.sub-room-waiting > h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.sub-room-waiting__count {
+  color: var(--ar-muted);
+  font-weight: 400;
+}
+
+.sub-room-waiting__empty {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-waiting__list {
+  display: grid;
+  margin: 0;
+  padding: 2px 12px;
+  border-radius: 10px;
+  background: var(--ar-surface);
+  list-style: none;
+}
+
+.sub-room-waiting__list > li {
+  --ar-avatar-size: 26px;
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding-block: 6px;
+}
+
+.sub-room-waiting__list > li + li {
+  border-top: 1px solid var(--ar-line);
+}
+
+.sub-room-waiting__who {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.sub-room-waiting__who > small {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-waiting__message {
+  flex: 1 1 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  color: var(--ar-ink-72);
+  font-size: 0.8125rem;
+}
+
+.sub-room-waiting__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sub-room-waiting__failure {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+}
+
+.sub-room-waiting__failure > code {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
+
+/* 窄了：按钮挪到名字下面，和名字对齐。 */
+@media (max-width: 560px) {
+  .sub-room-waiting__list > li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sub-room-waiting__actions {
+    grid-column: 2;
+  }
+}

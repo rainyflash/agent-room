@@ -231,6 +231,9 @@ function SubRoomPlace({
   const { t } = useTranslation();
   const badgeId = useId();
   const doorId = useId();
+  const waitingId = useId();
+  // 你管得了这一间、有人在等批准：名字后面一个墨色的点（红的留给找你的）。
+  const waiting = room.pendingRequestCount ?? 0;
   const gated = room.access !== 'open';
   const found = useCatalogUnread(room.catalogId);
   const current = room.catalogId === props.currentCatalogId;
@@ -251,13 +254,20 @@ function SubRoomPlace({
           {t('subRooms.places.gated')}
         </span>
       ) : null}
+      {waiting > 0 ? (
+        <span className="sub-room-places__fresh" id={waitingId}>
+          <span className="sr-only">{t('subRooms.places.waiting', { count: waiting })}</span>
+        </span>
+      ) : null}
       {badge}
     </>
   );
-  // 名字就是房间名；有门、没读的经 `aria-describedby` 读出来。
-  const described = [gated ? doorId : null, badge === null ? null : badgeId].filter(
-    (id) => id !== null,
-  );
+  // 名字就是房间名；有门、有人在等、没读的经 `aria-describedby` 读出来。
+  const described = [
+    gated ? doorId : null,
+    waiting > 0 ? waitingId : null,
+    badge === null ? null : badgeId,
+  ].filter((id) => id !== null);
   const shared = {
     'aria-describedby': described.length === 0 ? undefined : described.join(' '),
     className: 'room-desk__place sub-room-places__room',

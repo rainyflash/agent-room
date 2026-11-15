@@ -107,6 +107,8 @@ import './lobby-game.css';
 const panelSizeKey = 'agent-room.room-panel-size';
 /** 还没有人说过话时用的同一份空名单：每次重画都新建一份的话，右栏的人会跟着重算。 */
 const noHumans: readonly never[] = [];
+/** 你管着哪间子房间时，多久再问一次子房间名单：左栏和齿轮上“有人在等批准”的点跟着它。 */
+const SUB_ROOM_WAITING_POLL_MS = 30_000;
 type PanelSize = 'regular' | 'wide';
 
 function readPanelSize(): PanelSize {
@@ -300,6 +302,7 @@ function ReadyLobby({
   // 子房间：邀请链接、往外请人、公开和分享都是整间房才有的（子房间里请人进来在子房间设置里）。
   const familyQuery = useSubRooms(subRooms, catalogId, {
     enabled: principal !== null && catalogRoom,
+    managingIntervalMs: SUB_ROOM_WAITING_POLL_MS,
   });
   const family = familyQuery.data?.ok === true ? familyQuery.data.value : null;
   const subRoom = family !== null && isSubRoomOf(family, catalogId);
@@ -368,11 +371,13 @@ function ReadyLobby({
           shareUrl: listing.data.value.shareUrl,
         }
       : null;
-  const pendingJoinRequests = usePendingJoinRequestCount(
-    privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
-    catalogId,
-    principal?.principalId ?? null,
-  );
+  // 齿轮上的点：公开房间在等批准的，加上眼前这间子房间在等批准的（你管得了它时名单上才有）。
+  const pendingJoinRequests =
+    usePendingJoinRequestCount(
+      privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
+      catalogId,
+      principal?.principalId ?? null,
+    ) + (subRoomEntry?.pendingRequestCount ?? 0);
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
   // 房主和管理员能改公告；归档了谁都不能。

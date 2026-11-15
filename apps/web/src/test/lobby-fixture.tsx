@@ -1130,10 +1130,22 @@ function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = 
   };
 }
 // `?private&subRoom`：眼前这一间。你管得了它（名单上带着在等的申请有几个），子房间设置改的就是它。
+// 加 `&waiting` 时它要批准，Mika 在等、留了一句话。
+const waitingFixture = new URLSearchParams(window.location.search).has('waiting');
 let fixtureCurrentSubRoom: Partial<SubRoom> = {
   categoryId: FIXTURE_WORK_CATEGORY,
-  pendingRequestCount: 0,
+  ...(waitingFixture ? { access: 'request' as const } : {}),
 };
+let fixtureCurrentRequests: readonly PendingJoinRequest[] = waitingFixture
+  ? [
+      {
+        displayName: 'Mika',
+        message: 'I run the restore drills.',
+        principalId: '0198b601-77a1-7bb8-83eb-a8fe68c97e49',
+        requestedAtUnixMs: Date.now() - 600_000,
+      },
+    ]
+  : [];
 function fixtureSubRoomList(): SubRoomList {
   const current = fixturePrivateRoom.catalogId;
   return {
@@ -1149,7 +1161,10 @@ function fixtureSubRoomList(): SubRoomList {
       ...(subRoomFixture && fixturePrivateRoom.status !== 'archived'
         ? [
             {
-              ...fixtureSubRoom('01', room.name, fixtureCurrentSubRoom),
+              ...fixtureSubRoom('01', room.name, {
+                ...fixtureCurrentSubRoom,
+                pendingRequestCount: fixtureCurrentRequests.length,
+              }),
               catalogId: current,
             },
           ]
@@ -1219,7 +1234,8 @@ const fixtureSubRoomActions: {
   readonly broughtAgents: { readonly agentId: string; readonly catalogId: string }[];
   readonly revisions: (ReviseSubRoomInput & { readonly subRoomId: string })[];
   readonly archived: string[];
-} = { creations: [], broughtAgents: [], revisions: [], archived: [] };
+  readonly answers: { readonly principalId: string; readonly decision: string }[];
+} = { creations: [], broughtAgents: [], revisions: [], archived: [], answers: [] };
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
   get: () => structuredClone(fixtureSubRoomActions),
@@ -1324,7 +1340,14 @@ const unavailableSubRoom = () =>
 const fixtureSubRoomSuffix = (catalogId: string) => catalogId.slice(-2);
 const fixtureSubRooms: SubRoomGateway = {
   admit: unavailableSubRoom,
-  answerJoinRequest: unavailableSubRoom,
+  answerJoinRequest: ({ subRoomId }, principalId, decision) => {
+    fixtureSubRoomActions.answers.push({ principalId, decision });
+    if (subRoomId !== fixturePrivateRoom.catalogId) return unavailableSubRoom();
+    fixtureCurrentRequests = fixtureCurrentRequests.filter(
+      (request) => request.principalId !== principalId,
+    );
+    return Promise.resolve(ok(undefined));
+  },
   // 子房间设置：眼前这一间归档了，房间页接着照归档的子房间显示。
   archive: ({ subRoomId }) => {
     fixtureSubRoomActions.archived.push(subRoomId);
@@ -1339,7 +1362,10 @@ const fixtureSubRooms: SubRoomGateway = {
   deleteCategory: unavailableSubRoom,
   grantManager: unavailableSubRoom,
   join: unavailableSubRoom,
-  joinRequests: unavailableSubRoom,
+  joinRequests: ({ subRoomId }) =>
+    subRoomId === fixturePrivateRoom.catalogId
+      ? Promise.resolve(ok([...fixtureCurrentRequests]))
+      : unavailableSubRoom(),
   leave: unavailableSubRoom,
   policy: unavailableSubRoom,
   remove: unavailableSubRoom,
