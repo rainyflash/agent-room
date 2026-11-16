@@ -35,7 +35,10 @@ use agent_room_domain::{
         HandoffId, LoginAttemptId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId,
         WebSessionId,
     },
-    private_rooms::{PrivateRoomCapability, PrivateRoomMembershipStatus, PrivateRoomPermissions},
+    private_rooms::{
+        PrivateRoomCapability, PrivateRoomLifecycleStatus, PrivateRoomMembershipStatus,
+        PrivateRoomPermissions,
+    },
     rooms::MatrixRoomReference,
     time::UtcMillis,
     version::AggregateVersion,
@@ -1336,6 +1339,8 @@ struct TestStore {
     fail_next_save: AtomicBool,
     /// 存成了的那几次保存一起记下的身份变动。
     role_changes: Mutex<Vec<RoomRoleChange>>,
+    /// 这间房绑着仓库（`specs/redesign/project-rooms.md`）。和库里一样，存成归档的时候解绑。
+    repository_bound: AtomicBool,
 }
 
 impl TestStore {
@@ -1345,6 +1350,7 @@ impl TestStore {
             events,
             fail_next_save: AtomicBool::new(false),
             role_changes: Mutex::new(Vec::new()),
+            repository_bound: AtomicBool::new(false),
         }
     }
 
@@ -1461,6 +1467,9 @@ impl PrivateRoomStore for TestStore {
                     .replacing_room(room.clone())
                     .expect("测试快照应一致"),
             );
+            if room.status() == PrivateRoomLifecycleStatus::Archived {
+                self.repository_bound.store(false, Ordering::SeqCst);
+            }
             Ok(())
         })
     }

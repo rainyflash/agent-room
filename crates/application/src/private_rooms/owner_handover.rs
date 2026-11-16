@@ -160,14 +160,9 @@ impl OwnerHandoverService {
         let matrix_room =
             MatrixRoomId::new(snapshot.instance().matrix_room_id().as_str().to_owned())
                 .map_err(|_| OwnerHandoverFailure::PERSISTENCE)?;
-        let listed = self
-            .listings
-            .listing(catalog_id)
-            .await
-            .map_err(|_| OwnerHandoverFailure::PERSISTENCE)?
-            .is_some_and(|listing| listing.settings.listed());
+        let counts_toward_quota = self.counts_toward_quota(catalog_id).await?;
         for successor in candidates {
-            if listed && self.owns_other_listed_room(successor, catalog_id).await? {
+            if counts_toward_quota && self.owns_other_listed_room(successor, catalog_id).await? {
                 continue;
             }
             let Some(owner) = self
@@ -241,6 +236,28 @@ impl OwnerHandoverService {
         }
     }
 
+    /// 这间房占不占接手的人的公开房间名额：公开着、没绑仓库的才占（`specs/redesign/project-rooms.md`）。
+    async fn counts_toward_quota(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> Result<bool, OwnerHandoverFailure> {
+        let listed = self
+            .listings
+            .listing(catalog_id)
+            .await
+            .map_err(|_| OwnerHandoverFailure::PERSISTENCE)?
+            .is_some_and(|listing| listing.settings.listed());
+        if !listed {
+            return Ok(false);
+        }
+        let bound = self
+            .listings
+            .repository_bound(catalog_id)
+            .await
+            .map_err(|_| OwnerHandoverFailure::PERSISTENCE)?;
+        Ok(!bound)
+    }
+
     async fn owns_other_listed_room(
         &self,
         principal_id: PrincipalId,
@@ -248,7 +265,7 @@ impl OwnerHandoverService {
     ) -> Result<bool, OwnerHandoverFailure> {
         Ok(self
             .listings
-            .listed_rooms_owned_by(principal_id)
+            .unbound_listed_rooms_owned_by(principal_id)
             .await
             .map_err(|_| OwnerHandoverFailure::PERSISTENCE)?
             .iter()

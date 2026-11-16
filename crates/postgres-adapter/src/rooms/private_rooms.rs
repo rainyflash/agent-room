@@ -29,6 +29,7 @@ use crate::{
 
 use super::{
     decode::{CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance},
+    repository_bindings::unbind_repository,
     role_changes::insert_role_changes,
     sub_room_follow::{follow_saved_parent, members_before_save},
 };
@@ -435,6 +436,10 @@ async fn write_room_rows(
     .map_err(|error| map_sqlx_error(operation, &error))?;
     if updated_catalog.is_none() {
         return Err(corrupt_data(operation));
+    }
+    if room.status() == PrivateRoomLifecycleStatus::Archived {
+        // 归档、关掉的房间解绑仓库；恢复以后不绑回去，要绑重新认领。
+        unbind_repository(transaction, room.catalog_id(), operation).await?;
     }
 
     let instance_state = lifecycle_instance_state(room.status());

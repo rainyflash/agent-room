@@ -2,7 +2,8 @@
 //! 时间、生成分享码；每个账户最多 1 间公开房间；不加密的房间改回私密时先打开加密、作废在等的申请；
 //! 平台拿掉了照样能看能改，回答里带着原因和时间；房主能换分享码，撞上别的房间就再换。
 //! 子房间跟着它（`specs/redesign/sub-rooms.md` 第 2d-5 步）：改回私密时没加密的一起打开加密，公开时
-//! 没有门的写下这一刻。
+//! 没有门的写下这一刻。绑着仓库的房间不能换分享码、不占名额，改回私密就解绑
+//! （`specs/redesign/project-rooms.md`）。
 
 use std::sync::{Arc, Mutex};
 
@@ -172,6 +173,58 @@ async fn 换分享码只有房主_从没公开过的没有码可换() {
         1,
         "只存过公开那一次"
     );
+}
+
+#[tokio::test]
+async fn 绑着仓库的房间不能换分享码_不占名额_改回私密就解绑() {
+    let fixture = Fixture::new(true);
+    let listed = fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Open)))
+        .await
+        .unwrap();
+    let code = listed.share_code.clone().unwrap();
+    *fixture.listings.bound.lock().unwrap() = true;
+
+    assert_eq!(
+        fixture
+            .service
+            .change_share_code(change(owner()))
+            .await
+            .unwrap_err()
+            .kind(),
+        ListingFailureKind::RepositoryBound
+    );
+    assert_eq!(*fixture.listings.attempts.lock().unwrap(), 1, "没去存");
+    // 名下另有一间不绑仓库的公开房间：绑着仓库的这间照常改设置。
+    *fixture.listings.owner_listed_elsewhere.lock().unwrap() = true;
+    fixture
+        .service
+        .update(update(owner(), settings(true, RoomJoinMode::Request)))
+        .await
+        .expect("绑着仓库的不占名额");
+
+    fixture
+        .service
+        .update(update(owner(), settings(false, RoomJoinMode::Request)))
+        .await
+        .expect("改回私密");
+    assert!(!*fixture.listings.bound.lock().unwrap(), "改回私密就解绑");
+    assert_eq!(
+        fixture
+            .service
+            .update(update(owner(), settings(true, RoomJoinMode::Request)))
+            .await
+            .expect_err("解绑以后算不绑仓库的那一间")
+            .kind(),
+        ListingFailureKind::LimitReached
+    );
+    let changed = fixture
+        .service
+        .change_share_code(change(owner()))
+        .await
+        .expect("解绑以后能换");
+    assert_ne!(changed.share_code, Some(code));
 }
 
 fn change(actor: PrincipalId) -> ChangeShareCode {
@@ -870,6 +923,8 @@ struct MemoryListings {
     owner_listed_elsewhere: Mutex<bool>,
     /// 存的时候事务里才发现超了限额。
     limit_on_save: Mutex<bool>,
+    /// 这间房绑着仓库（`specs/redesign/project-rooms.md`）。
+    bound: Mutex<bool>,
     /// 接下来这么多次存都说分享码被占了。
     taken_codes: Mutex<u32>,
     attempts: Mutex<u32>,
@@ -889,7 +944,7 @@ impl PrivateRoomListingStore for MemoryListings {
         Box::pin(async move { Ok(record) })
     }
 
-    fn listed_rooms_owned_by(
+    fn unbound_listed_rooms_owned_by(
         &self,
         _owner: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
@@ -897,16 +952,26 @@ impl PrivateRoomListingStore for MemoryListings {
         if *self.owner_listed_elsewhere.lock().unwrap() {
             rooms.push(RoomCatalogId::from_uuid(Uuid::from_u128(11)));
         }
-        if self
-            .record
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|record| record.settings.listed())
+        let bound = *self.bound.lock().unwrap();
+        if !bound
+            && self
+                .record
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|record| record.settings.listed())
         {
             rooms.push(catalog_id());
         }
         Box::pin(async move { Ok(rooms) })
+    }
+
+    fn repository_bound(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let bound = *self.bound.lock().unwrap();
+        Box::pin(async move { Ok(bound) })
     }
 
     fn save_listing<'a>(
@@ -919,14 +984,25 @@ impl PrivateRoomListingStore for MemoryListings {
         let outcome = {
             let mut stored = self.record.lock().unwrap();
             let mut taken = self.taken_codes.lock().unwrap();
-            if stored.as_ref().map(|stored| stored.version) != expected {
+            let mut bound = self.bound.lock().unwrap();
+            // 和库里一样：绑着仓库的不换码、不占名额，改回私密就解绑。
+            let changes_bound_code = *bound
+                && stored
+                    .as_ref()
+                    .is_some_and(|stored| stored.share_code != record.share_code);
+            let over_limit = *self.limit_on_save.lock().unwrap()
+                || (*self.owner_listed_elsewhere.lock().unwrap() && !*bound);
+            if stored.as_ref().map(|stored| stored.version) != expected || changes_bound_code {
                 PrivateRoomListingSaveOutcome::Stale
-            } else if *self.limit_on_save.lock().unwrap() && record.settings.listed() {
+            } else if over_limit && record.settings.listed() {
                 PrivateRoomListingSaveOutcome::OwnerLimitReached
             } else if *taken > 0 {
                 *taken -= 1;
                 PrivateRoomListingSaveOutcome::ShareCodeTaken
             } else {
+                if !record.settings.listed() {
+                    *bound = false;
+                }
                 *stored = Some(record.clone());
                 if let Some(sub_room) = self.appears_after_save.lock().unwrap().take() {
                     self.sub_rooms.lock().unwrap().push(sub_room);

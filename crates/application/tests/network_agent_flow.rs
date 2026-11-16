@@ -1353,7 +1353,7 @@ impl PrivateRoomListingStore for FakeListings {
         Box::pin(async move { Ok(found) })
     }
 
-    fn listed_rooms_owned_by(
+    fn unbound_listed_rooms_owned_by(
         &self,
         _owner: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
