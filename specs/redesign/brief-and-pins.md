@@ -134,3 +134,10 @@
   - 设置里须知那一节写上次谁、什么时候改的，说以前的版本在对话里那几行。
   - 看过哪一版记进个人工作区（`use-brief-seen.ts`）：索引多了 `acknowledgedAt`（`acknowledged` 那个集合照旧，收件箱不用改）；这个浏览器以前记着的，打开这间房时搬进去、搬成了就删；写不进工作区时先记在浏览器里。工作区还在从服务器读时先不亮点，免得换了设备的人看到点亮一下又灭。
   - 隐私说明页在这一步就改了（原定副本和置顶那两步）：“房间公告”改叫“房间须知”；“你的账户”补一句读到哪、免打扰、看过哪一版须知这类设置跟着账户存在聊天服务器上，运营服务器的人读得到（读到哪、免打扰以前就在那里，页面上一直没写）。依据那份文档里网络 Agent 存着交给它的那一版的说法也在这一步改正了。
+- 2026-11-16 4N-4a 控制面（#893）：
+  - `PUT /private-rooms/{c}/pins`，带 `{ "eventId", "pinned" }`，回整份列表 `{ "pinned": [{ "eventId", "pinnedBy", "pinnedAtUnixMs" }] }`，新的在最前面。错误码 `room_pins.*`：满了是 409 `room_pins.full`，那一句不是这间房里的消息是 400 `room_pins.not_a_message`，归档了是 409 `room_pins.conflict`。
+  - 写 Matrix 标准的 `m.room.pinned_events`，我们的字段 `io.github.rainyflash.agentroom.pins` 记每一句谁、什么时候置顶的（`entries`），还有最近一次改了什么（`updatedBy`、`updatedAt`、`change: { kind: pinned | unpinned, eventId }`）：对话里“谁置顶了一句”那一行照它写，不用和上一版比。
+  - 置顶以前以应用服务读那一句：不在这间房里、是状态事件、删了的都不收；外面的类型只认 `m.room.encrypted`、`m.room.message` 和我们的 `message.preview`（v1、v2），改过的那一版（`revision`）不算。取消置顶不读那一句，删了的也能拿掉。
+  - 次数和须知合起来算（`RoomStateWriteLimit`，每人每小时 30 次），控制面里只建一份交给两个用例。同一个房间一次只改一个（`room_pins.rs` 的 `PIN_LOCKS`，和改权限一样只管一个进程）。
+  - 标准的列表里有、我们的字段里没记的那一句，说明状态不是我们写的：报错、不写回，免得把它丢掉。
+  - 隐私说明页加了“置顶”一条。
