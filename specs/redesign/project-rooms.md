@@ -504,6 +504,16 @@
     - 15 分钟里最多核对 15 次（第一次马上）；到时间还没认上就回原来的认领，说再跑一次接着等。
     - `agents.md`、`agents.txt` 那一句照“分步”放在 3P-6a，这一步没改。
   - 测试：`agent-client` 认 `origin` 的写法、每分钟核对、太快等下一分钟、认领被后台认上后再认领、作废换了码、别的拒绝（暂停时间跑）；命令行认仓库、`AGENTS.md` 新建、加在末尾（换行、空行）、已经有链接、再跑一次接着等同一个认领而且只写一行、`--room` 换房间号、不在 git 仓库里、控制面拒绝和 Bridge 太旧；命令进程里 `--name` 不带 `--wait`、坏的 `--repo` 在碰 Bridge 之前就报错，`guide` 里有那一句。命令行的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。
+- 2026-11-16 3P-4c（#907，本机 MCP `agent_room_claim_repository`）：
+  - 参数 `repo`、`room`、`wait`，和命令行一样。工具不碰文件：认领（`wait` 时接着每分钟核对一次、最多 15 分钟），回 `repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`、`next`，在等的另带 `claimId`、`lastCheck`，认上了的带 `catalogId`。`next` 说下一步：没认上时叫 Agent 把那一行写进仓库根目录的 `AGENTS.md`（没有就建，里面已经有 Agent Room 的链接就别动、告诉人）、把徽章给人看、问人要不要提交推送，不许自己提交推送；认上了叫它用 `agent_room_join` 按 `shareUrl` 进房间。
+  - 认领、核对和等待用 `agent-client` 的 `project_rooms.rs`，和命令行同一份；`room` 照 `agent_room_list_rooms` 的名单换成房间号（和建子房间找父房间一样）。不在会话里：认领是替这台电脑的账户做的。
+  - 风险提示是“不只读、收得回来、重做不多出东西、碰外面”（`(False, False, True, True)`）：同一个人同一个仓库再认领，控制面回同一个认领。
+  - 设计里那句英文没放进服务说明：服务说明已经 1532 字节，加上就超过 1536。照设计写在工具说明的开头（`To give the repository you are working in a room, call this when the user asks, …`）。
+  - 和设计不一样、设计里没写的：
+    - `repo` 必填：MCP 服务是宿主拉起的，不知道 Agent 在哪个目录里干活，所以不替它读 `origin`，由 Agent 自己读 `git remote get-url origin` 传进来。不像 `owner/repo` 的在碰 Bridge 之前就拒绝（`bridge.ipc.repository_invalid`）。
+    - 认上以后不替 Agent 进房间，只在 `next` 里叫它用 `agent_room_join`：进房间要开会话、挑人物，交给接入那个工具做。
+    - 等的时候原来的认领作废了、再认领拿到新码时，和命令行一样停下，`next` 说要把仓库里那一行和徽章换成新的。
+  - 测试：只认领不核对、回那一行和徽章，坏的仓库名不碰 Bridge，`room` 换房间号、找不到的房间不认领，`wait` 每分钟核对一次认上了说怎么进、等满还没认上，已经绑了的不核对，控制面拒绝和旧版 Bridge 的说法（暂停时间跑）；列全部工具、风险提示和 schema 的测试，发版门禁（`EXPECTED_TOOL_ANNOTATIONS`）和 `tools/mcp_client.py` 的 schema 校验都加上了它，语言测试也查 `project_rooms.rs`。MCP 的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。
 - 2026-11-16 3P-5b（#908，补 3P-5 留下的两处，控制面和网页）：
   - 勾给房间里的每个人看：新加 `GET /rooms/{c}/repository`，谁登录了都能问，只回 `{ repository, repositoryUrl }`。只认公开着、没关、平台没拿掉、有分享码的主房间（和 `/gh/` 页认房间的规矩一样，`application` 的 `project_rooms/bindings.rs` 的 `room_repository_internal`），别的一律 `null`，不分是没有这间房、没绑还是不公开了，免得拿它探私人房间在不在。公开着的房间绑着哪个仓库本来就在 `/gh/` 上公开着，所以不查是不是房间里的人；谁什么时候在哪个文件里核对上的照旧只在房主的接口里。网页只在公开着的房间里问（`useRoomRepositoryMark`），挂在房主那一份的键下面，设置里绑上、解绑以后一起重问。
   - 在等的认领问服务器：新加 `GET /project-rooms/claims`，列自己在等的认领（库里本来就有 `claims_of`）。设置里那一组找要绑这间房的那一个（一间房同时只能有一个在等：码是这间房的，`insert_claim` 不让两个认领用同一个码），换个浏览器、换台电脑也接得上。3P-5 记在浏览器里的那一套（`rememberClaim`）去掉了：3P-5 还没发版，没有人的浏览器里存着它，不用清。

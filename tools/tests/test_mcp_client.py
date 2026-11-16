@@ -48,6 +48,13 @@ def session_tool_definitions() -> list[dict[str, object]]:
                     "category": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
                 }
                 schema["required"] = ["name"]
+            if name == "agent_room_claim_repository":
+                schema["properties"] = {
+                    "repo": {"type": "string", "minLength": 3, "maxLength": 140},
+                    "room": {"type": ["string", "null"], "minLength": 1, "maxLength": 256},
+                    "wait": {"type": "boolean", "default": False},
+                }
+                schema["required"] = ["repo"]
             definitions.append({"name": name, "inputSchema": schema})
             continue
         key = "sessionKey" if name == "agent_room_open_session" else "sessionId"
@@ -178,9 +185,9 @@ class McpSessionTests(unittest.TestCase):
 
 
 class McpSessionSchemaTests(unittest.TestCase):
-    def test_二十五个工具都有必填的会话边界(self) -> None:
+    def test_二十六个工具都有必填的会话边界(self) -> None:
         tools = session_tool_definitions()
-        self.assertEqual(len(tools), 25)
+        self.assertEqual(len(tools), 26)
         validate_session_tool_schemas(tools)
 
     def test_不带会话的工具不能接收会话标识或必填参数(self) -> None:
@@ -215,6 +222,28 @@ class McpSessionSchemaTests(unittest.TestCase):
                     del properties["category"]["maxLength"]
                 else:
                     properties["room"] = {"type": "string"}
+                with self.assertRaises(McpClientFailure):
+                    validate_session_tool_schemas(tools)
+
+    def test_认领仓库必须给有界的仓库名(self) -> None:
+        for mutation in ("optional", "unbounded", "room_unbounded", "wait_string", "extra"):
+            with self.subTest(mutation=mutation):
+                tools = session_tool_definitions()
+                schema = next(
+                    tool for tool in tools if tool["name"] == "agent_room_claim_repository"
+                )["inputSchema"]
+                properties = schema["properties"]
+                assert isinstance(properties, dict)
+                if mutation == "optional":
+                    schema["required"] = []
+                elif mutation == "unbounded":
+                    del properties["repo"]["maxLength"]
+                elif mutation == "room_unbounded":
+                    del properties["room"]["maxLength"]
+                elif mutation == "wait_string":
+                    properties["wait"] = {"type": "string"}
+                else:
+                    properties["sessionId"] = {"type": "string"}
                 with self.assertRaises(McpClientFailure):
                     validate_session_tool_schemas(tools)
 

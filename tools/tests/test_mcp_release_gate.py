@@ -23,6 +23,8 @@ class McpReleaseGateTests(unittest.TestCase):
         # 建房间、管房间的工具写在 rooms.rs，一样算进来。
         self.assertIn("agent_room_create_room", declared)
         self.assertIn("agent_room_remove_agent", declared)
+        # 给仓库一间房的工具写在 project_rooms.rs。
+        self.assertIn("agent_room_claim_repository", declared)
         gate.validate_source()
 
     def test新增rust工具但未更新风险标注时廉价门禁立即失败(self) -> None:
