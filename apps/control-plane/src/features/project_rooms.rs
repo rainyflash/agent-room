@@ -4,8 +4,13 @@
 //! - `POST /project-rooms/claims`（`{ repository, catalogId? }`）认领一个仓库，同一个人同一个仓库再来回
 //!   同一个；`GET`、`DELETE /project-rooms/claims/{claimId}`；`POST .../check` 现在核对（每个认领每分钟
 //!   一次，太快回 429 带 `Retry-After`）。
+//! - `GET /project-rooms/claims`：自己在等的认领（`{ claims: [...] }`，最早的在前），网页的设置拿它找这间房
+//!   在等的那一个。
 //! - `GET`、`DELETE /private-rooms/{c}/repository`（只有房主：绑着哪个仓库；解绑），
 //!   `POST /private-rooms/{c}/repository/check`（再核对一次）。
+//! - `GET /rooms/{c}/repository`：谁登录了都能问，房间名旁边的勾用它。只回 `{ repository, repositoryUrl }`，
+//!   没有这间房、没绑、不公开了一律 `null`：公开着的房间绑着哪个仓库本来就在 `/gh/` 上公开着，谁核对上的
+//!   只有房主那个接口给。
 //!
 //! 回答里的 `shareUrl`、`agentsLine`（`AGENTS.md` 那一行）、`badgeMarkdown`（README 徽章那一行）都照部署的
 //! 站点（`https://<裸域>`）拼好：网页、命令行都不知道裸域在哪。都是新接口，不往别的回答里加字段（网页
@@ -101,7 +106,7 @@ impl ProjectRoomHttpState {
 
 pub(crate) fn router(state: ProjectRoomHttpState) -> Router {
     Router::new()
-        .route("/project-rooms/claims", post(claim))
+        .route("/project-rooms/claims", post(claim).get(list_claims))
         .route(
             "/project-rooms/claims/{claim_id}",
             get(inspect_claim).delete(cancel_claim),
@@ -120,6 +125,7 @@ pub(crate) fn router(state: ProjectRoomHttpState) -> Router {
             "/private-rooms/{catalog_id}/repository/check",
             post(check_binding),
         )
+        .route("/rooms/{catalog_id}/repository", get(room_repository))
         .layer(DefaultBodyLimit::max(MAX_CLAIM_BODY_BYTES))
         .with_state(state)
 }
@@ -198,6 +204,29 @@ impl ClaimResponse {
                 at_unix_ms: check.at.value(),
                 result: check.result.as_str(),
             }),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaimsResponse {
+    claims: Vec<ClaimResponse>,
+}
+
+/// 谁都能看的那一份：只有仓库和它在 GitHub 上的地址。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoomRepositoryResponse {
+    repository: String,
+    repository_url: String,
+}
+
+impl RoomRepositoryResponse {
+    fn new(repository: &GithubRepository) -> Self {
+        Self {
+            repository: repository.full_name(),
+            repository_url: format!("https://github.com/{}", repository.full_name()),
         }
     }
 }
@@ -315,6 +344,24 @@ async fn claim_as(
     })
 }
 
+async fn list_claims(
+    State(state): State<ProjectRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    jar: CookieJar,
+) -> Response {
+    let actor = match session(&state, &jar, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let result = state.rooms.claims(actor).await;
+    respond(result, correlation_id, |views| ClaimsResponse {
+        claims: views
+            .iter()
+            .map(|view| ClaimResponse::new(view, &state.site_origin))
+            .collect(),
+    })
+}
+
 async fn inspect_claim(
     State(state): State<ProjectRoomHttpState>,
     Extension(correlation_id): Extension<CorrelationId>,
@@ -428,6 +475,28 @@ async fn inspect_binding(
         .await;
     respond(result, correlation_id, |view| {
         view.map(|view| BindingResponse::new(view, &state.site_origin))
+    })
+}
+
+async fn room_repository(
+    State(state): State<ProjectRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(catalog): Path<String>,
+    jar: CookieJar,
+) -> Response {
+    let Some(catalog_id) = catalog_id(&catalog) else {
+        return invalid("project_room.invalid_resource", correlation_id);
+    };
+    let actor = match session(&state, &jar, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let result = state
+        .rooms
+        .room_repository(InspectRoomRepository { actor, catalog_id })
+        .await;
+    respond(result, correlation_id, |repository| {
+        repository.as_ref().map(RoomRepositoryResponse::new)
     })
 }
 

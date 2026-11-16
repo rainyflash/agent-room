@@ -6,7 +6,8 @@ import { openRoomSettings } from './support/workspace-navigation';
 
 /**
  * 房间设置“公开”一节里的“GitHub 仓库”一组和房间名旁边的勾（specs/redesign/project-rooms.md，3P-5）。
- * 夹具 `?private&listed&repository=none|pending|bound` 给出还没绑、在等核对、绑上了三种样子。
+ * 夹具 `?private&listed&repository=none|pending|bound` 给出还没绑、在等核对、绑上了三种样子；在等的认领由
+ * 夹具的 `claims()` 给（服务器上列自己在等的认领），`&asAdmin` 是房间里不是房主的人。
  */
 const roomFixture = '/e2e/fixtures/lobby-scene.html?private&listed';
 
@@ -141,6 +142,17 @@ test('没绑仓库的房间顶栏没有勾；不是房主看不到“GitHub 仓�
   await expect(page.getByRole('link', { name: /^Verified GitHub repository/u })).toHaveCount(0);
   const dialog = await openRoomSettings(page, 'Public');
   await expect(dialog).toContainText('Only the owner can change these settings.');
+  await expect(dialog.getByRole('region', { name: 'GitHub repository' })).toHaveCount(0);
+});
+
+test('不是房主也看得到勾；“GitHub 仓库”一组照旧只给房主', async ({ page }) => {
+  await page.goto(`${roomFixture}&repository=bound&asAdmin`);
+  const mark = page.getByRole('link', {
+    name: 'Verified GitHub repository rainyflash/agent-room',
+  });
+  await expect(mark).toBeVisible();
+  await expect(mark).toHaveAttribute('href', 'https://github.com/rainyflash/agent-room');
+  const dialog = await openRoomSettings(page, 'Public');
   await expect(dialog.getByRole('region', { name: 'GitHub repository' })).toHaveCount(0);
 });
 

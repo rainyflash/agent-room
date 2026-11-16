@@ -176,6 +176,54 @@ describe('ControlPlaneProjectRoomClient', () => {
     }
   });
 
+  it('自己在等的认领：读出一列，每一个都照认领的 schema 严格校验', async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ claims: [PENDING] }))
+      .mockResolvedValueOnce(Response.json({ claims: [] }))
+      .mockResolvedValueOnce(Response.json({ claims: [{ ...PENDING, extra: 1 }] }))
+      .mockResolvedValueOnce(Response.json([PENDING]));
+
+    expect(await client(fetch).claims()).toEqual({ ok: true, value: [PENDING] });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`${BASE}/project-rooms/claims`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    expect(await client(fetch).claims()).toEqual({ ok: true, value: [] });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await client(fetch).claims();
+      expect(result.ok ? null : result.error.code).toBe('private_room.invalid_response');
+    }
+  });
+
+  it('房间名旁边的勾：只有仓库和 github.com 的地址，没绑回 null', async () => {
+    const mark = {
+      repository: 'rainyflash/agent-room',
+      repositoryUrl: 'https://github.com/rainyflash/agent-room',
+    };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json(mark))
+      .mockResolvedValueOnce(Response.json(null));
+
+    expect(await client(fetch).roomRepository(CATALOG)).toEqual({ ok: true, value: mark });
+    expect(fetch).toHaveBeenCalledWith(
+      new URL(`${BASE}/rooms/${CATALOG}/repository`),
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    );
+    expect(await client(fetch).roomRepository(CATALOG)).toEqual({ ok: true, value: null });
+
+    for (const body of [
+      { ...mark, repositoryUrl: 'https://evil.test/rainyflash/agent-room' },
+      { ...mark, verifiedByAccountId: OWNER },
+      { repository: 'not a repository', repositoryUrl: mark.repositoryUrl },
+    ]) {
+      const invalid = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(body));
+      const result = await client(invalid).roomRepository(CATALOG);
+      expect(result.ok ? null : result.error.code).toBe('private_room.invalid_response');
+    }
+  });
+
   it('再核对一次：读出绑定和这次的结果', async () => {
     const answer = {
       binding: BINDING,

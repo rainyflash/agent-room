@@ -33,6 +33,7 @@ use uuid::Uuid;
 use super::{ProjectRoomHttpDependencies, ProjectRoomHttpState, router};
 
 mod device;
+mod reading;
 
 const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
@@ -48,6 +49,8 @@ struct FakeProjectRooms {
     failure: Mutex<Option<ProjectRoomFailure>>,
     bound: Mutex<bool>,
     unbound_room: Mutex<bool>,
+    /// 列认领时问的是谁。
+    listed_for: Mutex<Vec<PrivateRoomActor>>,
 }
 
 impl FakeProjectRooms {
@@ -115,6 +118,25 @@ impl ProjectRoomUseCases for FakeProjectRooms {
     fn cancel_claim(&self, request: InspectClaim) -> PortFuture<'_, ProjectRoomResult<()>> {
         self.inspected.lock().unwrap().push(("cancel", request));
         self.answer(|| ())
+    }
+
+    fn claims(&self, actor: PrivateRoomActor) -> PortFuture<'_, ProjectRoomResult<Vec<ClaimView>>> {
+        self.listed_for.lock().unwrap().push(actor);
+        let views = if *self.bound.lock().unwrap() {
+            Vec::new()
+        } else {
+            vec![self.claim_view()]
+        };
+        self.answer(move || views)
+    }
+
+    fn room_repository(
+        &self,
+        request: InspectRoomRepository,
+    ) -> PortFuture<'_, ProjectRoomResult<Option<GithubRepository>>> {
+        self.rooms.lock().unwrap().push(("public", request));
+        let unbound = *self.unbound_room.lock().unwrap();
+        self.answer(move || (!unbound).then(repository))
     }
 
     fn binding(

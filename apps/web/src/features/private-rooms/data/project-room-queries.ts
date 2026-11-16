@@ -12,10 +12,17 @@ const PENDING_CLAIM_POLL_MS = 30_000;
 
 /**
  * 这间房绑着哪个仓库（只有房主问得到）。挂在房间列表的键下面：改回私密、关掉都会解绑，列表刷新时这份
- * 跟着重问。房间设置里那一组和顶栏的勾读同一份。
+ * 跟着重问。
  */
 export const roomRepositoryQueryKey = (catalogId: string) =>
   [...privateRoomListQueryKey, 'repository', catalogId] as const;
+
+/**
+ * 房间名旁边的勾读的那一份（谁登录了都问得到）。挂在房主那一份的键下面：设置里绑上、解绑以后让房主那一份
+ * 重问时，勾也跟着重问。
+ */
+export const roomRepositoryMarkQueryKey = (catalogId: string) =>
+  [...roomRepositoryQueryKey(catalogId), 'mark'] as const;
 
 export function useRoomRepository(
   gateway: ProjectRoomGateway | undefined,
@@ -31,6 +38,41 @@ export function useRoomRepository(
       networkMode: 'always',
       retry: false,
       staleTime: 30_000,
+    }),
+  );
+}
+
+/** 房间名旁边的勾：房间里的人都看得到，只在公开着的房间里问。 */
+export function useRoomRepositoryMark(
+  gateway: ProjectRoomGateway | undefined,
+  catalogId: string,
+  enabled: boolean,
+) {
+  return useQuery(
+    queryOptions({
+      enabled: enabled && gateway !== undefined,
+      queryKey: roomRepositoryMarkQueryKey(catalogId),
+      queryFn: async () =>
+        gateway === undefined ? err(unavailable) : await gateway.roomRepository(catalogId),
+      networkMode: 'always',
+      retry: false,
+      staleTime: 60_000,
+    }),
+  );
+}
+
+/** 自己在等的认领：设置里那一组拿它找这间房在等的那一个，所以每次打开都重问。 */
+export const pendingClaimsQueryKey = ['control-plane', 'project-room-claim-list'] as const;
+
+export function usePendingClaims(gateway: ProjectRoomGateway | undefined) {
+  return useQuery(
+    queryOptions({
+      enabled: gateway !== undefined,
+      queryKey: pendingClaimsQueryKey,
+      queryFn: async () => (gateway === undefined ? err(unavailable) : await gateway.claims()),
+      networkMode: 'always',
+      retry: false,
+      staleTime: 0,
     }),
   );
 }
@@ -59,46 +101,4 @@ export function useRepositoryClaim(
       },
     }),
   );
-}
-
-/**
- * 这间房在等的认领是哪一个，只记在这个浏览器里：服务器没有“这间房在等哪个认领”的接口。换了浏览器看到的是
- * “还没绑”，再填同一个仓库，服务器回的还是同一个认领（同一个人同一个仓库只有一个），不会多占名额。
- * 存不了（无痕窗口、不让存）时只在这次打开里有效。
- */
-const claimKeyPrefix = 'agent-room.project-room-claim.';
-const unsaved = new Map<string, string>();
-
-function claimKey(principalId: string, catalogId: string): string {
-  return `${claimKeyPrefix}${principalId}.${catalogId}`;
-}
-
-export function rememberedClaim(principalId: string, catalogId: string): string | null {
-  const key = claimKey(principalId, catalogId);
-  try {
-    return window.localStorage.getItem(key) ?? unsaved.get(key) ?? null;
-  } catch {
-    return unsaved.get(key) ?? null;
-  }
-}
-
-export function rememberClaim(principalId: string, catalogId: string, claimId: string): void {
-  const key = claimKey(principalId, catalogId);
-  try {
-    window.localStorage.setItem(key, claimId);
-    unsaved.delete(key);
-  } catch {
-    // 只在本次有效。
-    unsaved.set(key, claimId);
-  }
-}
-
-export function forgetClaim(principalId: string, catalogId: string): void {
-  const key = claimKey(principalId, catalogId);
-  unsaved.delete(key);
-  try {
-    window.localStorage.removeItem(key);
-  } catch {
-    // 删不掉就留着：下次问到认领没了时再删。
-  }
 }

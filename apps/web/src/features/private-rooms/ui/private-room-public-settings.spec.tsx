@@ -139,7 +139,9 @@ function projectRooms(
     checkBinding: unused,
     checkClaim: unused,
     claim: unused,
+    claims: () => Promise.resolve(ok([])),
     inspectClaim: unused,
+    roomRepository: unused,
     unbind: unused,
   };
 }

@@ -624,6 +624,80 @@ async fn 房主看_解绑_名下另有一间不绑仓库的公开房间时不让
 }
 
 #[tokio::test]
+async fn 列出自己在等的认领_别人的不在里面_认上了就没了() {
+    let fixture = Fixture::new();
+    fixture.public_room(room(1), owner(), "Room01");
+    let first = fixture.claim(owner(), "octo/hello").await;
+    let second = fixture
+        .service
+        .claim(claim(owner(), "octo/world", Some(room(1))))
+        .await
+        .unwrap();
+    fixture.claim(stranger(), "octo/other").await;
+
+    let mine = fixture
+        .service
+        .claims(PrivateRoomActor::Person(principal(owner())))
+        .await
+        .unwrap();
+    assert_eq!(mine, [first.clone(), second.clone()], "最早的在前");
+    assert_eq!(mine[1].catalog_id, Some(room(1)));
+
+    fixture
+        .reader
+        .write_line("octo/world", &second.share_code, RepositoryFile::ReadmeMd);
+    fixture.check(owner(), &second).await;
+    let mine = fixture
+        .service
+        .claims(PrivateRoomActor::Device(device(owner())))
+        .await
+        .unwrap();
+    assert_eq!(mine, [first], "认上的那个不在了");
+}
+
+#[tokio::test]
+async fn 房间绑着哪个仓库谁都能问_只认公开着的主房间() {
+    let fixture = Fixture::new();
+    fixture.public_room(room(1), owner(), "Room01");
+    fixture.bind(room(1), "octo/hello", owner());
+    fixture.public_room(room(2), owner(), "Room02");
+    let ask = |catalog_id| {
+        fixture
+            .service
+            .room_repository(inspect_room(stranger(), catalog_id))
+    };
+
+    assert_eq!(
+        ask(room(1)).await.unwrap(),
+        Some(GithubRepository::parse("octo/hello").unwrap()),
+        "不是房主也看得到"
+    );
+    assert_eq!(ask(room(2)).await.unwrap(), None, "没绑");
+    assert_eq!(ask(room(9)).await.unwrap(), None, "没有这间房也只是 None");
+
+    for change in [
+        |room: &mut ProjectRoomCandidate| room.listed = false,
+        |room: &mut ProjectRoomCandidate| room.active = false,
+        |room: &mut ProjectRoomCandidate| room.held = true,
+        |room: &mut ProjectRoomCandidate| room.share_code = None,
+    ] {
+        let saved = fixture.store.rooms.lock().unwrap()[&room(1)].clone();
+        change(
+            fixture
+                .store
+                .rooms
+                .lock()
+                .unwrap()
+                .get_mut(&room(1))
+                .unwrap(),
+        );
+        assert_eq!(ask(room(1)).await.unwrap(), None);
+        fixture.store.add_room(saved);
+    }
+    assert!(ask(room(1)).await.unwrap().is_some());
+}
+
+#[tokio::test]
 async fn 房主再核对一次_找到了记下这次_没找到照实说不解绑() {
     let fixture = Fixture::new();
     fixture.public_room(room(1), owner(), "Room01");

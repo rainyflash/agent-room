@@ -5,7 +5,6 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { rememberClaim, rememberedClaim } from '@/features/private-rooms/data/project-room-queries';
 import type {
   ProjectRoomGateway,
   RepositoryClaim,
@@ -20,6 +19,8 @@ const CATALOG = '0198b601-77a1-7bb8-83eb-a8fe68c97e46';
 const OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const FORMER_OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
 const CLAIM = '0198b601-77a1-7bb8-83eb-a8fe68c97e60';
+const OTHER_CATALOG = '0198b601-77a1-7bb8-83eb-a8fe68c97e47';
+const OTHER_CLAIM = '0198b601-77a1-7bb8-83eb-a8fe68c97e61';
 
 const BADGE =
   '[![Agent Room](https://agentroom.test/gh/rainyflash/agent-room/badge.svg)](https://agentroom.test/r/aB3xYz)';
@@ -73,11 +74,18 @@ function gateway(overrides: Partial<ProjectRoomGateway> = {}) {
     ),
     checkClaim: vi.fn(() => Promise.resolve(ok(pending))),
     claim: vi.fn(() => Promise.resolve(ok(pending))),
+    claims: vi.fn(() => Promise.resolve(ok([]))),
     inspectClaim: vi.fn(() => Promise.resolve(ok(pending))),
+    roomRepository: vi.fn(() => Promise.resolve(ok(null))),
     unbind: vi.fn(() => Promise.resolve(ok(undefined))),
     ...overrides,
   };
   return value;
+}
+
+/** 服务器上这间房有一个在等的认领。 */
+function waiting(overrides: Partial<ProjectRoomGateway> = {}) {
+  return gateway({ claims: vi.fn(() => Promise.resolve(ok([pending]))), ...overrides });
 }
 
 function renderGroup(projects: ProjectRoomGateway) {
@@ -98,7 +106,7 @@ function lineOf(label: string): HTMLElement {
 }
 
 describe('ProjectRoomRepository', () => {
-  it('还没绑：填 owner/repo 点“绑上”，给出徽章和 AGENTS.md 那一行，记下在等的认领', async () => {
+  it('还没绑：填 owner/repo 点“绑上”，给出徽章和 AGENTS.md 那一行', async () => {
     const claim = vi.fn<ProjectRoomGateway['claim']>(() => Promise.resolve(ok(pending)));
     renderGroup(gateway({ claim }));
 
@@ -119,7 +127,45 @@ describe('ProjectRoomRepository', () => {
       screen.getByText('It checks by itself after you push, or you can check now.'),
     ).toBeVisible();
     expect(screen.getByText('Not checked yet.')).toBeVisible();
-    expect(rememberedClaim(OWNER, CATALOG)).toBe(CLAIM);
+  });
+
+  it('在等的认领问服务器：换个浏览器也接得上，别的房间的不算', async () => {
+    const claims = vi.fn<ProjectRoomGateway['claims']>(() =>
+      Promise.resolve(
+        ok([{ ...pending, catalogId: OTHER_CATALOG, claimId: OTHER_CLAIM }, pending]),
+      ),
+    );
+    const inspectClaim = vi.fn<ProjectRoomGateway['inspectClaim']>(() =>
+      Promise.resolve(ok(pending)),
+    );
+    renderGroup(gateway({ claims, inspectClaim }));
+
+    expect(await screen.findByText('Waiting for rainyflash/agent-room')).toBeVisible();
+    expect(inspectClaim).toHaveBeenCalledWith(CLAIM);
+    expect(inspectClaim).not.toHaveBeenCalledWith(OTHER_CLAIM);
+    cleanup();
+
+    renderGroup(
+      gateway({
+        claims: vi.fn(() =>
+          Promise.resolve(ok([{ ...pending, catalogId: OTHER_CATALOG, claimId: OTHER_CLAIM }])),
+        ),
+      }),
+    );
+    expect(await screen.findByRole('textbox', { name: 'Repository' })).toBeVisible();
+  });
+
+  it('问不到在等的认领：说一句，能重试', async () => {
+    const claims = vi
+      .fn<ProjectRoomGateway['claims']>()
+      .mockResolvedValueOnce(err({ code: 'network_error', retryable: true }))
+      .mockResolvedValue(ok([]));
+    renderGroup(gateway({ claims }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByRole('textbox', { name: 'Repository' })).toBeVisible();
+    expect(claims).toHaveBeenCalledTimes(2);
   });
 
   it('填得不像 owner/repo：就地说怎么写，不发请求', async () => {
@@ -140,8 +186,7 @@ describe('ProjectRoomRepository', () => {
   it('两行各有复制按钮，复制的是原文', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
-    rememberClaim(OWNER, CATALOG, CLAIM);
-    renderGroup(gateway());
+    renderGroup(waiting());
 
     await screen.findByText('Waiting for rainyflash/agent-room');
     fireEvent.click(within(lineOf('README badge')).getByRole('button', { name: 'Copy' }));
@@ -156,8 +201,7 @@ describe('ProjectRoomRepository', () => {
   });
 
   it('在等：写着上次核对的结果；“现在核对”太快时按 Retry-After 灰着按钮、数秒', async () => {
-    rememberClaim(OWNER, CATALOG, CLAIM);
-    const projects = gateway({
+    const projects = waiting({
       checkClaim: vi.fn(() =>
         Promise.resolve(
           err({ code: 'project_room.check_too_soon', retryable: true, retryAfterSeconds: 3 }),
@@ -196,9 +240,8 @@ describe('ProjectRoomRepository', () => {
   });
 
   it('“现在核对”认上了：忘掉认领，换成绑上了的样子', async () => {
-    rememberClaim(OWNER, CATALOG, CLAIM);
     let binding: RoomRepositoryBinding | null = null;
-    const projects = gateway({
+    const projects = waiting({
       binding: vi.fn(() => Promise.resolve(ok(binding))),
       checkClaim: vi.fn(() => {
         binding = bound;
@@ -216,27 +259,23 @@ describe('ProjectRoomRepository', () => {
         name: 'Open rainyflash/agent-room on GitHub (opens in a new tab)',
       }),
     ).toBeVisible();
-    expect(rememberedClaim(OWNER, CATALOG)).toBeNull();
   });
 
   it('“不绑了”：撤回认领，回到输入框', async () => {
-    rememberClaim(OWNER, CATALOG, CLAIM);
     const cancelClaim = vi.fn<ProjectRoomGateway['cancelClaim']>(() =>
       Promise.resolve(ok(undefined)),
     );
-    renderGroup(gateway({ cancelClaim }));
+    renderGroup(waiting({ cancelClaim }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Stop linking' }));
 
     expect(await screen.findByRole('textbox', { name: 'Repository' })).toBeVisible();
     expect(cancelClaim).toHaveBeenCalledWith(CLAIM);
-    expect(rememberedClaim(OWNER, CATALOG)).toBeNull();
   });
 
-  it('记着的认领在服务器上没了：回到输入框，说一句为什么', async () => {
-    rememberClaim(OWNER, CATALOG, CLAIM);
+  it('在等的认领刚好没了：回到输入框，说一句为什么', async () => {
     renderGroup(
-      gateway({
+      waiting({
         inspectClaim: vi.fn(() =>
           Promise.resolve(err({ code: 'project_room.not_found', retryable: false })),
         ),
@@ -245,7 +284,6 @@ describe('ProjectRoomRepository', () => {
 
     expect(await screen.findByText(/This link request is gone/u)).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Repository' })).toBeVisible();
-    expect(rememberedClaim(OWNER, CATALOG)).toBeNull();
   });
 
   it('认领被拒：按错误码说人话，错误码收进详情', async () => {
