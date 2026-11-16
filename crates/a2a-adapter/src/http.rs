@@ -266,7 +266,8 @@ fn validate_resolved_addresses(addresses: &[SocketAddr]) -> NetworkTargetResult<
     Ok(unique.into_iter().collect())
 }
 
-fn is_public_ip(address: IpAddr) -> bool {
+/// 公网地址才连：内网、回环、链路本地、文档和保留的网段都不连。项目房间读 GitHub 的客户端也用它。
+pub fn is_public_ip(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(address) => is_public_ipv4(address),
         IpAddr::V6(address) => is_public_ipv6(address),

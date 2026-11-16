@@ -22,6 +22,7 @@ pub mod network_agents;
 pub mod persistence;
 pub mod ports;
 pub mod private_rooms;
+pub mod project_rooms;
 pub mod public_lobby_entry;
 pub mod public_room_activity;
 pub mod public_room_directory;

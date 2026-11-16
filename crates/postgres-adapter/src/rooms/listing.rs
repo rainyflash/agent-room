@@ -5,8 +5,9 @@
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
-        MatrixRoomId, PortFuture, PrivateRoomListingRecord, PrivateRoomListingSaveOutcome,
-        PrivateRoomListingStore, PrivateRoomSnapshot, RoomRoleChange, SubRoomPrivacy,
+        BindRepository, BindRepositoryOutcome, MatrixRoomId, PortFuture, PrivateRoomListingRecord,
+        PrivateRoomListingSaveOutcome, PrivateRoomListingStore, PrivateRoomSnapshot,
+        ProjectRoomSaveOutcome, RoomRoleChange, SubRoomPrivacy,
     },
 };
 use agent_room_domain::{
@@ -28,7 +29,7 @@ use super::{
     decode::corrupt_data,
     private_room_agents::permissions,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
-    repository_bindings::{repository_bound, unbind_repository},
+    repository_bindings::{repository_bound, unbind_repository, write_binding},
     role_changes::insert_role_changes,
 };
 
@@ -209,6 +210,18 @@ impl PrivateRoomListingStore for PostgresRepositories {
         })
     }
 
+    fn create_project_room<'a>(
+        &'a self,
+        snapshot: &'a PrivateRoomSnapshot,
+        listing: &'a PrivateRoomListingRecord,
+        binding: &'a BindRepository,
+        created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<ProjectRoomSaveOutcome>> {
+        Box::pin(create_project_room(
+            self, snapshot, listing, binding, created_at,
+        ))
+    }
+
     fn save_transferred_room<'a>(
         &'a self,
         room: &'a PrivateRoom,
@@ -364,7 +377,7 @@ fn decode_sub_room_privacy(
 }
 
 /// 房主名下还在使用中、正公开着、没绑仓库的房间：占名额的那些。
-const UNBOUND_LISTED_ROOMS_OF_OWNER: &str = r"
+pub(super) const UNBOUND_LISTED_ROOMS_OF_OWNER: &str = r"
     SELECT listing.catalog_entry_id
       FROM agent_room.private_room_listing AS listing
       JOIN agent_room.room_catalog_entry AS catalog
@@ -376,6 +389,73 @@ const UNBOUND_LISTED_ROOMS_OF_OWNER: &str = r"
            SELECT 1 FROM agent_room.room_repository_binding AS binding
             WHERE binding.catalog_entry_id = listing.catalog_entry_id
        )";
+
+/// 认上仓库以后建的项目房间（3P-2b）：认领还在才建；房间、公开设置、绑定（原来绑着别的房间的挪过来）、
+/// 删认领一个事务。绑着仓库的公开房间不占名额，不锁房主、不数他名下的公开房间。
+async fn create_project_room(
+    repositories: &PostgresRepositories,
+    snapshot: &PrivateRoomSnapshot,
+    listing: &PrivateRoomListingRecord,
+    binding: &BindRepository,
+    created_at: UtcMillis,
+) -> RepositoryResult<ProjectRoomSaveOutcome> {
+    let operation = "private_room.listing.create_project_room";
+    ensure_creatable(snapshot, operation)?;
+    if listing.catalog_id != snapshot.catalog().id()
+        || binding.catalog_id != listing.catalog_id
+        || listing.share_code != binding.share_code
+        || !listing.settings.listed()
+    {
+        return Err(RepositoryError::new(
+            operation,
+            RepositoryErrorKind::Constraint,
+        ));
+    }
+    let mut transaction = repositories
+        .pool()
+        .begin()
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
+    let claim_present: Option<i32> =
+        sqlx::query_scalar("SELECT 1 FROM agent_room.repository_claim WHERE id = $1 FOR UPDATE")
+            .bind(binding.claim_id.as_uuid())
+            .fetch_optional(&mut *transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+    if claim_present.is_none() {
+        return Ok(ProjectRoomSaveOutcome::ClaimGone);
+    }
+    // 项目房间在 Matrix 上没开加密。
+    match create_private_room(&mut transaction, snapshot, created_at, false, operation).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == RepositoryErrorKind::Conflict => {
+            return Ok(ProjectRoomSaveOutcome::Stale);
+        }
+        Err(error) => return Err(error),
+    }
+    match insert_listing(&mut transaction, listing, operation).await? {
+        PrivateRoomListingSaveOutcome::Saved => {}
+        PrivateRoomListingSaveOutcome::ShareCodeTaken => {
+            return Ok(ProjectRoomSaveOutcome::ShareCodeTaken);
+        }
+        PrivateRoomListingSaveOutcome::OwnerLimitReached | PrivateRoomListingSaveOutcome::Stale => {
+            return Ok(ProjectRoomSaveOutcome::Stale);
+        }
+    }
+    let outcome = match write_binding(&mut transaction, binding, operation).await? {
+        BindRepositoryOutcome::Bound => ProjectRoomSaveOutcome::Saved,
+        BindRepositoryOutcome::ClaimGone => ProjectRoomSaveOutcome::ClaimGone,
+        BindRepositoryOutcome::RepositoryTaken => ProjectRoomSaveOutcome::RepositoryTaken,
+        BindRepositoryOutcome::RoomNotEligible => ProjectRoomSaveOutcome::Stale,
+    };
+    if outcome == ProjectRoomSaveOutcome::Saved {
+        transaction
+            .commit()
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+    }
+    Ok(outcome)
+}
 
 /// 锁住房主那一行，同一个人同时公开两间时一个一个来，再看这一间公开着占不占名额：绑着仓库的不占；
 /// 不绑的，数他名下别的不绑仓库的公开房间。
@@ -440,7 +520,7 @@ async fn still_owned_by(
     Ok(current.flatten() == Some(owner.as_uuid()))
 }
 
-async fn insert_listing(
+pub(super) async fn insert_listing(
     transaction: &mut Transaction<'_, Postgres>,
     record: &PrivateRoomListingRecord,
     operation: &'static str,

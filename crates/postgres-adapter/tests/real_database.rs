@@ -287,6 +287,8 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
         exported.data["agentModerationReversalNotes"],
         serde_json::json!([])
     );
+    assert_eq!(exported.data["repositoryClaims"], serde_json::json!([]));
+    assert_eq!(exported.data["repositoryBindings"], serde_json::json!([]));
 }
 
 #[tokio::test]

@@ -41,6 +41,7 @@ pub use listing::{
     ListingView, PlatformHoldNotice, PrivateRoomListingDependencies, PrivateRoomListingService,
     PrivateRoomListingUseCases, UpdateListing,
 };
+pub(crate) use listing::{SHARE_CODE_ATTEMPTS, random_share_code};
 pub use models::{
     AgentSubRoomCreated, AnswerSubRoomJoinRequest, ArchivePrivateRoom, ArchiveSubRoom,
     ChangePrivateRoomPermissions, ChangeSubRoomManager, ChangeSubRoomPolicy, CreateAgentSubRoom,

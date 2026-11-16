@@ -7,6 +7,7 @@ mod wire;
 pub use http::{
     DnsResolver, HttpsDocumentClient, JsonDocument, NetworkTargetFailure, NetworkTargetFailureKind,
     NetworkTargetResult, PinnedHttpsClient, PinnedHttpsClientConfiguration, SystemDnsResolver,
+    is_public_ip,
 };
 pub use normalize::{
     AgentCardNormalizationFailure, AgentCardNormalizationFailureKind, AgentCardNormalizer,

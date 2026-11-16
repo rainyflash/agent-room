@@ -2,8 +2,8 @@ use agent_room_domain::{
     ids::{
         AdapterBindingId, AgentCardSnapshotId, AgentId, AgentInstanceId, AutomationGrantId,
         ContentId, DeviceAccessTokenId, DeviceId, DeviceRefreshTokenId, DeviceTokenFamilyId,
-        HandoffId, LoginAttemptId, PrincipalId, RoomCatalogId, RoomInstanceId, RoomReservationId,
-        WebSessionId,
+        HandoffId, LoginAttemptId, PrincipalId, RepositoryClaimId, RoomCatalogId, RoomInstanceId,
+        RoomReservationId, WebSessionId,
     },
     time::UtcMillis,
 };
@@ -30,4 +30,9 @@ pub trait IdentifierFactory: Send + Sync {
     fn content_id(&self) -> ContentId;
     fn handoff_id(&self) -> HandoffId;
     fn automation_grant_id(&self) -> AutomationGrantId;
+
+    /// 仓库认领的 ID（`specs/redesign/project-rooms.md`）。和房间目录的 ID 一样是 UUIDv7，默认借它生成。
+    fn repository_claim_id(&self) -> RepositoryClaimId {
+        RepositoryClaimId::from_uuid(self.room_catalog_id().as_uuid())
+    }
 }

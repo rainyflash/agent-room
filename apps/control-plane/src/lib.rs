@@ -8,12 +8,14 @@ mod content_runtime;
 mod correlation;
 mod error;
 mod features;
+mod github_reader;
 mod join_request_cleanup;
 mod moderation_expiry;
 mod network_agent_cleanup;
 mod network_gateway;
 mod observability;
 mod operational_metrics;
+mod project_room_checks;
 mod public_room_activity;
 mod public_watch;
 mod reminders;
@@ -83,6 +85,7 @@ use agent_room_application::{
         PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
         RoomModerationGrantDependencies, RoomModerationGrantService, RoomStateWriteLimit,
     },
+    project_rooms::{ProjectRoomDependencies, ProjectRoomService},
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
@@ -173,6 +176,8 @@ struct IdentityRuntime {
     sub_room_sync: sub_room_sync::SubRoomSyncWorker,
     /// 30 天没人说话的子房间每小时一轮自动归档。
     sub_room_auto_archive: sub_room_auto_archive::SubRoomAutoArchiveWorker,
+    /// 项目房间的认领每分钟一轮：作废过期的，核对该核对的。
+    project_room_checks: project_room_checks::ProjectRoomCheckWorker,
     /// 每小时算一轮该提醒什么；现在是演练，只记日志和指标。
     reminder_dry_run: reminders::ReminderDryRunWorker,
     /// 只在网络 Agent 总开关打开时运行。
@@ -319,6 +324,7 @@ pub async fn run() -> Result<(), StartupError> {
         public_room_activity,
         sub_room_sync,
         sub_room_auto_archive,
+        project_room_checks,
         reminder_dry_run,
         network_agent_cleanup,
     } = identity_runtime;
@@ -352,6 +358,7 @@ pub async fn run() -> Result<(), StartupError> {
     public_room_activity.shutdown().await;
     sub_room_sync.shutdown().await;
     sub_room_auto_archive.shutdown().await;
+    project_room_checks.shutdown().await;
     reminder_dry_run.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
@@ -450,8 +457,6 @@ async fn build_identity_router(
         &system_runtime,
         &secrets,
     )?;
-    let state = build_authentication_http_state(&service, &system_runtime, authentication_config)?;
-    let telemetry_state = build_frontend_telemetry_state(config, service.clone(), metrics.clone());
     let DeviceRuntime {
         devices,
         state: device_state,
@@ -492,7 +497,6 @@ async fn build_identity_router(
         &system_runtime,
     )?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics.clone())?;
-    let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let public_rooms =
         build_public_room_shared(config, &repositories, &matrix_identities, &system_runtime);
     let agent_dependencies = AgentFeatureDependencies {
@@ -509,13 +513,15 @@ async fn build_identity_router(
     };
     let (network_agents, agent_features) =
         build_agent_routes(config, request_timeout, &agent_dependencies)?;
+    let (project_routes, project_room_checks) = build_project_rooms(config, &agent_dependencies)?;
+    let base_routes = content_routes.merge(project_routes);
     let routes = compose_identity_routes(
-        state,
-        telemetry_state,
-        account_state,
+        build_authentication_http_state(&service, &system_runtime, authentication_config)?,
+        build_frontend_telemetry_state(config, service.clone(), metrics.clone()),
+        build_account_http_state(config, account_lifecycle, service.clone()),
         device_state,
         agent_features,
-        content_routes.merge(personal_routes(config, &agent_dependencies)?),
+        personal_routes(config, &agent_dependencies, base_routes)?,
     );
     Ok(IdentityRuntime {
         routes,
@@ -532,6 +538,7 @@ async fn build_identity_router(
         public_room_activity: start_public_room_activity(&agent_dependencies),
         sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
         sub_room_auto_archive: start_sub_room_auto_archive(config, &agent_dependencies)?,
+        project_room_checks,
         reminder_dry_run: start_reminder_dry_run(&agent_dependencies, metrics),
         network_agent_cleanup: network_agents.cleanup,
     })
@@ -565,37 +572,40 @@ fn public_watch_state(
     })
 }
 
+/// 个人的那几样接口，合到 `base` 上。
 fn personal_routes(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
+    base: Router,
 ) -> Result<Router, StartupError> {
-    Ok(features::inbox::router(features::inbox::InboxHttpState {
-        repository: dependencies.repositories.clone(),
-        authentication: dependencies.authentication.clone(),
-    })
-    .merge(features::network_agent_lookup::router(
-        features::network_agent_lookup::NetworkAgentLookupHttpState {
-            lookup: dependencies.repositories.clone(),
-            authentication: dependencies.authentication.clone(),
-        },
-    ))
-    .merge(features::reception::router(
-        features::reception::ReceptionHttpState {
+    Ok(base
+        .merge(features::inbox::router(features::inbox::InboxHttpState {
             repository: dependencies.repositories.clone(),
             authentication: dependencies.authentication.clone(),
-            devices: dependencies.devices.clone(),
-            secrets: dependencies.secrets.clone(),
-            trusted_origins: features::authentication::TrustedOrigins::new(
-                &config.authentication.frontend_origin,
-                &config.authentication.desktop_origins,
-            ),
-        },
-    ))
-    .merge(account_encryption_routes(config, dependencies))
-    .merge(desktop_matrix_session_routes(config, dependencies))
-    .merge(computer_grant_routes(config, dependencies))
-    .merge(sign_out_elsewhere_routes(config, dependencies)?)
-    .merge(reminder_routes(config, dependencies)?))
+        }))
+        .merge(features::network_agent_lookup::router(
+            features::network_agent_lookup::NetworkAgentLookupHttpState {
+                lookup: dependencies.repositories.clone(),
+                authentication: dependencies.authentication.clone(),
+            },
+        ))
+        .merge(features::reception::router(
+            features::reception::ReceptionHttpState {
+                repository: dependencies.repositories.clone(),
+                authentication: dependencies.authentication.clone(),
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+                trusted_origins: features::authentication::TrustedOrigins::new(
+                    &config.authentication.frontend_origin,
+                    &config.authentication.desktop_origins,
+                ),
+            },
+        ))
+        .merge(account_encryption_routes(config, dependencies))
+        .merge(desktop_matrix_session_routes(config, dependencies))
+        .merge(computer_grant_routes(config, dependencies))
+        .merge(sign_out_elsewhere_routes(config, dependencies)?)
+        .merge(reminder_routes(config, dependencies)?))
 }
 
 /// 提醒（`specs/redesign/reminders.md`）：邮件提醒的开关和退订页。没配退订令牌的钥匙时退订链接
@@ -828,6 +838,45 @@ fn start_sub_room_auto_archive(
                 clock: dependencies.system_runtime.clone(),
             },
         )),
+    ))
+}
+
+/// 项目房间（`specs/redesign/project-rooms.md`）：认领、核对、绑定仓库的接口，和后台核对认领的定时任务，
+/// 两边用同一个服务。读 GitHub 只连 raw.githubusercontent.com，解析出的地址先查过不是内网。
+fn build_project_rooms(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<(Router, project_room_checks::ProjectRoomCheckWorker), StartupError> {
+    let site_origin: Arc<str> =
+        features::share_page::site_origin(&config.authentication.matrix_server_name).into();
+    let reader = github_reader::GithubLinkReader::new(
+        github_reader::RawEndpoint::github(),
+        Arc::new(github_reader::PinnedRawTransport::new(
+            github_reader::RawEndpoint::github(),
+            Arc::new(SystemDnsResolver),
+        )),
+        site_origin,
+        dependencies.system_runtime.clone(),
+    );
+    let service = Arc::new(ProjectRoomService::new(ProjectRoomDependencies {
+        store: dependencies.repositories.clone(),
+        reader: Arc::new(reader),
+        creator: build_private_room_service(config, dependencies)?,
+        secrets: dependencies.secrets.clone(),
+        identifiers: dependencies.system_runtime.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    let routes =
+        features::project_rooms::router(features::project_rooms::ProjectRoomHttpState::new(
+            service.clone(),
+            dependencies.authentication.clone(),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+            &config.authentication.matrix_server_name,
+        ));
+    Ok((
+        routes,
+        project_room_checks::ProjectRoomCheckWorker::start(service),
     ))
 }
 

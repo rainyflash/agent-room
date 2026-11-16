@@ -428,3 +428,19 @@
   - 控制面两处“每个账户只能有一间公开房间”改成“不绑仓库的公开房间每个账户只能有一间”（控制面只有中文）；网页的中英文说法留给 3P-5。
   - 设计里没写、这一步加的：删账户时解绑、删他在等的认领；库里也拦换码；删账户交房间也不占名额。“下载我的数据”还不带认领和绑定，随 3P-2b 的接口和隐私说明页一起加。3P-2b 绑上、房主解绑照转让的先后锁：先房间目录那一行，再房主那一行（`rooms/repository_bindings.rs` 开头写着）。
   - 真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_bindings.rs`，`real_database.rs` 删账户那一条）只在派发 `suite=all` 时跑。
+- 2026-11-16 3P-2b（只有控制面和隐私说明页，还没有命令行、网页和 `/gh/` 页）：
+  - 读 GitHub 的客户端在 `apps/control-plane/src/github_reader.rs`：只许 https、只连 `raw.githubusercontent.com`（主机写死，测试里换成本机的假 GitHub 只有 `#[cfg(test)]` 的构造，3P-9 再加测试配置）；连之前解析地址，内网、回环、链路本地的不连，连上以后再看一眼对端地址；不跟跳转（跳转当成仓库改过名）；每个文件最多 512 KB，读够就断开；整次 5 秒；owner、repo 照 GitHub 的规矩验过、百分号编码。只找 `<站点>/r/<码>`，后面紧跟字母或数字的不算；不存内容，日志里也没有。全站每分钟 60 次，满了排到下一分钟；GitHub 回 429、403 全体停 10 分钟。查地址用 a2a-adapter 现成的 `SystemDnsResolver` 和 `is_public_ip`（后者改成公开），`Cargo.lock` 没变。
+  - 接口（`features/project_rooms.rs`，都要网页登录，改东西的查来源）：`POST /project-rooms/claims`（`{repository, catalogId?}`）、`GET`/`DELETE /project-rooms/claims/{id}`、`POST /project-rooms/claims/{id}/check`；`GET`/`DELETE /private-rooms/{c}/repository`、`POST /private-rooms/{c}/repository/check`。回答是新的，`agentsLine`、`badgeMarkdown`、`shareUrl` 照部署的站点拼。错误码：`project_room.invalid_repository`、`invalid_request`、`forbidden`、`not_found`、`too_many_claims`、`repository_taken`、`room_not_eligible`、`conflict`、`check_too_soon`（429 带 `Retry-After`）、`dependency_unavailable`、`internal`，房间绑着别的仓库沿用 `room_listing.repository_bound`，解绑超名额沿用 `private_room.public_limit_reached`。说法是中文，网页、命令行按错误码换。
+  - 核对（`application` 的 `project_rooms.rs`、`project_rooms/checking.rs`、`bindings.rs`）：认上带房间的绑到那间房（`bind_room`），没带的替认领的人建一间（`PrivateRoomService` 的 `create_project_room`，走新建时就公开的那一套：不加密、直接进、让没有账号的网络 Agent 进，名字 `owner/repo` 截到 128 个字，分享码是认领的码），建房、公开设置、绑定、删认领在库里一个事务（`PrivateRoomListingStore::create_project_room`），不查名额。原来绑着别的房间的，一次读两个码：原来那间的码还在就一直等（结果记 `repository_taken`），不在了绑定挪过来。后台每分钟一轮（`project_room_checks.rs`），先删 7 天没认上的，再按上次核对的时间挑：头 24 小时 5 分钟一次、之后 1 小时一次，刚认领的也先等 5 分钟（多半还没推上去）。
+  - 核对的结果：`checking`、`not_in_repository`、`repository_renamed`、`file_too_large`、`github_unavailable`、`repository_taken`、`creation_failed`。
+  - 和设计不一样、设计里没写的：
+    - 没加迁移。多个控制面同时跑时，靠“开始核对”那一下的时间戳分开：一条 `UPDATE` 看上次核对够不够久、记下这一刻，第一次的结果先记成 `checking`，读完换成真的；结果只记给自己那一次。认领的人“现在核对”也靠它卡每分钟一次，`Retry-After` 由它算。
+    - 房主“再核对一次”每间房每分钟一次只记在这个进程的内存里（绑定表不记核对的时间），开几个控制面就各算各的。
+    - 仓库被别人要走时，原来那间房的对话里没写“仓库里已经没有这间房的链接”那一行：房间里的话都是签了名的 Agent 事件，控制面没有以服务器身份往对话里说一句的路，须知（`room.notice.v1`）是房主写的，不能拿来顶。要说就得另想办法（比如房间设置里照实说，3P-5 做页面时一起定）。
+    - 同一个人同一个仓库换一间房认领、同一间房换一个仓库认领，都换成新的，不多占名额（码全表不重，同一间房只能有一个认领）。仓库已经绑在他自己名下的房间上，认领直接回那间房，不另起认领。仓库绑着平台冻结、拿掉的房间时，认领当场回 409 `project_room.repository_taken`。
+    - 要绑的房间核对前变了（不公开了、关了、换了房主或分享码、被平台拿掉），认领删掉，“现在核对”回 409 `project_room.room_not_eligible`。
+    - 建房没成（聊天服务器不通、库里出错）认领留着，下一轮再建；库里那一步没成时 Matrix 上建好的房间就空在那里，和别的建房失败一样。
+    - 本机 Bridge 替这台电脑认领（设备签名的路由）留给 3P-4a，这一步只认网页登录。网络 Agent 认领一律 403。
+    - 项目房间建好还没有实况：实况是 3P-6 的事。这一步没有入口（命令行、网页都没有），生产上不会有人建出项目房间；3P-6a 定“上线以前就公开的房间默认关”时，项目房间按“建好就开”算。
+    - “下载我的数据”加了 `repositoryClaims`（他在等的认领）和 `repositoryBindings`（他核对上、还绑着的）。
+  - 测试：读取器的单元测试（跳转、512 KB、地址检查、匹配规则、每分钟的次数和停 10 分钟，另起一个本机的 TCP 服务真连一次），应用层的流程测试（`application/tests/project_room_flow.rs`，假的库、GitHub、建房），接口测试，后台任务的测试。真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_claims.rs`，`real_database.rs` 导出那一条）只在派发 `suite=all` 时跑。

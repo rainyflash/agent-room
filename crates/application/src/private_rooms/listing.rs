@@ -43,7 +43,7 @@ use crate::{
 
 /// 新生成的分享码撞上别的房间时最多再换几次。约 568 亿种里撞上一次已经很难，连撞几次多半是
 /// 随机数坏了。
-pub(super) const SHARE_CODE_ATTEMPTS: usize = 4;
+pub(crate) const SHARE_CODE_ATTEMPTS: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListingFailureKind {
@@ -559,7 +559,7 @@ impl PrivateRoomListingUseCases for PrivateRoomListingService {
 }
 
 /// 新的分享码，取安全随机数的前 16 字节。随机源不可用时是 `None`。
-pub(super) fn random_share_code(secrets: &dyn SecretFactory) -> Option<RoomShareCode> {
+pub(crate) fn random_share_code(secrets: &dyn SecretFactory) -> Option<RoomShareCode> {
     let random = secrets.generate().ok()?;
     let mut entropy = [0_u8; 16];
     entropy.copy_from_slice(&secrets.digest(random.expose()).as_bytes()[..16]);
