@@ -263,6 +263,43 @@ async fn export_account(
                 WHERE change.target_principal_id = principal.id
                    OR change.actor_principal_id = principal.id
             ), '[]'::jsonb),
+            'subRooms', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', link.catalog_entry_id,
+                    'parentRoomId', link.parent_catalog_entry_id,
+                    'access', link.access,
+                    'createdByMe', link.created_by_principal_id = principal.id,
+                    'managedByMe', EXISTS (
+                        SELECT 1
+                        FROM agent_room.private_room_sub_room_manager AS manager
+                        WHERE manager.catalog_entry_id = link.catalog_entry_id
+                          AND manager.principal_id = principal.id
+                    ),
+                    'archivedByMe', link.archived_by_principal_id IS NOT DISTINCT FROM principal.id,
+                    'createdAt', link.created_at,
+                    'archivedAt', link.archived_at,
+                    'archivedReason', link.archived_reason
+                ) ORDER BY link.created_at, link.catalog_entry_id)
+                FROM agent_room.private_room_parent AS link
+                WHERE link.created_by_principal_id = principal.id
+                   OR link.archived_by_principal_id = principal.id
+                   OR EXISTS (
+                       SELECT 1
+                       FROM agent_room.private_room_sub_room_manager AS manager
+                       WHERE manager.catalog_entry_id = link.catalog_entry_id
+                         AND manager.principal_id = principal.id
+                   )
+            ), '[]'::jsonb),
+            'subRoomCategories', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'id', category.id,
+                    'roomId', category.parent_catalog_entry_id,
+                    'name', category.name,
+                    'createdAt', category.created_at
+                ) ORDER BY category.created_at, category.id)
+                FROM agent_room.private_room_sub_room_category AS category
+                WHERE category.created_by_principal_id = principal.id
+            ), '[]'::jsonb),
             'moderationGrants', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'roomId', grant_row.catalog_entry_id,

@@ -260,7 +260,7 @@ async fn 房间目录记着加不加密_公共大厅不能记成加密的() {
     database.close().await;
 }
 
-/// 刚建好的账户导出得出来，申请和管理授权都还是空的。
+/// 刚建好的账户导出得出来，申请、管理授权和子房间都还是空的。
 async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: PrincipalId) {
     let exported = AccountDeletionRepository::export(repositories, principal_id, test_time())
         .await
@@ -269,6 +269,8 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
     assert_eq!(exported.data["principal"]["displayName"], "待删除主体");
     assert_eq!(exported.data["joinRequests"], serde_json::json!([]));
     assert_eq!(exported.data["roleChanges"], serde_json::json!([]));
+    assert_eq!(exported.data["subRooms"], serde_json::json!([]));
+    assert_eq!(exported.data["subRoomCategories"], serde_json::json!([]));
     assert_eq!(exported.data["moderationGrants"], serde_json::json!([]));
     assert_eq!(exported.data["agentModerationNotes"], serde_json::json!([]));
     assert_eq!(
