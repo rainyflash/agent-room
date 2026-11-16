@@ -230,12 +230,9 @@ async fn 每天清掉过了保留期的_实况关了或开在第一句之后的(
     // 没过保留期，可第一句在这次开实况以前（不知怎么留下的）。
     shared(&repositories, late, late_owner, "Stray001", now - 2 * DAY).await;
 
-    assert_eq!(
-        RoomExcerptStore::prune_excerpts(&repositories, time(now), 30)
-            .await
-            .expect("清得掉"),
-        3
-    );
+    // 清的是整个库：同一个库里别的测试留下的段也会一起清掉，所以只核对说删了几段就是少了几段。
+    let pruned = prune(&repositories, &database.migration, time(now)).await;
+    assert!(pruned >= 3, "{pruned}");
     assert_eq!(codes(&repositories, room).await, ["New00001"]);
     assert_eq!(codes(&repositories, short).await, ["New00002"]);
     assert!(codes(&repositories, late).await.is_empty());
@@ -246,13 +243,9 @@ async fn 每天清掉过了保留期的_实况关了或开在第一句之后的(
         .execute(&database.migration)
         .await
         .expect("删实况那一行");
-    assert_eq!(
-        RoomExcerptStore::prune_excerpts(&repositories, time(now), 30)
-            .await
-            .expect("清得掉"),
-        1
-    );
+    assert!(prune(&repositories, &database.migration, time(now)).await >= 1);
     assert!(codes(&repositories, short).await.is_empty());
+    assert_eq!(codes(&repositories, room).await, ["New00001"]);
 
     database.close().await;
 }
@@ -298,6 +291,23 @@ async fn 导出里是自己分享的_只有码_房间_几句和时间() {
     );
 
     database.close().await;
+}
+
+/// 清一次，核对回答的条数和库里少了的一样。
+async fn prune(repositories: &PostgresRepositories, pool: &PgPool, now: UtcMillis) -> u64 {
+    let count = || async {
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_room.room_excerpt")
+            .fetch_one(pool)
+            .await
+            .expect("数得出");
+        u64::try_from(rows).expect("不是负数")
+    };
+    let before = count().await;
+    let pruned = RoomExcerptStore::prune_excerpts(repositories, now, 30)
+        .await
+        .expect("清得掉");
+    assert_eq!(pruned, before - count().await, "说删了几段就是删了几段");
+    pruned
 }
 
 async fn excerpt_room(
