@@ -413,7 +413,9 @@ pub struct NetworkAgentRoomRecord {
     pub joined_at: UtcMillis,
     /// 房间名：读的时候从房间目录带出来，记下进房间时不用。
     pub name: Option<String>,
-    /// 房间目录记着已归档：只能看，谁也发不了。读的时候带出来，记下进房间时不用。
+    /// 已归档：只能看，谁也发不了。房间目录记着归档了的，或者归档了的子房间（父房间归档时子房间跟着
+    /// 归档，也在这里）。子房间归档只记在父子关系那一行，房间目录照旧是开着的。读的时候带出来，记下
+    /// 进房间时不用。
     pub archived: bool,
     /// 子房间的父房间（2h-2b）：读的时候从父子关系带出来，记下进房间时不用。
     pub parent: Option<NetworkAgentRoomParent>,

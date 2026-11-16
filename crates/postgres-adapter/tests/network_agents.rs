@@ -525,6 +525,21 @@ async fn 列房间时子房间带出上面那一间_别的不带() {
             name: "网络 Agent 私人房间".to_owned(),
         })
     );
+    assert!(!rooms[1].archived, "开着的子房间不算归档");
+
+    // 子房间归档只记在父子关系那一行，房间目录照旧是开着的：读出来也要是归档了的，往里发言时才说得清。
+    sqlx::query(
+        r"UPDATE agent_room.private_room_parent
+             SET archived_at = now(), archived_reason = 'manual'
+           WHERE catalog_entry_id = $1",
+    )
+    .bind(below.as_uuid())
+    .execute(&database.runtime)
+    .await
+    .expect("归档子房间");
+    let rooms = repositories.rooms(provisioning.id).await.expect("列房间");
+    assert!(!rooms[0].archived, "上面那一间没归档");
+    assert!(rooms[1].archived, "归档了的子房间读出来是归档了的");
     database.close().await;
 }
 
