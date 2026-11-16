@@ -73,6 +73,22 @@ describe('MatrixSdkLobbySource', () => {
     expect(named(false, 'invite')).toEqual(named(true));
   });
 
+  it('只有不加密、谁都能进的才标成公共大厅；还没读到加入规则的不算', () => {
+    const publicLobby = (encrypted: boolean, joinRule?: string) => {
+      const registry = new MatrixClientRegistry();
+      registry.replace(
+        matrixClient(matrixRoom(matrixState({}, encrypted, [SELF], joinRule))).value,
+      );
+      const read = new MatrixSdkLobbySource(registry).read('!public:agent-room.test');
+      return read.kind === 'ready' ? read.room.publicLobby : 'not ready';
+    };
+
+    expect(publicLobby(false, 'public')).toBe(true);
+    expect(publicLobby(false, 'invite')).toBeUndefined();
+    expect(publicLobby(true, 'public')).toBeUndefined();
+    expect(publicLobby(false)).toBeUndefined();
+  });
+
   it('按 Matrix 的发言门槛说这台设备上的人能不能在这里发消息', () => {
     const canSpeak = (state: RoomState, self: string | null = SELF) => {
       const registry = new MatrixClientRegistry();
