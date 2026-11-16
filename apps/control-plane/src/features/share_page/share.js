@@ -34,6 +34,37 @@
   });
 })();
 
+// 分享的一段对话：服务器按 UTC 写好时间和日期，这里换成看的人那里的。换不了就留着服务器写的。
+(() => {
+  const language = document.documentElement.lang || undefined;
+  const at = (node, name) => {
+    const value = Number(node.getAttribute(name));
+    return Number.isFinite(value) ? new Date(value) : null;
+  };
+  for (const node of document.querySelectorAll('time[data-local-time]')) {
+    const when = at(node, 'data-local-time');
+    if (when === null) continue;
+    try {
+      node.textContent = when.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      // 留着服务器写的。
+    }
+  }
+  for (const node of document.querySelectorAll('time[data-local-date]')) {
+    const when = at(node, 'data-local-date');
+    if (when === null) continue;
+    const options =
+      when.getFullYear() === new Date().getFullYear()
+        ? { month: 'short', day: 'numeric' }
+        : { year: 'numeric', month: 'short', day: 'numeric' };
+    try {
+      node.textContent = when.toLocaleDateString(language, options);
+    } catch {
+      // 留着服务器写的。
+    }
+  }
+})();
+
 // 分享页的实况：页面在前台时每 5 秒问一次 /r/<码>/live，切到后台就停。头一次问到才露出那一块；
 // 回 404（不放了）就藏起来、不再问；暂时问不到时留着上一次的。房间里的话和名字都是别人写的，
 // 一律当纯文本放（textContent），不拼 HTML。

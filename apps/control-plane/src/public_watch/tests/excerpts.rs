@@ -21,16 +21,17 @@ use super::{
 };
 use crate::public_watch::{ExcerptTimelineDependencies, ExcerptTimelineReader};
 
-/// 按页往回给：游标是“从第几条往前”，一页是游标前面最多 `limit` 条。
+/// 按页往回给：游标是“从第几条往前”，一页是游标前面最多 `limit` 条。打开分享的一段（`excerpt_pages.rs`）
+/// 也用它。
 #[derive(Default)]
-struct PagedReader {
+pub(super) struct PagedReader {
     /// 旧的在前。
-    events: Mutex<Vec<MatrixTimelineEvent>>,
-    state: Mutex<Vec<MatrixTimelineEvent>>,
-    failing: Mutex<bool>,
+    pub(super) events: Mutex<Vec<MatrixTimelineEvent>>,
+    pub(super) state: Mutex<Vec<MatrixTimelineEvent>>,
+    pub(super) failing: Mutex<bool>,
     /// 每一页要了几条。
     limits: Mutex<Vec<u16>>,
-    pages: AtomicUsize,
+    pub(super) pages: AtomicUsize,
 }
 
 impl PagedReader {

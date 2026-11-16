@@ -149,11 +149,11 @@ impl PublicRoomDirectoryUseCases for FakeRoomDirectory {
     }
 }
 
-/// 本机 Agent 是谁的：`owners` 里的在房间里，别的不回答。
+/// 本机 Agent 是谁的：`owners` 里的在房间里，别的不回答。打开分享的一段（`excerpt_pages.rs`）也用它。
 #[derive(Default)]
-struct FakePeople {
-    owners: HashMap<Uuid, &'static str>,
-    asks: Mutex<Vec<Vec<AgentId>>>,
+pub(super) struct FakePeople {
+    pub(super) owners: HashMap<Uuid, &'static str>,
+    pub(super) asks: Mutex<Vec<Vec<AgentId>>>,
 }
 
 impl RoomPeopleDirectory for FakePeople {

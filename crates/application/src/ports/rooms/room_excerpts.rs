@@ -131,3 +131,27 @@ pub trait RoomExcerptTimeline: Send + Sync {
         first_event_id: &'a MatrixEventId,
     ) -> PortFuture<'a, Result<ExcerptTimelineRead, ExcerptTimelineUnavailable>>;
 }
+
+/// 打开分享的一段时（`/r/<分享码>/s/<段码>`）要的：这间房此刻还放着实况、码对得上、第一句不早于这次开
+/// 实况的那一刻。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcerptPageRecord {
+    pub catalog_id: RoomCatalogId,
+    pub room_name: String,
+    pub matrix_room_id: MatrixRoomId,
+    pub enabled_at: UtcMillis,
+    /// 那几句的事件 ID，按时间先后。
+    pub event_ids: Vec<MatrixEventId>,
+    pub first_event_at: UtcMillis,
+}
+
+/// 按分享码和段码找一段，不登录也打得开的那一页用。
+pub trait RoomExcerptPageLookup: Send + Sync {
+    /// 房间不放实况、没有这个分享码或段码、段码是别的房间的、这一段早于这次开实况，都是空的，不分是哪
+    /// 一种。
+    fn excerpt_page<'a>(
+        &'a self,
+        share_code: &'a RoomShareCode,
+        code: &'a RoomExcerptCode,
+    ) -> PortFuture<'a, RepositoryResult<Option<ExcerptPageRecord>>>;
+}

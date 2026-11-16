@@ -1429,6 +1429,8 @@ async fn 接口按_shard_看指定的分片_写得不对或没有的说没有这
     assert_eq!(json_body(shards).await["busiest"], 2);
 }
 
+/// 打开分享的一段（3P-7a-2），共用上面的消息、这两个模块里的假读取器和假的人名录。
+mod excerpt_pages;
 /// 分享一段对话时往回读房间（3P-7a），共用上面的消息。
 mod excerpts;
 /// 分享页的实况（3P-6a-2），共用上面的假读取器和消息。
