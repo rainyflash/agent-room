@@ -98,6 +98,12 @@ export function RoomSettingsDialog({
   );
   const capabilities = useModerationCapabilities(moderation, catalogId);
   const room = list.data?.ok === true ? joinedRoom(list.data.value, catalogId, principal) : null;
+  // 子房间的父房间：“管这一间的”认谁是父房间的管理员。你在父房间里，它就在房间列表里。
+  const parentRoom =
+    subRoom === null || list.data?.ok !== true
+      ? null
+      : (list.data.value.find((entry) => entry.catalogId === subRoom.list.parent.catalogId) ??
+        null);
   const origin = usePrivateRoomOrigin(privateRooms, catalogId, room !== null);
   const serverReadable =
     room !== null && origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent;
@@ -186,6 +192,7 @@ export function RoomSettingsDialog({
                 notice={notice}
                 onClose={onClose}
                 onExitRoom={onExitRoom}
+                parentRoom={parentRoom}
                 principal={principal}
                 room={room}
                 roomName={roomName}
@@ -210,6 +217,7 @@ function RoomSettingsContent({
   notice,
   onClose,
   onExitRoom,
+  parentRoom,
   subRoom,
 }: {
   readonly section: RoomSettingsSection;
@@ -221,6 +229,7 @@ function RoomSettingsContent({
   readonly room: PrivateRoom | null;
   readonly onClose: () => void;
   readonly onExitRoom: () => void;
+  readonly parentRoom: PrivateRoom | null;
   readonly subRoom: RoomSettingsSubRoom | null;
 }) {
   const {
@@ -251,7 +260,22 @@ function RoomSettingsContent({
   switch (section) {
     case 'sub-room':
       return subRoom === null ? null : (
-        <SubRoomSettings list={subRoom.list} onArchived={onClose} room={subRoom.room} />
+        <SubRoomSettings
+          list={subRoom.list}
+          managing={
+            room === null
+              ? null
+              : {
+                  members: room,
+                  onReauthenticate: reauthenticate,
+                  parent: parentRoom,
+                  principalId: principal.principalId,
+                  recentlyAuthenticated: principal.recentlyAuthenticated,
+                }
+          }
+          onArchived={onClose}
+          room={subRoom.room}
+        />
       );
     case 'members':
       return room === null ? null : (

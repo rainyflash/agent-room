@@ -20,6 +20,7 @@ type FixtureSubRoomActions = {
   readonly revisions: readonly Record<string, unknown>[];
   readonly archived: readonly string[];
   readonly answers: readonly { readonly principalId: string; readonly decision: string }[];
+  readonly managers: readonly { readonly kind: string; readonly principalId: string }[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -447,6 +448,50 @@ test('子房间里有人在等：左栏那一行和齿轮上带点，设置最�
   await expect(waiting).toContainText('Nobody is waiting to join.');
   // 名单重问以后左栏和齿轮上的点都没了。
   await expect(gear).not.toHaveAccessibleDescription(/Requests to join/u);
+  expect(failures).toEqual([]);
+});
+
+test('子房间设置：管这一间的人里写着建的人，从里面的人里设一个管理员，再撤掉；不算最近登录过先请人重新登录', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  const grace = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(subRoom);
+  await page.getByRole('button', { name: 'Room settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Sub-room settings' });
+  const managers = dialog.getByRole('region', { name: 'People who run this one' });
+  await expect(managers.getByRole('listitem')).toHaveText([
+    /^A\s*Ada\s*You · Owner · Created it$/u,
+  ]);
+
+  await managers.getByRole('button', { name: 'Add a manager' }).click();
+  const who = managers.getByRole('combobox', { name: 'Who' });
+  await expect(who).toBeFocused();
+  await expectAccessible(page);
+  await who.selectOption({ label: 'Grace' });
+  await managers.getByRole('button', { name: 'Make manager' }).click();
+  await expect(who).toHaveCount(0);
+  const remove = managers.getByRole('button', { name: 'Stop Grace running this sub-room' });
+  await expect(remove).toBeVisible();
+  // Grace 已经在管了，没有别人能设：“设管理员”收起来。
+  await expect(managers.getByRole('button', { name: 'Add a manager' })).toHaveCount(0);
+  await remove.click();
+  await expect(managers.getByText('Grace', { exact: true })).toHaveCount(0);
+  expect((await fixtureSubRoomActions(page)).managers).toEqual([
+    { kind: 'grant', principalId: grace },
+    { kind: 'revoke', principalId: grace },
+  ]);
+
+  await page.goto(`${subRoom}&olderSession`);
+  await page.getByRole('button', { name: 'Room settings', exact: true }).click();
+  const older = page
+    .getByRole('dialog', { name: 'Sub-room settings' })
+    .getByRole('region', { name: 'People who run this one' });
+  await older.getByRole('button', { name: 'Add a manager' }).click();
+  await expect(older).toContainText('This needs a fresh sign-in.');
+  await expect(older.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+  await expect(older.getByRole('combobox', { name: 'Who' })).toHaveCount(0);
   expect(failures).toEqual([]);
 });
 

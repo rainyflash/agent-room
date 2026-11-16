@@ -52,6 +52,12 @@
   gap: 2px 8px;
 }
 
+.sub-room-waiting__who > strong {
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .sub-room-waiting__who > small {
   color: var(--ar-muted);
   font-size: 0.8125rem;

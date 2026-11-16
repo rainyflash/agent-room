@@ -1,0 +1,103 @@
+/* 子房间设置里“管这一间的”（画布第 8 张）：标题一行，右边“设管理员”；一行一个人，标注跟在名字后面，
+   按钮在右边。不像“在等的”那样垫浅底：这是名单，不是要处理的事。 */
+.sub-room-managers {
+  display: grid;
+  gap: 8px;
+}
+
+.sub-room-managers__head {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sub-room-managers__head > h3 {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.sub-room-managers__empty {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-managers__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sub-room-managers__list > li {
+  --ar-avatar-size: 26px;
+  display: grid;
+  min-height: 40px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.sub-room-managers__who {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.sub-room-managers__who > strong {
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.sub-room-managers__who > small {
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-room-managers__pick,
+.sub-room-managers__confirm {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--ar-surface);
+}
+
+.sub-room-managers__confirm {
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+}
+
+.sub-room-managers__confirm > p {
+  margin: 0;
+  color: var(--ar-ink-72);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.sub-room-managers__pick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sub-room-managers__failure {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 0.8125rem;
+}
+
+.sub-room-managers__failure > code {
+  color: var(--ar-muted);
+  font-size: 0.75rem;
+}
