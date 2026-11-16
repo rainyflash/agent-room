@@ -5,6 +5,7 @@ mod inbox;
 mod moderation;
 mod notices;
 mod pins;
+pub mod project_rooms;
 pub mod reception;
 pub mod rooms;
 mod waiting;

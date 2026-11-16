@@ -454,3 +454,19 @@
     - 核对太快时控制面回 429 带 `Retry-After`，IPC 的错误里没有地方放等多久，Bridge 只回 `bridge.project_room.check_too_soon`、不标成可重试；命令行 `--wait` 本来就一分钟核对一次。
     - 网络 Agent 照旧不能认领：它们没有设备签名，走不到这两个地址；用例那边见到网络 Agent 一律 403（流程测试补了一条）。
   - 测试：IPC 的编码、校验、权限（`bridge-ipc` 的 `project_rooms.rs`），握手认 4.4 到 4.9，Bridge 的网关（另起一个本机的 HTTP 服务，路径、签名、错误码、回答不像样）和分派（`host_sessions/tests/project_rooms.rs`），控制面设备签名的两个地址（`features/project_rooms/tests/device.rs`），应用层本机设备和网页认领是同一个、网络 Agent 403。
+- 2026-11-16 3P-4b（命令行 `agent-room project`，还没有本机 MCP 的工具）：
+  - 在仓库目录里跑：问 git 仓库根目录（`git rev-parse --show-toplevel`）和 `origin` 的地址，认出 `owner/repo`；经 Bridge 认领（IPC 4.9 的 `ClaimRepository`），把那一行写进仓库根目录的 `AGENTS.md`，回 README 徽章那一行和下一步（`next`：提交、推上去，一般几分钟内认上）。不替人 `git commit`、不推送。
+  - 回答照别的命令一样是一份 JSON：`repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`，在等的有 `claimId`、`lastCheck`，认上了的有 `catalogId`，写文件的结果在 `agentsFile`（`created`、`appended`、`already_linked` 带 `link` 和 `sameRoom`，不在 git 仓库里是 `skipped`）。
+  - 认 `origin` 只认 github.com 的 https 和 ssh 两种写法：`https://github.com/o/r(.git)`（可以带账号令牌、`:443`）、`git@github.com:o/r(.git)`、`ssh://git@github.com(:22)/o/r(.git)`；地址里的账号令牌不留下。别的托管、`http://`、`git://`、本机路径都认不出，要 `--repo owner/repo`。认的规矩放在 `agent-client` 的 `project_rooms.rs`（`repository_from_remote`），3P-4c 的本机 MCP 也用这一份里的认领和等待。
+  - `--wait`：先核对一次，之后每分钟一次，最多 15 分钟（`wait_until_bound`）。核对太快就等下一分钟。核对说没有这个认领（后台核对认上以后认领就删了）就用同样的仓库和房间再认领一次，认上了回那间房。认上以后照 `join --room <分享链接>` 进房间，回答是 `join` 的那一份，另带 `project`（认领的那一份）。
+  - 再跑一次同一条命令：控制面回同一个认领，`AGENTS.md` 里已经有这一行就不再写（`already_linked`），接着核对同一个认领。仓库已经绑了房间的只回那间房的分享链接，不再写文件，带 `--wait` 时进去。
+  - `--room <房间名或房间号>` 照 `rooms` 的名单换成房间号，绑你名下那间公开房间；能不能绑由控制面把关。
+  - `guide` 加了一节 `project`，开头就是设计里那一句（`To give the repository you are working in a room, run agent-room project when the person asks.`），`commands` 里加了 `project`、`project --wait --name <your name>`。
+  - 和设计不一样、设计里没写的：
+    - 多了 `--name`（只能和 `--wait` 一起用）：认上以后进房间时 Agent 的名字，和 `join --name` 一样。
+    - 不在 git 仓库里（比如只给了 `--repo`）照样认领，但不往哪里写 `AGENTS.md`，照实说让人自己加。
+    - “里面已经有 Agent Room 的链接”只认这个站点的 `<站点>/r/…`，回那个链接和是不是这间房的。加在已有文件末尾时前面空一行，换行照文件原来的（`\r\n` 或 `\n`）。
+    - 等的时候原来的认领作废了（7 天没认上），再认领拿到的是新码：停下，说要把仓库里那一行换成新的，不接着等。
+    - 15 分钟里最多核对 15 次（第一次马上）；到时间还没认上就回原来的认领，说再跑一次接着等。
+    - `agents.md`、`agents.txt` 那一句照“分步”放在 3P-6a，这一步没改。
+  - 测试：`agent-client` 认 `origin` 的写法、每分钟核对、太快等下一分钟、认领被后台认上后再认领、作废换了码、别的拒绝（暂停时间跑）；命令行认仓库、`AGENTS.md` 新建、加在末尾（换行、空行）、已经有链接、再跑一次接着等同一个认领而且只写一行、`--room` 换房间号、不在 git 仓库里、控制面拒绝和 Bridge 太旧；命令进程里 `--name` 不带 `--wait`、坏的 `--repo` 在碰 Bridge 之前就报错，`guide` 里有那一句。命令行的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。
