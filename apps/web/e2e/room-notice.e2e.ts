@@ -73,6 +73,26 @@ for (const width of [1440, 390]) {
   });
 }
 
+test('以前的房主删除了账户：对话里写房间交给了谁，中英文', async ({ browser, page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(`${roomFixture}?private&handover&view=conversation`);
+  const log = page.getByRole('log', { name: /conversation/iu });
+  await expect(log.locator('.room-notice-change')).toHaveText([
+    /The owner deleted their account, so this room now belongs to Grace/u,
+  ]);
+  // 没有公告：对话上方不多出公告条。
+  await expect(page.getByRole('region', { name: 'Room notice' })).toHaveCount(0);
+  expect(failures).toEqual([]);
+
+  const context = await browser.newContext({ locale: 'zh-CN' });
+  const chinese = await context.newPage();
+  await chinese.goto(`${roomFixture}?private&handover&view=conversation`);
+  await expect(chinese.locator('.room-notice-change')).toHaveText([
+    /房主的账户已经删除，房间交给了 Grace/u,
+  ]);
+  await context.close();
+});
+
 test('没有公告的房间：对话上方什么都不多，房主在设置的“公告”里写第一条', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${roomFixture}?private&view=conversation`);

@@ -247,9 +247,13 @@ describe('MatrixMessageGateway', () => {
     expect(Object.isFrozen(result.value.readOnlyFederatedEvents)).toBe(true);
   });
 
-  it('公告的状态事件变成一行改动；我们自己的房间状态不列成看不懂的事件，同类型的普通事件照旧列', () => {
+  it('公告和换了房主的状态事件各变成一行；我们自己的房间状态不列成看不懂的事件，同类型的普通事件照旧列', () => {
     const room = snapshot([
       noticeState('$notice', 300, '只在被点名时说话。'),
+      handoverState('$handover', 330, '@admin:agent-room.test'),
+      // 同样冒充不了换房主；读不出接手的人的那条也不写。
+      handoverState('$forged-handover', 340, '@member:agent-room.test', { stateKey: null }),
+      handoverState('$broken-handover', 345, 'admin'),
       // 成员谁都发得了同类型的普通事件，冒充不了改公告。
       noticeState('$forged', 350, '冒充的公告', { stateKey: null }),
       noticeState('$other-key', 360, '不是这一条', { stateKey: 'other' }),
@@ -264,12 +268,18 @@ describe('MatrixMessageGateway', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.noticeChanges).toEqual([
+    expect(result.value.stateLines).toEqual([
       {
         kind: 'updated',
         matrixEventId: '$notice',
         serverTimestamp: 300,
         updatedBy: '@owner:agent-room.test',
+      },
+      {
+        kind: 'owner_handover',
+        matrixEventId: '$handover',
+        owner: '@admin:agent-room.test',
+        serverTimestamp: 330,
       },
       {
         kind: 'removed',
@@ -278,10 +288,11 @@ describe('MatrixMessageGateway', () => {
         updatedBy: '@owner:agent-room.test',
       },
     ]);
-    expect(Object.isFrozen(result.value.noticeChanges)).toBe(true);
+    expect(Object.isFrozen(result.value.stateLines)).toBe(true);
     expect(result.value.readOnlyFederatedEvents.map((event) => event.matrixEventId)).toEqual([
       '$future-state',
       '$forged',
+      '$forged-handover',
     ]);
   });
 
@@ -312,9 +323,9 @@ describe('MatrixMessageGateway', () => {
 
     expect(crowdedResult.ok && crowdedResult.value.messages).toHaveLength(200);
     expect(
-      crowdedResult.ok && crowdedResult.value.noticeChanges?.map((change) => change.matrixEventId),
+      crowdedResult.ok && crowdedResult.value.stateLines?.map((line) => line.matrixEventId),
     ).toEqual(['$kept']);
-    expect(quietResult.ok && quietResult.value).not.toHaveProperty('noticeChanges');
+    expect(quietResult.ok && quietResult.value).not.toHaveProperty('stateLines');
   });
 
   it('解不开的加密事件汇总成一条提示：条数、按用户能做什么归好的原因、发送者', () => {
@@ -563,6 +574,29 @@ function noticeState(
     serverTimestamp,
     ...(stateKey === null ? {} : { stateKey }),
     type: 'io.github.rainyflash.agentroom.room.notice.v1',
+  };
+}
+
+function handoverState(
+  eventId: string,
+  serverTimestamp: number,
+  owner: string,
+  options: { readonly stateKey?: string | null } = {},
+): MatrixMessageTimelineEvent {
+  const stateKey = options.stateKey === undefined ? '' : options.stateKey;
+  return {
+    content: {
+      eventType: 'io.github.rainyflash.agentroom.room.owner_handover.v1',
+      formerOwner: '@owner:agent-room.test',
+      owner,
+      schemaVersion: '1.0',
+    },
+    endToEndEncrypted: false,
+    eventId,
+    sender: stateKey === null ? '@member:agent-room.test' : '@_agent_room:agent-room.test',
+    serverTimestamp,
+    ...(stateKey === null ? {} : { stateKey }),
+    type: 'io.github.rainyflash.agentroom.room.owner_handover.v1',
   };
 }
 

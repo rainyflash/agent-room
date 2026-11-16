@@ -16,13 +16,13 @@ import {
 } from 'react';
 import type {
   MessageRoomProjection,
-  RoomNoticeChange,
+  RoomStateLine,
   UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
 import { RoomNoticeChangeLine } from '@/features/room-notice/ui/room-notice-change';
 import { agentRunFoldingEnabled, rememberAgentRunFolding } from '../application/agent-run-folding';
-import { withNoticeChanges } from '../domain/conversation-entries';
+import { withStateLines } from '../domain/conversation-entries';
 import { foldAgentRuns, type ConversationItem } from '../domain/conversation-folds';
 import { cursorOf, newMessagesAfter } from '../domain/new-messages';
 import {
@@ -62,7 +62,7 @@ import { conversationDeliveries } from '../domain/message-delivery';
 import './conversation-panel.css';
 
 const emptyParticipants: readonly ConversationParticipant[] = [];
-const emptyNoticeChanges: readonly RoomNoticeChange[] = [];
+const emptyStateLines: readonly RoomStateLine[] = [];
 const noAcknowledged: ReadonlySet<string> = new Set();
 // 进房间时本地通常只有同步带来的最近一小段记录。内容撑不满这么多屏、或者上次读到的位置还没加载，
 // 就自动往前补；每次打开最多补这么多次，剩下的交给“加载更早的消息”。
@@ -95,8 +95,8 @@ export type ConversationPanelProps = {
   readonly undecryptable?: UndecryptableSummary;
   /** 找回这些消息走到了哪一步。 */
   readonly recovery?: UndecryptableRecovery;
-  /** 公告改过几次，按时间夹在消息中间各写一行；查找时不显示。 */
-  readonly noticeChanges?: readonly RoomNoticeChange[];
+  /** 公告改过的、房主换过的，按时间夹在消息中间各写一行；查找时不显示。 */
+  readonly stateLines?: readonly RoomStateLine[];
   readonly variant?: 'room' | 'direct';
   /** 私人房间：@ 菜单里多一项“所有人”。 */
   readonly privateRoom?: boolean;
@@ -135,7 +135,7 @@ function ConversationPanelView({
   submissionIds,
   undecryptable,
   recovery = 'idle',
-  noticeChanges = emptyNoticeChanges,
+  stateLines = emptyStateLines,
   variant = 'room',
   privateRoom = false,
   barEnd,
@@ -189,8 +189,8 @@ function ConversationPanelView({
   // 眼前不是完整的对话时：不记读到哪儿、不算看过、不夹公告的改动、不折。
   const filtered = searching || scope !== 'all';
   const entries = useMemo(
-    () => withNoticeChanges(visibleTimeline, filtered ? emptyNoticeChanges : noticeChanges),
-    [visibleTimeline, filtered, noticeChanges],
+    () => withStateLines(visibleTimeline, filtered ? emptyStateLines : stateLines),
+    [visibleTimeline, filtered, stateLines],
   );
   // Agent 之间的长串折起来；关没关记在这台设备上。
   const [folding, setFolding] = useState(agentRunFoldingEnabled);
@@ -525,7 +525,7 @@ function ConversationPanelView({
     if (following.current) element.scrollTop = element.scrollHeight;
     else if (bottomDistance.current !== null)
       element.scrollTop = element.scrollHeight - bottomDistance.current;
-  }, [active, focusMessageId, timeline, noticeChanges]);
+  }, [active, focusMessageId, timeline, stateLines]);
   // 日期和“新消息”那两种线放在这条消息的框外面：标出要去看的那一条时只框住它自己。
   const renderMessage = (message: RoomMessageSignal, separator: ReactNode): ReactNode => (
     <Fragment key={message.messageId}>
@@ -778,15 +778,15 @@ function ConversationPanelView({
                   <span>{date.format(at)}</span>
                 </div>
               ) : null;
-            if (item.kind === 'notice') {
+            if (item.kind === 'state') {
               return (
                 <div
                   className="conversation-panel__notice-entry"
-                  key={`notice:${item.change.matrixEventId}`}
+                  key={`state:${item.line.matrixEventId}`}
                 >
                   {separator}
                   <RoomNoticeChangeLine
-                    change={item.change}
+                    change={item.line}
                     names={names}
                     selfMatrixUserId={selfId}
                     time={time}
@@ -891,7 +891,7 @@ function atLatest(element: HTMLElement): boolean {
 
 function itemStart(item: ConversationItem): number {
   if (item.kind === 'message') return item.message.serverTimestamp;
-  if (item.kind === 'notice') return item.change.serverTimestamp;
+  if (item.kind === 'state') return item.line.serverTimestamp;
   return item.messages[0]?.serverTimestamp ?? 0;
 }
 

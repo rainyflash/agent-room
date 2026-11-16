@@ -85,7 +85,7 @@ import type { ContentGateway, ContentVerifier } from '@/features/messages/domain
 import type {
   MessageGateway,
   RoomMessageSignal,
-  RoomNoticeChange,
+  RoomStateLine,
 } from '@/features/messages/domain/message';
 import type {
   MessagePublicationRequest,
@@ -200,6 +200,9 @@ const requestsFixture =
 // `?private&notice` 里房间有一条 Grace 写的三行公告（时间固定，重新打开还是同一版）；不带时没有公告，
 // 房主能在设置的“公告”里写。
 const noticeFixture = privateFixture && new URLSearchParams(window.location.search).has('notice');
+// `?private&handover` 里以前的房主删除了账户、房间交给了 Grace：对话里有一行“房间交给了 Grace”。
+const handoverFixture =
+  privateFixture && new URLSearchParams(window.location.search).has('handover');
 // `?private&subRooms` 里这间房下面有几间子房间（你在三间里，一间不在）；`?private&subRoom` 里这间房
 // 本身是“Agent Room”下面的子房间，左栏的“主房间”回到父房间、顶栏写“父房间 / 子房间”。
 const subRoomsFixture =
@@ -234,6 +237,9 @@ let room: LobbyRoom = {
           updatedBy: '@grace:matrix.test',
         },
       }
+    : {}),
+  ...(handoverFixture
+    ? { memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }] }
     : {}),
 };
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
@@ -446,18 +452,30 @@ const fixtureChatter: readonly RoomMessageSignal[] = chatterFixture
     })
   : [];
 let historyWindow = historyPage;
-// 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次。
-const noticeChanges: RoomNoticeChange[] =
-  room.notice === undefined
+// 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次，`?handover` 一开始
+// 就有房间交给 Grace 的那一行。
+const stateLines: RoomStateLine[] = [
+  ...(handoverFixture
+    ? [
+        {
+          kind: 'owner_handover' as const,
+          matrixEventId: '$fixture-handover',
+          owner: '@grace:matrix.test',
+          serverTimestamp: Date.parse('2026-11-02T08:00:00.000Z'),
+        },
+      ]
+    : []),
+  ...(room.notice === undefined
     ? []
     : [
         {
-          kind: 'updated',
+          kind: 'updated' as const,
           matrixEventId: '$fixture-notice',
           serverTimestamp: room.notice.updatedAtUnixMs,
           updatedBy: room.notice.updatedBy,
         },
-      ];
+      ]),
+];
 const displayedEvents: { readonly roomId: string; readonly matrixEventId: string }[] = [];
 const messages: MessageGateway = {
   read: (requestedRoomId) =>
@@ -474,8 +492,8 @@ const messages: MessageGateway = {
       observedAtUnixMs: Date.now(),
       readOnlyFederatedEvents: [],
       roomId: requestedRoomId,
-      ...(requestedRoomId === room.roomId && noticeChanges.length > 0
-        ? { noticeChanges: [...noticeChanges] }
+      ...(requestedRoomId === room.roomId && stateLines.length > 0
+        ? { stateLines: [...stateLines] }
         : {}),
       ...(historyFixture
         ? { history: { canLoadMore: historyWindow < fixtureHistory.length, limited: false } }
@@ -2186,9 +2204,9 @@ const roomNotices: RoomNoticeGateway = {
       text === ''
         ? rest
         : { ...rest, notice: { text, updatedAtUnixMs, updatedBy: fixtureIdentity.matrixUserId } };
-    noticeChanges.push({
+    stateLines.push({
       kind: text === '' ? 'removed' : 'updated',
-      matrixEventId: `$fixture-notice-${String(noticeChanges.length)}`,
+      matrixEventId: `$fixture-notice-${String(stateLines.length)}`,
       serverTimestamp: updatedAtUnixMs,
       updatedBy: fixtureIdentity.matrixUserId,
     });
