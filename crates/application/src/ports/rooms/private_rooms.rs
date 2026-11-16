@@ -441,7 +441,8 @@ pub trait PrivateRoomStore: Send + Sync {
         matrix_room_id: &'a MatrixRoomReference,
     ) -> PortFuture<'a, RepositoryResult<Option<PrivateRoomSnapshot>>>;
 
-    /// 以乐观版本锁原子保存成员、房主和归档状态。
+    /// 以乐观版本锁原子保存成员、房主和归档状态。归档时同一个事务里解绑仓库
+    /// （`specs/redesign/project-rooms.md`），恢复以后不绑回去。
     fn save<'a>(
         &'a self,
         room: &'a PrivateRoom,

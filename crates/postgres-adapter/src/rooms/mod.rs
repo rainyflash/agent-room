@@ -16,6 +16,7 @@ mod private_room_agents;
 mod private_rooms;
 mod provisioning;
 mod public_directory;
+mod repository_bindings;
 mod role_changes;
 mod sub_room_activity;
 mod sub_room_archive;

@@ -42,11 +42,11 @@ pub struct SubRoomPrivacy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrivateRoomListingSaveOutcome {
     Saved,
-    /// 房主名下已经有一间别的公开房间（每个账户最多 1 间）。
+    /// 房主名下已经有一间别的不绑仓库的公开房间（每个账户最多 1 间，绑着仓库的不算）。
     OwnerLimitReached,
     /// 新生成的分享码被别的房间占了，换一个再存。
     ShareCodeTaken,
-    /// 别人刚改过，版本对不上。
+    /// 别人刚改过，版本对不上；或者要给绑着仓库的房间换分享码。
     Stale,
 }
 
@@ -75,14 +75,26 @@ pub trait PrivateRoomListingStore: Send + Sync {
         })
     }
 
-    /// 房主名下还在使用中、正公开着的房间，供公开之前先查一遍限额。
-    fn listed_rooms_owned_by(
+    /// 房主名下还在使用中、正公开着、没绑仓库的房间：占名额的那些，供公开之前先查一遍限额。绑着仓库的
+    /// 公开房间不算（`specs/redesign/project-rooms.md` 的“限额”）。
+    fn unbound_listed_rooms_owned_by(
         &self,
         owner: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>>;
 
+    /// 这间房绑着仓库没有（`specs/redesign/project-rooms.md`）。绑着的不占公开房间的名额，也不能换分享码。
+    /// 默认没绑：不关心仓库的测试仓储不用管它。
+    fn repository_bound(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let _ = catalog_id;
+        Box::pin(async { Ok(false) })
+    }
+
     /// 写下新的设置。`expected` 为空表示这间房还没有记录。公开时在同一个事务里再查一遍房主名下
-    /// 别的公开房间，两个请求同时公开两间也只成一间。
+    /// 别的不绑仓库的公开房间，两个请求同时公开两间也只成一间；这一间绑着仓库就不查。改回私密时同一个
+    /// 事务里解绑仓库。绑着仓库的房间换了分享码不存，回答 [`PrivateRoomListingSaveOutcome::Stale`]。
     fn save_listing<'a>(
         &'a self,
         record: &'a PrivateRoomListingRecord,
@@ -99,9 +111,10 @@ pub trait PrivateRoomListingStore: Send + Sync {
         created_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
 
-    /// 存下转让了房主的房间。这间正公开着、接手的人（`room` 现在的房主）名下又有别的公开房间时不存，
-    /// 回答 [`PrivateRoomListingSaveOutcome::OwnerLimitReached`]。和 [`Self::save_listing`] 一样在
-    /// 事务里查，接手的人同时公开别的房间、原房主同时公开这一间，都只成一样。
+    /// 存下转让了房主的房间。这间正公开着、没绑仓库、接手的人（`room` 现在的房主）名下又有别的不绑仓库
+    /// 的公开房间时不存，回答 [`PrivateRoomListingSaveOutcome::OwnerLimitReached`]；绑定跟着房间走。
+    /// 和 [`Self::save_listing`] 一样在事务里查，接手的人同时公开别的房间、原房主同时公开这一间，都只
+    /// 成一样。
     fn save_transferred_room<'a>(
         &'a self,
         room: &'a PrivateRoom,

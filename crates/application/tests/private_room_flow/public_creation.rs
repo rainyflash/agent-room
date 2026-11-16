@@ -1,5 +1,6 @@
 //! 新建时就选公开（`specs/public-rooms/design.md` 第 3a-2 步）：房间不加密、换一个别名，建好先写下
 //! 公开的时间，再把房间和设置一起存；每个账户只能有一间公开房间，转让房主也算；只给人自己建。
+//! 绑着仓库的公开房间不占名额，转给谁都照常转；归档、关掉时解绑（`specs/redesign/project-rooms.md`）。
 
 use agent_room_application::ports::{
     MatrixRoomEncryption, PrivateRoomListingMatrix, PrivateRoomListingRecord,
@@ -194,6 +195,85 @@ async fn 事务里才撞上限额_房主不变_压下去的发言权还回去() 
     assert_eq!(stored.room().owner_principal_id(), fixture.owner);
 }
 
+/// 记下这间房绑着仓库（`specs/redesign/project-rooms.md`）。
+pub(super) fn bind_room(fixture: &Fixture) {
+    fixture.store.repository_bound.store(true, Ordering::SeqCst);
+}
+
+fn repository_bound(fixture: &Fixture) -> bool {
+    fixture.store.repository_bound.load(Ordering::SeqCst)
+}
+
+#[tokio::test]
+async fn 绑着仓库的公开房间转给已有公开房间的人_照常转_绑定跟着房间走() {
+    let fixture = Fixture::joined(viewer_permissions()).await;
+    list_room(&fixture);
+    bind_room(&fixture);
+    *fixture.listings.owner_listed_elsewhere.lock().unwrap() = true;
+
+    let transferred = fixture
+        .service
+        .transfer_ownership(transfer_request(&fixture))
+        .await
+        .expect("绑着仓库的不占名额");
+
+    assert_eq!(transferred.room().owner_principal_id(), fixture.member);
+    assert!(repository_bound(&fixture));
+}
+
+#[tokio::test]
+async fn 房主归档_网络_agent_关掉_停用时系统关掉_都解绑仓库() {
+    let fixture = Fixture::new();
+    fixture
+        .service
+        .create(fixture.creation_request(speaker_permissions()))
+        .await
+        .expect("建房成功");
+    bind_room(&fixture);
+    fixture
+        .service
+        .archive(ArchivePrivateRoom {
+            actor: fixture.owner_actor().into(),
+            catalog_id: fixture.catalog,
+        })
+        .await
+        .expect("房主能归档");
+    assert!(!repository_bound(&fixture), "房主归档");
+
+    for by_system in [false, true] {
+        let fixture = Fixture::new();
+        let network_principal = principal_id(3);
+        fixture.agents.own(network_principal, agent_id(170));
+        let network_agent = || {
+            PrivateRoomActor::NetworkAgent(device(network_principal, "@user-0123abcd:matrix.test"))
+        };
+        fixture
+            .service
+            .create(fixture.agent_creation_request(network_agent(), agent_id(170)))
+            .await
+            .expect("网络 Agent 建房成功");
+        bind_room(&fixture);
+        if by_system {
+            let closed = fixture
+                .service
+                .archive_owned_by(network_principal)
+                .await
+                .expect("停用时系统关掉");
+            assert_eq!(closed, 1);
+        } else {
+            fixture
+                .service
+                .archive(ArchivePrivateRoom {
+                    actor: network_agent(),
+                    catalog_id: fixture.catalog,
+                })
+                .await
+                .expect("网络 Agent 能关自己的房间");
+        }
+        assert!(!repository_bound(&fixture), "系统关掉：{by_system}");
+    }
+}
+
 #[tokio::test]
 async fn 公开房间转给名下没有公开房间的人_照常转() {
     let fixture = Fixture::joined(viewer_permissions()).await;
@@ -338,7 +418,7 @@ impl PrivateRoomListingStore for TestListings {
         Box::pin(async move { Ok(record) })
     }
 
-    fn listed_rooms_owned_by(
+    fn unbound_listed_rooms_owned_by(
         &self,
         _owner: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
@@ -346,10 +426,22 @@ impl PrivateRoomListingStore for TestListings {
         if *self.owner_listed_elsewhere.lock().unwrap() {
             rooms.push(catalog_id(99));
         }
-        if let Some(record) = self.record().filter(|record| record.settings.listed()) {
+        let bound = self.store.repository_bound.load(Ordering::SeqCst);
+        if let Some(record) = self
+            .record()
+            .filter(|record| record.settings.listed() && !bound)
+        {
             rooms.push(record.catalog_id);
         }
         Box::pin(async move { Ok(rooms) })
+    }
+
+    fn repository_bound(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<bool>> {
+        let bound = self.store.repository_bound.load(Ordering::SeqCst);
+        Box::pin(async move { Ok(bound) })
     }
 
     fn save_listing<'a>(

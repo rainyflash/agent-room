@@ -10,6 +10,8 @@
 //! 不带是谁拿掉的。
 //!
 //! 房主能换一个分享码（比如链接被贴到了不想要的地方），旧的马上作废；改回私密时码留着，只有换码才变。
+//! 绑着仓库的房间不能换码：仓库里那一行写着它（`specs/redesign/project-rooms.md`）。改回私密时库里同一
+//! 个事务里解绑仓库；每个账户 1 间公开房间的名额只数不绑仓库的。
 //!
 //! 子房间跟着它（`sub_room_privacy`）：改回私密时没加密的子房间一起打开加密；公开着的时候没有门的
 //! 子房间写下这一刻。
@@ -50,7 +52,7 @@ pub enum ListingFailureKind {
     Forbidden,
     /// 没有这个房间，或者他不在房间里。
     NotFound,
-    /// 房主名下已经有一间公开房间。
+    /// 房主名下已经有一间不绑仓库的公开房间。
     LimitReached,
     /// 从没公开过，还没有分享码可换。
     NeverListed,
@@ -60,6 +62,8 @@ pub enum ListingFailureKind {
     Internal,
     /// 这是一间子房间：子房间不能单独公开（`specs/redesign/sub-rooms.md`）。
     ParentOnly,
+    /// 这间房绑着仓库，仓库里那一行写着它的分享码：不能换（`specs/redesign/project-rooms.md`）。
+    RepositoryBound,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,7 +232,7 @@ impl PrivateRoomListingService {
             // 先查一遍限额，免得白写一条 Matrix 状态；存的时候在事务里还会再查。
             let listed = self
                 .listings
-                .listed_rooms_owned_by(owner)
+                .unbound_listed_rooms_owned_by(owner)
                 .await
                 .map_err(|error| repository(operation, &error))?;
             if listed.iter().any(|catalog| *catalog != request.catalog_id) {
@@ -286,7 +290,7 @@ impl PrivateRoomListingService {
     }
 
     /// 改回私密。不加密的房间先在 Matrix 上打开加密，再改目录上的标记，最后才存设置：哪一步没成，
-    /// 房主再点一次都接得上（Matrix 上写一样的加密状态是幂等的）。
+    /// 房主再点一次都接得上（Matrix 上写一样的加密状态是幂等的）。存设置的那个事务里解绑仓库。
     async fn unlist(
         &self,
         request: &UpdateListing,
@@ -369,6 +373,18 @@ impl PrivateRoomListingService {
                 ListingFailureKind::NeverListed,
             ));
         };
+        // 存的时候库里还会再拦一次：这时刚绑上的，换码存不进去，回答版本对不上。
+        if self
+            .listings
+            .repository_bound(request.catalog_id)
+            .await
+            .map_err(|error| repository(OPERATION, &error))?
+        {
+            return Err(ListingFailure::new(
+                OPERATION,
+                ListingFailureKind::RepositoryBound,
+            ));
+        }
         let mut record = PrivateRoomListingRecord {
             share_code: self.replacement_share_code(&previous.share_code, OPERATION)?,
             updated_by: request.actor.principal_id,

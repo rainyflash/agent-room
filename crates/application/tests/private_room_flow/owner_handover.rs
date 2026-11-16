@@ -16,7 +16,10 @@ use agent_room_domain::{
     room_role_changes::{RoomStanding, RoomStandingChange},
 };
 
-use super::{public_creation::list_room, *};
+use super::{
+    public_creation::{bind_room, list_room},
+    *,
+};
 
 const FORMER_OWNER: &str = "@owner:matrix.test";
 
@@ -261,6 +264,22 @@ async fn 公开房间轮不到名下已经有一间公开房间的管理员() {
     assert_eq!(outcome.without_successor, 1);
     assert!(announcements.writes.lock().unwrap().is_empty());
     assert_eq!(stored(&fixture).room().owner_principal_id(), fixture.owner);
+}
+
+#[tokio::test]
+async fn 绑着仓库的公开房间照样交给名下已有公开房间的管理员() {
+    let fixture = Fixture::joined(admin()).await;
+    list_room(&fixture);
+    bind_room(&fixture);
+    *fixture.listings.owner_listed_elsewhere.lock().unwrap() = true;
+    let (service, _) = handover_service(&fixture);
+
+    let outcome = hand_over(&service, fixture.owner, FORMER_OWNER)
+        .await
+        .expect("交得出去");
+
+    assert_eq!(outcome.handed_over, 1, "绑着仓库的不占名额");
+    assert_eq!(stored(&fixture).room().owner_principal_id(), fixture.member);
 }
 
 #[tokio::test]

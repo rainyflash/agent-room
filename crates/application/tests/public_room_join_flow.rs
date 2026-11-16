@@ -491,7 +491,7 @@ impl PrivateRoomListingStore for MemoryListings {
         Box::pin(async move { Ok(record) })
     }
 
-    fn listed_rooms_owned_by(
+    fn unbound_listed_rooms_owned_by(
         &self,
         _owner: PrincipalId,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomCatalogId>>> {
