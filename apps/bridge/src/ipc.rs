@@ -236,6 +236,8 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 | IpcMethod::ResolveJoinCode(_)
                 | IpcMethod::RedeemJoinCode(_)
                 | IpcMethod::CreateRoom(_)
+                | IpcMethod::ClaimRepository(_)
+                | IpcMethod::CheckRepositoryClaim(_)
                 | IpcMethod::RoomAccess(_)
                 | IpcMethod::AnswerKnock(_)
                 | IpcMethod::InvitePerson(_)
@@ -795,14 +797,15 @@ fn log_request_failure(
     }
 }
 
-/// 4.4 到 4.7 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
+/// 4.4 到 4.8 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
 /// 回给它们的房间摘要由 [`fit_to_version`] 去掉它们不认识的几项。
-const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 5] = [
+const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 6] = [
     IpcProtocolVersion::V4_4,
     IpcProtocolVersion::V4_5,
     IpcProtocolVersion::V4_6,
     IpcProtocolVersion::V4_7,
     IpcProtocolVersion::V4_8,
+    IpcProtocolVersion::V4_9,
 ];
 
 /// 4.7 以前的客户端不收房间摘要里不认识的字段：回给它们的房间列表里不放子房间（它们按名字找房间时
@@ -871,6 +874,8 @@ fn authorize_method(
             | IpcMethod::ResolveJoinCode(_)
             | IpcMethod::RedeemJoinCode(_)
             | IpcMethod::CreateRoom(_)
+            | IpcMethod::ClaimRepository(_)
+            | IpcMethod::CheckRepositoryClaim(_)
             | IpcMethod::OpenHostSession(_)
             | IpcMethod::CloseHostSession(_)
             | IpcMethod::WithSession { .. }
@@ -2925,7 +2930,7 @@ mod tests {
     }
 
     #[test]
-    fn 旧版客户端报的四点四到四点七照样谈得拢_新版报四点八用新版() {
+    fn 旧版客户端报的四点四到四点八照样谈得拢_新版报四点九用新版() {
         let negotiator =
             IpcHandshakeNegotiator::new(super::SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
                 .expect("Bridge 的协商器有效");
@@ -2935,6 +2940,7 @@ mod tests {
             (IpcProtocolVersion::V4_6, IpcProtocolVersion::V4_6),
             (IpcProtocolVersion::V4_7, IpcProtocolVersion::V4_7),
             (IpcProtocolVersion::V4_8, IpcProtocolVersion::V4_8),
+            (IpcProtocolVersion::V4_9, IpcProtocolVersion::V4_9),
         ] {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::McpServer,
@@ -3329,6 +3335,36 @@ mod tests {
             assert!(authorize_method(&IpcMethod::ReadInvitation, &agent).is_ok());
             assert!(authorize_method(&offer_method, &agent).is_err());
             assert!(authorize_method(&withdraw_method, &agent).is_err());
+        }
+    }
+
+    #[test]
+    fn 认领仓库和核对不要会话_要管房间的权限() {
+        let claim = IpcMethod::ClaimRepository(agent_room_bridge_ipc::IpcClaimRepositoryRequest {
+            repository: "octo/hello".into(),
+            catalog_id: None,
+        });
+        let check = IpcMethod::CheckRepositoryClaim(
+            agent_room_bridge_ipc::IpcCheckRepositoryClaimRequest {
+                claim_id: Uuid::now_v7().to_string(),
+            },
+        );
+        let agreement = |caller, scope| {
+            let offer =
+                IpcHandshakeOffer::new(caller, [IpcProtocolVersion::V4_9], [scope]).unwrap();
+            IpcHandshakeNegotiator::new([IpcProtocolVersion::V4_9], FoundationIpcScopePolicy)
+                .unwrap()
+                .negotiate(&offer)
+        };
+        for caller in [IpcCallerKind::McpServer, IpcCallerKind::AgentCli] {
+            let agent = agreement(caller, IpcScope::RoomsManage).unwrap();
+            assert!(authorize_method(&claim, &agent).is_ok());
+            assert!(authorize_method(&check, &agent).is_ok());
+            let sessions = agreement(caller, IpcScope::HostSessionsManage).unwrap();
+            assert_eq!(
+                authorize_method(&claim, &sessions).unwrap_err().category,
+                IpcErrorCategory::Authorization
+            );
         }
     }
 

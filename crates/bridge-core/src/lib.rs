@@ -15,6 +15,7 @@ pub mod presence;
 pub mod presence_roster;
 pub mod presence_support;
 pub mod presence_tracker;
+pub mod project_rooms;
 pub mod reconnect;
 pub mod room_directory;
 pub mod room_management;

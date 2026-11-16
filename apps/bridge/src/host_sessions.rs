@@ -36,10 +36,12 @@ use crate::ipc::{BridgeIpcDispatchFailure, BridgeIpcDispatchFuture, BridgeIpcReq
 
 mod invitation;
 mod join_codes;
+mod project_rooms;
 mod room_management;
 mod room_moderation;
 pub(crate) use invitation::InvitationSlot;
 pub(crate) use join_codes::JoinCodeAccess;
+pub(crate) use project_rooms::ProjectRoomAccess;
 pub(crate) use room_management::RoomManagementAccess;
 use room_moderation::{ModerationScope, RoomRef};
 
@@ -825,6 +827,8 @@ pub(crate) struct SessionAwareIpcHandler {
     pub(crate) join_codes: JoinCodeAccess,
     /// Agent 建房间，管会话所在的、Agent 建的房间。
     pub(crate) rooms: RoomManagementAccess,
+    /// 替这台电脑的账户认领 GitHub 仓库、现在核对（4.9 起）。
+    pub(crate) project_rooms: ProjectRoomAccess,
 }
 
 impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
@@ -875,6 +879,8 @@ impl BridgeIpcRequestHandler for SessionAwareIpcHandler {
                 IpcMethod::ResolveJoinCode(request) => self.join_codes.resolve(request).await,
                 IpcMethod::RedeemJoinCode(request) => self.join_codes.redeem(request).await,
                 IpcMethod::CreateRoom(request) => self.rooms.create(request).await,
+                IpcMethod::ClaimRepository(request) => self.project_rooms.claim(request).await,
+                IpcMethod::CheckRepositoryClaim(request) => self.project_rooms.check(request).await,
                 IpcMethod::OpenHostSession(request) => {
                     let session_key = request.session_key.clone();
                     let opened = self.sessions.open(request).await;

@@ -17,6 +17,7 @@ use tokio::sync::Notify;
 
 use super::*;
 
+mod project_rooms;
 mod rooms;
 
 #[derive(Default)]
@@ -854,6 +855,7 @@ async fn 翻公开房间不需要会话_账号已经加入的标出来_受邀的
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
         rooms: rooms::access(Arc::default(), Arc::default()),
+        project_rooms: project_rooms::access(Arc::default()),
     };
 
     let response = handler
@@ -923,6 +925,7 @@ async fn 列房间不需要会话_公开大厅与私人房间都按目录原样�
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
         rooms: rooms::access(Arc::default(), Arc::default()),
+        project_rooms: project_rooms::access(Arc::default()),
     };
 
     let response = handler
@@ -954,6 +957,7 @@ async fn 等待接入的邀请可反复查看_开出会话才用掉_已开的键
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), Arc::default()),
         rooms: rooms::access(Arc::default(), Arc::default()),
+        project_rooms: project_rooms::access(Arc::default()),
     };
     let pending = |response: IpcResponse| {
         let IpcResponse::Invitation { invitation } = response else {
@@ -1036,6 +1040,7 @@ async fn 凭口令查看房间不建人物_兑换先按会话键建好人物再�
         invitations: InvitationSlot::default(),
         join_codes: join_codes(gateway.clone(), host_agents.clone()),
         rooms: rooms::access(Arc::default(), host_agents.clone()),
+        project_rooms: project_rooms::access(Arc::default()),
     };
     let room = |response: IpcResponse| {
         let IpcResponse::JoinCodeRoom { room } = response else {

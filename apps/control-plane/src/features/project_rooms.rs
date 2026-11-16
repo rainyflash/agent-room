@@ -11,12 +11,18 @@
 //! 站点（`https://<裸域>`）拼好：网页、命令行都不知道裸域在哪。都是新接口，不往别的回答里加字段（网页
 //! 对回答 `.strict()` 校验）。
 //!
-//! 这一步只认网页登录。本机 Bridge 替这台电脑认领（设备签名）随 3P-4a 加。
+//! 本机 Bridge 替这台电脑的账户认领（3P-4a）走设备签名的两个地址，和设备签名建房一样放在
+//! `/devices/current/` 下面：`POST /devices/current/project-rooms/claims`（正文和网页的一样）、
+//! `POST /devices/current/project-rooms/claims/{claimId}/check`（没有正文）。回答和网页的一样。命令行和
+//! 本机 MCP 只用这两个：同一个仓库再认领回同一个认领，就是“看一眼”；不撤认领。网络 Agent 没有设备
+//! 签名，走不到这里；用例那边也一律回 403。
 
 use std::sync::Arc;
 
 use agent_room_application::{
     authentication::{AuthenticationRequirement, AuthenticationUseCases},
+    devices::DeviceAuthorizationUseCases,
+    ports::SecretFactory,
     private_rooms::PrivateRoomActor,
     project_rooms::{
         BindingCheckResult, BindingCheckView, BindingView, ClaimRepository, ClaimStatus, ClaimView,
@@ -47,32 +53,46 @@ use crate::{
     error::{ApiError, seconds_until},
     features::{
         authentication::{TrustedOrigins, authenticate_session, no_store, origin_matches},
+        devices::authenticate_signed_device_request,
         resource_ids::parse_uuid_v7,
         share_page::{share_url, site_origin},
     },
 };
 
 const MAX_CLAIM_BODY_BYTES: usize = 1_024;
+/// 本机 Bridge 认领用的地址，设备签名对着它。
+const DEVICE_CLAIMS: &str = "/devices/current/project-rooms/claims";
 
 #[derive(Clone)]
 pub(crate) struct ProjectRoomHttpState {
     rooms: Arc<dyn ProjectRoomUseCases>,
     authentication: Arc<dyn AuthenticationUseCases>,
+    devices: Arc<dyn DeviceAuthorizationUseCases>,
+    secrets: Arc<dyn SecretFactory>,
     trusted_origins: TrustedOrigins,
     site_origin: Arc<str>,
 }
 
+/// 认领要的几样：用例、网页登录、本机 Bridge 的设备签名。
+pub(crate) struct ProjectRoomHttpDependencies {
+    pub(crate) rooms: Arc<dyn ProjectRoomUseCases>,
+    pub(crate) authentication: Arc<dyn AuthenticationUseCases>,
+    pub(crate) devices: Arc<dyn DeviceAuthorizationUseCases>,
+    pub(crate) secrets: Arc<dyn SecretFactory>,
+}
+
 impl ProjectRoomHttpState {
     pub(crate) fn new(
-        rooms: Arc<dyn ProjectRoomUseCases>,
-        authentication: Arc<dyn AuthenticationUseCases>,
+        dependencies: ProjectRoomHttpDependencies,
         frontend_origin: &url::Url,
         desktop_origins: &crate::config::DesktopOrigins,
         server_name: &str,
     ) -> Self {
         Self {
-            rooms,
-            authentication,
+            rooms: dependencies.rooms,
+            authentication: dependencies.authentication,
+            devices: dependencies.devices,
+            secrets: dependencies.secrets,
             trusted_origins: TrustedOrigins::new(frontend_origin, desktop_origins),
             site_origin: site_origin(server_name).into(),
         }
@@ -87,6 +107,11 @@ pub(crate) fn router(state: ProjectRoomHttpState) -> Router {
             get(inspect_claim).delete(cancel_claim),
         )
         .route("/project-rooms/claims/{claim_id}/check", post(check_claim))
+        .route(DEVICE_CLAIMS, post(device_claim))
+        .route(
+            "/devices/current/project-rooms/claims/{claim_id}/check",
+            post(device_check_claim),
+        )
         .route(
             "/private-rooms/{catalog_id}/repository",
             get(inspect_binding).delete(unbind),
@@ -246,7 +271,30 @@ async fn claim(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let Ok(body) = serde_json::from_slice::<ClaimBody>(&body) else {
+    claim_as(&state, actor, &body, correlation_id).await
+}
+
+/// 本机 Bridge 替这台电脑的账户认领：设备签名，正文和网页的一样。
+async fn device_claim(
+    State(state): State<ProjectRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let actor = match device_actor(&state, &headers, DEVICE_CLAIMS, &body, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    claim_as(&state, actor, &body, correlation_id).await
+}
+
+async fn claim_as(
+    state: &ProjectRoomHttpState,
+    actor: PrivateRoomActor,
+    body: &Bytes,
+    correlation_id: CorrelationId,
+) -> Response {
+    let Ok(body) = serde_json::from_slice::<ClaimBody>(body) else {
         return invalid("project_room.invalid_request", correlation_id);
     };
     let target = match body.catalog_id.as_deref().map(catalog_id) {
@@ -300,7 +348,32 @@ async fn check_claim(
         Ok(actor) => actor,
         Err(response) => return response,
     };
-    let Some(claim_id) = claim_id(&claim) else {
+    check_claim_as(&state, actor, &claim, correlation_id).await
+}
+
+/// 本机 Bridge 现在核对：设备签名，没有正文（签空串）。
+async fn device_check_claim(
+    State(state): State<ProjectRoomHttpState>,
+    Extension(correlation_id): Extension<CorrelationId>,
+    Path(claim): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let target = format!("{DEVICE_CLAIMS}/{claim}/check");
+    let actor = match device_actor(&state, &headers, &target, &body, correlation_id).await {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    check_claim_as(&state, actor, &claim, correlation_id).await
+}
+
+async fn check_claim_as(
+    state: &ProjectRoomHttpState,
+    actor: PrivateRoomActor,
+    claim: &str,
+    correlation_id: CorrelationId,
+) -> Response {
+    let Some(claim_id) = claim_id(claim) else {
         return invalid("project_room.invalid_resource", correlation_id);
     };
     let result = state
@@ -425,6 +498,30 @@ async fn changing_actor(
         ));
     }
     session(state, jar, correlation_id).await
+}
+
+/// 本机 Bridge 的请求：设备令牌加上对方法、路径和正文的签名。都是 `POST`。
+async fn device_actor(
+    state: &ProjectRoomHttpState,
+    headers: &HeaderMap,
+    target: &str,
+    body: &Bytes,
+    correlation_id: CorrelationId,
+) -> Result<PrivateRoomActor, Response> {
+    let Ok(body) = std::str::from_utf8(body) else {
+        return Err(invalid("project_room.invalid_request", correlation_id));
+    };
+    authenticate_signed_device_request(
+        state.devices.as_ref(),
+        state.secrets.as_ref(),
+        headers,
+        "POST",
+        target,
+        body,
+        correlation_id,
+    )
+    .await
+    .map(PrivateRoomActor::Device)
 }
 
 async fn session(

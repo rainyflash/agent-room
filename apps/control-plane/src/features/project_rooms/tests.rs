@@ -30,7 +30,9 @@ use tower::ServiceExt;
 use url::Url;
 use uuid::Uuid;
 
-use super::{ProjectRoomHttpState, router};
+use super::{ProjectRoomHttpDependencies, ProjectRoomHttpState, router};
+
+mod device;
 
 const PRINCIPAL_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e42";
 const CATALOG_UUID: &str = "0198b601-77a1-7bb8-83eb-a8fe68c97e46";
@@ -502,9 +504,17 @@ fn binding_json() -> Value {
 }
 
 fn test_router(rooms: Arc<FakeProjectRooms>) -> Router {
+    router_with_devices(rooms, Arc::default())
+}
+
+fn router_with_devices(rooms: Arc<FakeProjectRooms>, devices: Arc<device::FakeDevices>) -> Router {
     router(ProjectRoomHttpState::new(
-        rooms,
-        Arc::new(FakeAuthentication),
+        ProjectRoomHttpDependencies {
+            rooms,
+            authentication: Arc::new(FakeAuthentication),
+            devices,
+            secrets: Arc::new(agent_room_identity_adapter::SecureSecretFactory),
+        },
         &Url::parse(FRONTEND_ORIGIN).unwrap(),
         &crate::config::DesktopOrigins::for_tests(),
         "agent-room.test",

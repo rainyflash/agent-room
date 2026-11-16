@@ -10,9 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
+    devices::AuthenticatedDevice,
     ports::{
-        CreateProjectRoom, ProjectRoomCandidate, ProjectRoomCreation, RepositoryBindingRecord,
-        RepositoryReadFailure,
+        CreateProjectRoom, PrincipalAccount, ProjectRoomCandidate, ProjectRoomCreation,
+        RepositoryBindingRecord, RepositoryReadFailure,
     },
     private_rooms::PrivateRoomActor,
     project_rooms::{
@@ -22,7 +23,8 @@ use agent_room_application::{
     },
 };
 use agent_room_domain::{
-    ids::{PrincipalId, RoomCatalogId},
+    identity::Principal,
+    ids::{DeviceId, PrincipalId, RoomCatalogId},
     project_rooms::{ClaimCheckResult, GithubRepository, RepositoryFile},
     room_listing::RoomShareCode,
     time::UtcMillis,
@@ -182,6 +184,51 @@ async fn 同一个人同一个仓库再认领回同一个_最多三个在等() {
         ProjectRoomFailureKind::NotFound
     );
     fixture.claim(owner(), "octo/fourth").await;
+}
+
+#[tokio::test]
+async fn 本机设备替账户认领和网页的是同一个_网络_agent_一律不让() {
+    let fixture = Fixture::new();
+    let by_web = fixture.claim(owner(), "octo/hello").await;
+    let by_device = fixture
+        .service
+        .claim(ClaimRepository {
+            actor: PrivateRoomActor::Device(device(owner())),
+            repository: "octo/hello".to_owned(),
+            target: None,
+        })
+        .await
+        .expect("本机设备认领得了");
+    assert_eq!(by_device.claim_id, by_web.claim_id, "同一个账户同一个仓库");
+    let checked = fixture
+        .service
+        .check_claim(InspectClaim {
+            actor: PrivateRoomActor::Device(device(owner())),
+            claim_id: by_device.claim_id.unwrap(),
+        })
+        .await
+        .expect("本机设备核对得了");
+    assert_eq!(checked.status, ClaimStatus::Pending);
+
+    let refused = fixture
+        .service
+        .claim(ClaimRepository {
+            actor: PrivateRoomActor::NetworkAgent(device(stranger())),
+            repository: "octo/world".to_owned(),
+            target: None,
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind(), ProjectRoomFailureKind::Forbidden);
+    let refused = fixture
+        .service
+        .check_claim(InspectClaim {
+            actor: PrivateRoomActor::NetworkAgent(device(owner())),
+            claim_id: by_device.claim_id.unwrap(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind(), ProjectRoomFailureKind::Forbidden);
 }
 
 #[tokio::test]
@@ -678,6 +725,21 @@ fn principal(principal_id: PrincipalId) -> AuthenticatedPrincipal {
         authenticated_at: time(NOW - 1_000),
         expires_at: UtcMillis::new(i64::MAX).unwrap(),
         recently_authenticated: false,
+    }
+}
+
+/// 这台电脑（或者网络 Agent 那边）的设备身份；令牌远没到期。
+fn device(principal_id: PrincipalId) -> AuthenticatedDevice {
+    AuthenticatedDevice {
+        account: PrincipalAccount {
+            principal: Principal::new(principal_id),
+            matrix_user_id: "@someone:matrix.test".to_owned(),
+            display_name: "Someone".to_owned(),
+            avatar_content_id: None,
+            locale: "zh-CN".to_owned(),
+        },
+        device_id: DeviceId::from_uuid(Uuid::from_u128(50)),
+        access_token_expires_at: UtcMillis::new(i64::MAX).unwrap(),
     }
 }
 

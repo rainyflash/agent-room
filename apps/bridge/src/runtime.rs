@@ -123,8 +123,9 @@ use agent_room_bridge::control_plane::{
     ReqwestControlPlaneContentGateway, ReqwestControlPlaneDeviceGateway,
     ReqwestControlPlaneHandoffGateway, ReqwestControlPlaneJoinCodeGateway,
     ReqwestControlPlaneLobbyEntryGateway, ReqwestControlPlaneMessageContentGateway,
-    ReqwestControlPlaneOnboardingGateway, ReqwestControlPlaneRoomDirectoryGateway,
-    ReqwestControlPlaneRoomManagementGateway, ReqwestTargetedHandoffQueueGateway,
+    ReqwestControlPlaneOnboardingGateway, ReqwestControlPlaneProjectRoomGateway,
+    ReqwestControlPlaneRoomDirectoryGateway, ReqwestControlPlaneRoomManagementGateway,
+    ReqwestTargetedHandoffQueueGateway,
 };
 use agent_room_bridge_storage_adapter::{
     SqliteMessageSubmissionRepository, SqliteMessageTimelineRepository,
@@ -240,6 +241,7 @@ pub(crate) async fn run() -> Result<(), BridgeRuntimeError> {
         invitations: crate::host_sessions::InvitationSlot::default(),
         join_codes: join_code_access(&config, &device_session.service)?,
         rooms: room_management_access(&config, &device_session.service)?,
+        project_rooms: project_room_access(&config, &device_session.service)?,
     });
     let server = BridgeIpcServer::bind(
         &paths,
@@ -1338,6 +1340,23 @@ fn join_code_access(
         host_agents: Arc::new(
             ReqwestControlPlaneOnboardingGateway::new(&http, authorizer.clone())
                 .map_err(configuration)?,
+        ),
+    })
+}
+
+/// 认领 GitHub 仓库、现在核对：按设备签名，不建人物。
+fn project_room_access(
+    config: &BridgeConfig,
+    authorizer: &Arc<BridgeSessionService>,
+) -> Result<crate::host_sessions::ProjectRoomAccess, BridgeRuntimeError> {
+    let http = ControlPlaneHttpConfig {
+        base_url: config.control_plane_url.clone(),
+        request_timeout: config.request_timeout,
+    };
+    Ok(crate::host_sessions::ProjectRoomAccess {
+        gateway: Arc::new(
+            ReqwestControlPlaneProjectRoomGateway::new(&http, authorizer.clone())
+                .map_err(|error| BridgeRuntimeError::configuration(error.to_string()))?,
         ),
     })
 }
