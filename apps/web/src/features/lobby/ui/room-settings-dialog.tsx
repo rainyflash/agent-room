@@ -1,5 +1,5 @@
 import { Banner, Button, Dialog, Segmented, Spinner } from '@agent-room/ui-system';
-import { Bot, DoorOpen, Gavel, Globe2, KeyRound, Pin, UsersRound } from 'lucide-react';
+import { Bot, DoorOpen, Gavel, Globe2, KeyRound, List, Pin, UsersRound } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -25,6 +25,7 @@ import { PrivateRoomPublicSettings } from '@/features/private-rooms/ui/private-r
 import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import { RoomNoticeEditor } from '@/features/room-notice/ui/room-notice-editor';
 import type { WebSession } from '@/features/session/domain/session';
+import { RoomSubRoomsSettings } from '@/features/sub-rooms/ui/room-sub-rooms-settings';
 import { SubRoomSettings } from '@/features/sub-rooms/ui/sub-room-settings';
 
 import { agentCountsByOwner } from '../domain/agent-owners';
@@ -32,7 +33,14 @@ import { useAgentOwners } from './agent-owners';
 import './room-settings.css';
 
 export type RoomSettingsSection =
-  'agent-code' | 'automation' | 'listing' | 'members' | 'moderation' | 'notice' | 'sub-room';
+  | 'agent-code'
+  | 'automation'
+  | 'listing'
+  | 'members'
+  | 'moderation'
+  | 'notice'
+  | 'sub-room'
+  | 'sub-rooms';
 
 /** 不替谁去问主人：只读房间页问到的那一份。 */
 const noAgents: readonly string[] = [];
@@ -45,6 +53,7 @@ const sectionIcons: Readonly<Record<RoomSettingsSection, ReactNode>> = {
   moderation: <Gavel aria-hidden="true" />,
   notice: <Pin aria-hidden="true" />,
   'sub-room': <DoorOpen aria-hidden="true" />,
+  'sub-rooms': <List aria-hidden="true" />,
 };
 
 /** 眼前是子房间时：它在名单里的那一行，和它所在的整间房的名单。 */
@@ -87,7 +96,7 @@ export function RoomSettingsDialog({
   subRoom = null,
 }: RoomSettingsDialogProps) {
   const { t } = useTranslation();
-  const { privateRoomListings, privateRooms, moderation, roomNotices } = useAppServices();
+  const { privateRoomListings, privateRooms, moderation, roomNotices, subRooms } = useAppServices();
   // 子房间不在房间列表里，单独问这一间（`usePrivateRoomListWith`）。
   const list = usePrivateRoomListWith(
     privateRooms,
@@ -119,6 +128,7 @@ export function RoomSettingsDialog({
     ...(subRoom !== null && managesSubRoom(subRoom.room) ? (['sub-room'] as const) : []),
     ...(wholeRoom ? (['members'] as const) : []),
     ...(wholeRoom && privateRoomListings !== undefined ? (['listing'] as const) : []),
+    ...(wholeRoom && canManageRoom && subRooms !== undefined ? (['sub-rooms'] as const) : []),
     ...(canManageRoom && roomNotices !== undefined ? (['notice'] as const) : []),
     ...(canManageRoom && subRoom === null ? (['agent-code'] as const) : []),
     'automation',
@@ -169,6 +179,8 @@ export function RoomSettingsDialog({
           ) : null}
           {sections.length > 1 ? (
             <Segmented
+              // 七节放一行时图标挤掉了名字：只留名字。
+              {...(sections.length >= 7 ? { className: 'room-settings__tabs--dense' } : {})}
               label={t('roomSettings.sections')}
               onChange={setChosen}
               options={sections.map((section) => ({
@@ -277,6 +289,8 @@ function RoomSettingsContent({
           room={subRoom.room}
         />
       );
+    case 'sub-rooms':
+      return <RoomSubRoomsSettings parentId={catalogId} />;
     case 'members':
       return room === null ? null : (
         <PrivateRoomMembers

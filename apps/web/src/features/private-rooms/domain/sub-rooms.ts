@@ -111,6 +111,12 @@ export type ReviseSubRoomInput = {
   readonly categoryId?: string | null;
 };
 
+/** 建分类：分类号由网页先定好，也是这次建的幂等键（`Idempotency-Key`），同一个号再建一次不多建。 */
+export type CreateSubRoomCategoryInput = {
+  readonly categoryId: string;
+  readonly name: string;
+};
+
 export type ReviseSubRoomCategoryInput = {
   readonly name?: string;
   readonly position?: number;
@@ -156,7 +162,10 @@ export type SubRoomGateway = {
   grantManager(room: SubRoomRef, principalId: string): SubRoomResult<void>;
   revokeManager(room: SubRoomRef, principalId: string): SubRoomResult<void>;
   /** Category writes answer the room's categories after the change, in order. */
-  createCategory(parentId: string, name: string): SubRoomResult<readonly SubRoomCategory[]>;
+  createCategory(
+    parentId: string,
+    input: CreateSubRoomCategoryInput,
+  ): SubRoomResult<readonly SubRoomCategory[]>;
   reviseCategory(
     parentId: string,
     categoryId: string,

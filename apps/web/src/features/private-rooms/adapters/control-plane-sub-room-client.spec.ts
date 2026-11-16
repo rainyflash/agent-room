@@ -254,7 +254,9 @@ describe('ControlPlaneSubRoomClient', () => {
 
   it('分类的几样都回改完以后的分类', async () => {
     const created = clientAnswering(Response.json({ categories: CATEGORIES }, { status: 201 }));
-    expect(await created.client.createCategory(PARENT, 'Work')).toEqual({
+    expect(
+      await created.client.createCategory(PARENT, { categoryId: CATEGORY, name: 'Work' }),
+    ).toEqual({
       ok: true,
       value: CATEGORIES,
     });
@@ -263,6 +265,7 @@ describe('ControlPlaneSubRoomClient', () => {
       url: `${BASE}/private-rooms/${PARENT}/sub-room-categories`,
       body: { name: 'Work' },
     });
+    expect(sent(created.fetch).headers.get('Idempotency-Key')).toBe(CATEGORY);
 
     const moved = clientAnswering(Response.json({ categories: CATEGORIES }));
     await moved.client.reviseCategory(PARENT, CATEGORY, { position: 0 });
