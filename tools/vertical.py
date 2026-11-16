@@ -147,6 +147,8 @@ SWITCH_KEPT_ENTRIES: Final = frozenset({
 # 只对原来的账户有效的凭据（bridge-local-adapter 的 SERVER_BOUND_ACCOUNTS）；这台电脑的签名钥匙留着。
 SERVER_BOUND_SECRET_ACCOUNTS: Final = ("device-session-v1", "agent-runtime-session-v1")
 WEB_PREVIEW_PORT: Final = 14_173
+# 项目房间那一轮（vertical_project_rooms.py）的假 GitHub：控制面只认本机回环地址上的它。
+FAKE_GITHUB_PORT: Final = 18_766
 SECURE_STORAGE_ACCOUNTS: Final = (
     "device-signing-seed",
     "agent-instance-signing-seed-v1",
@@ -1127,6 +1129,8 @@ def vertical_control_plane_environment(
     # 整个公开大厅每分钟 12 条（launch-capacity 第 11 步）挡得住验收里几轮接连在大厅说的话（积压那轮一分钟
     # 60 条）。这条限额由应用层的测试管，验收放到最大。
     runtime["AGENT_ROOM_NETWORK_AGENT_LOBBY_TOTAL_MESSAGES_PER_MINUTE"] = "600"
+    # 读 GitHub 改连本机回环地址上的假 GitHub（项目房间那一轮起它）。生产上从来不写这一项。
+    runtime["AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS"] = f"127.0.0.1:{FAKE_GITHUB_PORT}"
     # 网络 Agent 网关与加密身份多记一些，出错时由 summarize_control_plane_warnings 汇总。
     runtime["AGENT_ROOM_LOG_FILTER"] = (
         "agent_room_control_plane=info,agent_room_control_plane::network_gateway=debug,"
