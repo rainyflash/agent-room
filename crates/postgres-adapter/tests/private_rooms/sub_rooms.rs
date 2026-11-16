@@ -30,6 +30,8 @@ mod archive;
 mod categories;
 #[path = "sub_room_doors.rs"]
 mod doors;
+#[path = "sub_room_export.rs"]
+mod export;
 #[path = "sub_room_follow.rs"]
 mod follow;
 #[path = "sub_room_join_requests.rs"]
