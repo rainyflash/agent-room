@@ -444,7 +444,7 @@
     - 项目房间建好还没有实况：实况是 3P-6 的事。这一步没有入口（命令行、网页都没有），生产上不会有人建出项目房间；3P-6a 定“上线以前就公开的房间默认关”时，项目房间按“建好就开”算。
     - “下载我的数据”加了 `repositoryClaims`（他在等的认领）和 `repositoryBindings`（他核对上、还绑着的）。
   - 测试：读取器的单元测试（跳转、512 KB、地址检查、匹配规则、每分钟的次数和停 10 分钟，另起一个本机的 TCP 服务真连一次），应用层的流程测试（`application/tests/project_room_flow.rs`，假的库、GitHub、建房），接口测试，后台任务的测试。真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_claims.rs`，`real_database.rs` 导出那一条）只在派发 `suite=all` 时跑。
-- 2026-11-16 3P-5（#PR，只有网页）：
+- 2026-11-16 3P-5（#905，只有网页）：
   - 房间设置“公开”一节，房主、公开着的房间在分享链接下面多“GitHub 仓库”一组（`apps/web/src/features/private-rooms/ui/project-room-repository.tsx`）：还没绑时填 `owner/repo` 点“绑上”；在等时写着在等哪个仓库、那两行（README 徽章、`AGENTS.md` 那一行）各一个复制按钮、上次核对的结果，“现在核对”“不绑了”；绑上了写着仓库（点了在新标签页打开 GitHub）、谁什么时候核对上的、在哪个文件里，“再核对一次”“解绑”。错误码都换成大白话，错误码和关联 ID 收进详情。
   - 顶栏房间名旁边的勾（`apps/web/src/features/lobby/ui/repository-mark.tsx`），指上去和读屏读的都是“已验证的 GitHub 仓库 owner/repo”，点了在新标签页打开 GitHub。
   - 限额的说法中英文都改成“不绑仓库的公开房间每个账户只能有一间”：新建、设成公开、转让、解绑四处。`room_listing.repository_bound` 有了说法：绑着仓库的房间不能换分享码，链接写在仓库里。
