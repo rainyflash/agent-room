@@ -1,5 +1,7 @@
 //! 每个账户的邮件提醒开关（`specs/redesign/reminders.md` 的“存什么”）。没有这一行的照默认算：开着。
 
+mod recipients;
+
 use agent_room_application::{
     persistence::RepositoryResult,
     ports::{PortFuture, ReminderAccount, ReminderSettingsRepository},
