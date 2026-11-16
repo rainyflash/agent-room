@@ -6,6 +6,7 @@
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
+    owner_handover::AdminTenure,
     room_role_changes::{RoomStanding, RoomStandingChange},
     time::UtcMillis,
 };
@@ -50,4 +51,11 @@ pub trait RoomRoleChangeLog: Send + Sync {
         catalog_id: RoomCatalogId,
         limit: u16,
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomRoleChangeRecord>>>;
+
+    /// 这间房此刻已加入、有“管理”的人各当了多久管理员（R6，房主删除账户时挑谁接手）：最近一次
+    /// 拿到“管理”的时间（没有记录的为空），和成员记录建的时间。房主也在里面，挑的时候去掉。
+    fn admin_tenure(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AdminTenure>>>;
 }

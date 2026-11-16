@@ -5,6 +5,8 @@ mod bridge_lifecycle;
 mod bridge_supervisor;
 #[cfg(test)]
 mod capability_tests;
+#[cfg(test)]
+mod closed_port_test_support;
 mod commands;
 mod computer_grant;
 mod control_plane_proxy;

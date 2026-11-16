@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    net::{Ipv4Addr, SocketAddr},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -35,7 +36,11 @@ use rsa::{
     pkcs1::{EncodeRsaPrivateKey, LineEnding},
 };
 use serde_json::json;
-use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
+use tokio::{
+    net::{TcpListener, TcpSocket},
+    sync::Mutex,
+    task::JoinHandle,
+};
 
 const CLIENT_ID: &str = "agent-room-bridge-test";
 const DEVICE_CODE: &str = "一次性设备授权码-测试专用";
@@ -525,11 +530,12 @@ async fn 验证码无法展示时报告本地故障且不开始轮询() {
 
 #[tokio::test]
 async fn 身份服务连不上时报告暂不可用且没有展示验证码() {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("应能绑定本地测试端口");
-    let issuer = format!("http://{}", listener.local_addr().expect("测试地址可读"));
-    drop(listener);
+    // 占着端口但不听。别改回“绑定再放掉”：放掉的端口会被并行的别的用例拿去起服务。
+    let closed = TcpSocket::new_v4().expect("应能建出 TCP 套接字");
+    closed
+        .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .expect("应能占住本地测试端口");
+    let issuer = format!("http://{}", closed.local_addr().expect("测试地址可读"));
     let prompt_sink = 记录提示::default();
 
     let failure = 设备授权网关(&issuer)

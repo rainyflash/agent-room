@@ -17,6 +17,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId, RoomInstanceId},
+    owner_handover::AdminTenure,
     private_rooms::{
         PrivateRoom, PrivateRoomCapability, PrivateRoomMembershipStatus, PrivateRoomPermissions,
     },
@@ -103,6 +104,13 @@ impl RoomRoleChangeLog for 记录 {
     ) -> PortFuture<'_, RepositoryResult<Vec<RoomRoleChangeRecord>>> {
         self.asked.lock().unwrap().push((catalog_id, limit));
         Box::pin(async { Ok(vec![record()]) })
+    }
+
+    fn admin_tenure(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AdminTenure>>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 
