@@ -186,6 +186,10 @@ pub use rooms::{
     RepositoryReadFailure, RepositoryScan, UnbindRepositoryOutcome,
 };
 pub use rooms::{
+    EnableRoomLiveViewOutcome, RoomEncryptionState, RoomLiveViewFacts, RoomLiveViewRecord,
+    RoomLiveViewStore,
+};
+pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
     SubRoomDoorSource, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange,
     SubRoomParentFacts, SubRoomPolicyRecord, SubRoomPrivacy, SubRoomRevision, SubRoomRevisionBlock,

@@ -1004,6 +1004,26 @@ impl PrivateRoom {
         self.require(actor, PrivateRoomCapability::Manage, "置顶房间里的一句")
     }
 
+    /// 开关分享页上的实况（`specs/redesign/project-rooms.md`“分享页放实况”）：房主和管理员。不看房间
+    /// 在不在使用中：关掉的房间开不了是放实况的条件之一，由调用方照实说是哪一样。
+    ///
+    /// # Errors
+    ///
+    /// 操作者不是已加入、带“管理”的成员时返回错误。
+    pub fn authorize_live_view_change(&self, actor: PrincipalId) -> DomainResult<()> {
+        let manages = self
+            .members
+            .get(&actor)
+            .is_some_and(|member| member.allows(PrivateRoomCapability::Manage));
+        if manages {
+            Ok(())
+        } else {
+            Err(DomainError::Forbidden {
+                action: "开关分享页上的实况",
+            })
+        }
+    }
+
     /// 把房间交给 Agent 管、看和撤这些授权（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：
     /// 房主和管理员，房间还要在使用中。
     ///

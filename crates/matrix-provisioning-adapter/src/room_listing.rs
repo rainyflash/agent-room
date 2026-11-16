@@ -5,7 +5,7 @@
 
 use agent_room_application::ports::{
     MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId, PortFuture,
-    PrivateRoomListingMatrix,
+    PrivateRoomListingMatrix, RoomEncryptionState,
 };
 use agent_room_domain::time::UtcMillis;
 use chrono::{DateTime, SecondsFormat};
@@ -13,10 +13,26 @@ use serde_json::{Value, json};
 
 use super::{
     MatrixApplicationServiceProvisioner, map_transport_error,
+    room_notices::read_room_state,
     rooms::{endpoint_with_segments, expect_empty_success},
 };
 
 const ROOM_LISTING_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.room.listing.v1";
+
+/// 分享页放实况之前问一遍（`specs/redesign/project-rooms.md`“分享页放实况”）：房间状态里有
+/// `m.room.encryption` 就是加密的，不管里面写的什么算法。
+impl RoomEncryptionState for MatrixApplicationServiceProvisioner {
+    fn room_encrypted<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<bool>> {
+        Box::pin(async move {
+            Ok(read_room_state(self, room_id, "m.room.encryption")
+                .await?
+                .is_some())
+        })
+    }
+}
 
 impl PrivateRoomListingMatrix for MatrixApplicationServiceProvisioner {
     fn mark_listed<'a>(
@@ -106,7 +122,8 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use agent_room_application::ports::{
-        MatrixFailureKind, MatrixRoomId, PrivateRoomListingMatrix, SecretValue,
+        MatrixFailureKind, MatrixRoomId, PrivateRoomListingMatrix, RoomEncryptionState as _,
+        SecretValue,
     };
     use agent_room_domain::time::UtcMillis;
     use axum::{
@@ -164,6 +181,59 @@ mod tests {
             .await
             .expect_err("没写进去");
         assert_ne!(failure.kind(), MatrixFailureKind::InvalidConfiguration);
+    }
+
+    #[tokio::test]
+    async fn 问房间加没加密_有加密状态就是加密_没有这一条是不加密() {
+        async fn answer(
+            Path((room, event_type)): Path<(String, String)>,
+        ) -> (StatusCode, Json<Value>) {
+            assert_eq!(event_type, "m.room.encryption");
+            match room.as_str() {
+                "!sealed:matrix.agent-room.localhost" => (
+                    StatusCode::OK,
+                    Json(json!({ "algorithm": "m.megolm.v1.aes-sha2" })),
+                ),
+                "!plain:matrix.agent-room.localhost" => (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "errcode": "M_NOT_FOUND", "error": "missing" })),
+                ),
+                _ => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({ "errcode": "M_UNKNOWN", "error": "unavailable" })),
+                ),
+            }
+        }
+        let app = Router::new().route(
+            "/_matrix/client/v3/rooms/{room}/state/{event_type}/",
+            axum::routing::get(answer),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("测试端口可用");
+        let address = listener.local_addr().expect("测试地址有效");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("测试服务可运行");
+        });
+        let provisioner = provisioner(&format!("http://{address}"));
+        let room = |id: &str| MatrixRoomId::new(id).unwrap();
+
+        assert!(
+            provisioner
+                .room_encrypted(&room("!sealed:matrix.agent-room.localhost"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !provisioner
+                .room_encrypted(&room("!plain:matrix.agent-room.localhost"))
+                .await
+                .unwrap()
+        );
+        provisioner
+            .room_encrypted(&room("!down:matrix.agent-room.localhost"))
+            .await
+            .expect_err("问不到的照实报错，不当成不加密");
     }
 
     async fn start(status: StatusCode) -> (String, Writes) {

@@ -8,7 +8,7 @@ use agent_room_application::ports::{
     AccountDeletionRepository, BindRepository, BindRepositoryOutcome, DueClaimQuery,
     PrivateRoomListingStore, ProjectRoomSaveOutcome, ProjectRoomStore, RepositoryBindingRecord,
     RepositoryCheckRecord, RepositoryClaimCheckStart, RepositoryClaimInsertOutcome,
-    RepositoryClaimRecord, UnbindRepositoryOutcome,
+    RepositoryClaimRecord, RoomLiveViewRecord, RoomLiveViewStore, UnbindRepositoryOutcome,
 };
 use agent_room_domain::{
     ids::RepositoryClaimId,
@@ -522,6 +522,18 @@ async fn 认上以后建项目房间_房间公开不加密_绑上删认领一个
     .await
     .expect("可读");
     assert!(!encrypted, "项目房间不加密");
+    assert_eq!(
+        RoomLiveViewStore::live_view_facts(&repositories, catalog_id)
+            .await
+            .expect("可读")
+            .expect("有房间")
+            .live_view,
+        Some(RoomLiveViewRecord {
+            enabled_by: owner,
+            enabled_at: time(3),
+        }),
+        "项目房间建好就放实况，从建房那一刻起"
+    );
 
     let another = RoomCatalogId::from_uuid(Uuid::now_v7());
     assert_eq!(

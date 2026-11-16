@@ -30,6 +30,7 @@ mod project_rooms;
 mod provisioning;
 mod public_room_directory;
 mod role_changes;
+mod room_live;
 mod room_moderation_grants;
 mod room_pins;
 mod sub_room_activity;
@@ -96,6 +97,10 @@ pub use public_room_directory::{
 };
 pub use role_changes::{
     RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
+};
+pub use room_live::{
+    EnableRoomLiveViewOutcome, RoomEncryptionState, RoomLiveViewFacts, RoomLiveViewRecord,
+    RoomLiveViewStore,
 };
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,

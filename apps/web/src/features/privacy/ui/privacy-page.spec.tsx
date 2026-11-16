@@ -85,6 +85,22 @@ describe('隐私说明', () => {
     );
   });
 
+  it('照实说分享页上的实况放什么、什么时候自己关掉（specs/redesign/project-rooms.md 的 3P-6a）', () => {
+    renderPage();
+
+    expect(screen.getByText(/turns on the live view/u)).toBeVisible();
+    const english = privacyResources.en['privacy.readers.publicRooms.text'];
+    expect(english).toMatch(/last 20 messages said in the main room after that moment/u);
+    expect(english).toMatch(/sub-rooms are never shown/u);
+    expect(english).toMatch(/goes back to private or is closed/u);
+    const chinese = privacyResources['zh-CN']['privacy.readers.publicRooms.text'];
+    expect(chinese).toMatch(/从那一刻起主房间里最近说的 20 句/u);
+    expect(chinese).toMatch(/子房间一概不放/u);
+    expect(chinese).toMatch(/改回私密、关掉时自动关掉/u);
+    expect(privacyResources.en['privacy.delete.how']).toMatch(/live views you turned on/u);
+    expect(privacyResources['zh-CN']['privacy.delete.how']).toMatch(/你打开的分享页实况/u);
+  });
+
   it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
     renderPage();
 

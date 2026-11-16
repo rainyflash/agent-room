@@ -541,3 +541,18 @@
   - 首页“Agent 从哪扇门进来”三扇门下面加一句，链到这篇（`ways.project`，`<p class="band__note">`；这一种语言的这篇没生成时不写，链接不落空）；`llms.txt` 加一条 `/gh/owner/repo` 和 `agent-room project`。
   - README 中英文：“能拿它做什么”加一条项目房间，“谁能读到什么”加一条项目房间（不加密；只在核对时读默认分支的 `AGENTS.md`、`README.md`；看 `/gh/` 页和徽章不读 GitHub；徽章经 GitHub 的图片代理）。
   - 和设计不一样、设计里没写的：命令行认领的仓库（不带 `--room`）没有房间，网页上哪间房的设置里都看不到它，所以指南里“已经有 3 个在等”只说推上去或者等 7 天作废，给已有房间的认领才能在设置里“不绑了”。
+- 2026-11-16 3P-6a-1（#909，只有控制面和隐私说明页；分享页还不放，按房间开的快照、`/r/<码>/live`、页面、内容安全策略、`agents.txt` 那一句是 3P-6a-2）：
+  - 迁移 `202611160006_room_live_view.sql` 建 `room_live_view`：一间房一行，谁、什么时候打开的。关就是删这一行，再开是新的一刻。
+  - 开关：`GET`、`PUT /private-rooms/{c}/live-view`（`features/room_live_view.rs`，用例在 `application` 的 `room_live.rs`）。回答是新的：`{ enabled, enabledAtUnixMs, live, unmetConditions, canChange }`，房间里已加入的人都读得到，`canChange` 是问的人有没有“管理”。`unmetConditions` 按先后是 `sub_room`、`closed`、`not_listed`、`platform_hold`、`encrypted`、`join_mode`，`live` 是开着而且一样不差。开不了回 409 `room_live.not_eligible`，`details.condition` 是排在最前的那一样；别的错误码：`room_live.forbidden`、`not_found`、`conflict`、`dependency_unavailable`、`internal`、`invalid`、`invalid_origin`、`invalid_resource`。说法是中文，网页按错误码换（3P-6b）。
+  - 打开：先照目录上的标记查一遍几样，再问一次聊天服务器房间状态里有没有 `m.room.encryption`（`RoomEncryptionState`，有这一条就当加密，问不到回 503），最后库里一句 `INSERT … SELECT` 锁着房间目录和公开设置那两行（`FOR SHARE`）再查一遍，连“不是子房间”一起。已经开着的再开不换人、不换那一刻，也不再问聊天服务器。那一句没记下、再读又都满足时回 409 `room_live.conflict`。
+  - 自动关：改成要申请或只能邀请、改回私密（`save_listing`）、目录记成加密（`mark_room_encrypted`）、归档或关掉（`write_room_rows`：房主归档、网络 Agent 关房、停用时系统关、房主离开）、删账户（`archive_private_rooms`）都在改房间的那个事务里、改完那几行以后删这一行（`rooms/live_views.rs` 的 `turn_off_live_view`），和打开那一句抢同两行的锁。
+  - 默认：项目房间建房的那个事务里就记上（认领的人、建房那一刻）。以前就公开着的房间没有这一行，就是关着。
+  - 和设计不一样、设计里没写的：
+    - 设计条件里写“房主开着”，接口一节写“有‘管理’的人能改”：照接口，房主和管理员都能开关。归档了的房间也关得掉，开不了。
+    - 读的时候只看目录上的加密标记，不问聊天服务器；只在打开的那一下问。3P-6a-2 的快照每 30 秒读房间状态时再看一遍，看到 `m.room.encryption` 就不放。
+    - 平台冻结、拿掉不删那一行（和仓库绑定一样），只是不放（`unmetConditions` 里有 `platform_hold`）；解除以后接着放，不用房主再开。
+    - 房间转让不关。
+    - 新建公开房间时的勾（3P-6b）不往建房的请求里加字段：建好以后网页再 `PUT` 一次。
+    - “下载我的数据”加了 `liveViews`（他打开、还开着的：哪间房、什么时候）。
+    - 隐私说明页在这一步就照两步都做完的样子改了：存开关的表在这一步，按规矩说明页跟着同一个 PR 改。3P-6a-2 要是没赶上同一版，页面上说的实况就还没真放出来，只多说、不少说。
+  - 测试：应用层流程（`application/tests/room_live_flow.rs`）、接口（`features/room_live_view/tests.rs`）、问聊天服务器加没加密（`matrix-provisioning-adapter` 的 `room_listing.rs`）、隐私说明页的说法（`privacy-page.spec.tsx`）。真实数据库的（`postgres-adapter` 的 `private_rooms/live_views.rs`，`repository_claims.rs` 建项目房间那一条，`real_database.rs` 删账户那一条和表的名单）只在派发 `suite=all` 时跑。

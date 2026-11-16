@@ -56,7 +56,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 76] = [
+const EXPECTED_TABLES: [&str; 77] = [
     "account_deletion_job",
     "account_reminder",
     "adapter_binding",
@@ -129,6 +129,7 @@ const EXPECTED_TABLES: [&str; 76] = [
     "room_capacity_reservation",
     "room_catalog_entry",
     "room_instance",
+    "room_live_view",
     "room_moderation_grant",
     "room_provisioning_job",
     "room_repository_binding",
@@ -289,6 +290,7 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
     );
     assert_eq!(exported.data["repositoryClaims"], serde_json::json!([]));
     assert_eq!(exported.data["repositoryBindings"], serde_json::json!([]));
+    assert_eq!(exported.data["liveViews"], serde_json::json!([]));
 }
 
 #[tokio::test]
@@ -469,26 +471,41 @@ async fn seed_project_room(
     .execute(pool)
     .await
     .expect("认领写入应成功");
+    // 分享页上的实况开着（3P-6a）。
+    sqlx::query(
+        r"INSERT INTO agent_room.room_live_view (catalog_entry_id, enabled_by, enabled_at)
+          VALUES ($1, $2, now())",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("实况写入应成功");
     catalog_id
 }
 
-/// 删账户时他在等的认领、他名下房间绑着的仓库都清掉。
+/// 删账户时他在等的认领、他名下房间绑着的仓库、开着的实况都清掉。
 async fn assert_project_room_released(
     pool: &PgPool,
     principal_id: PrincipalId,
     room: RoomCatalogId,
 ) {
-    let remaining: (i64, i64) = sqlx::query_as(
+    let remaining: (i64, i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM agent_room.repository_claim WHERE principal_id = $1),
                 (SELECT count(*) FROM agent_room.room_repository_binding
-                  WHERE catalog_entry_id = $2)",
+                  WHERE catalog_entry_id = $2),
+                (SELECT count(*) FROM agent_room.room_live_view WHERE catalog_entry_id = $2)",
     )
     .bind(principal_id.as_uuid())
     .bind(room.as_uuid())
     .fetch_one(pool)
     .await
     .expect("可数");
-    assert_eq!(remaining, (0, 0), "删账户时认领和绑着的仓库一起清掉");
+    assert_eq!(
+        remaining,
+        (0, 0, 0),
+        "删账户时认领、绑着的仓库和实况一起清掉"
+    );
 }
 
 /// 服务器替账户保管的签名钥匙（ADR 0011）：存、覆盖、读回。

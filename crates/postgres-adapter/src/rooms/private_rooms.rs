@@ -29,6 +29,7 @@ use crate::{
 
 use super::{
     decode::{CATALOG_COLUMNS, INSTANCE_COLUMNS, corrupt_data, decode_catalog, decode_instance},
+    live_views::turn_off_live_view,
     repository_bindings::unbind_repository,
     role_changes::insert_role_changes,
     sub_room_follow::{follow_saved_parent, members_before_save},
@@ -440,6 +441,8 @@ async fn write_room_rows(
     if room.status() == PrivateRoomLifecycleStatus::Archived {
         // 归档、关掉的房间解绑仓库；恢复以后不绑回去，要绑重新认领。
         unbind_repository(transaction, room.catalog_id(), operation).await?;
+        // 分享页上的实况一起关掉；恢复以后要房主再开，那一刻以前说的话不放。
+        turn_off_live_view(transaction, room.catalog_id(), operation).await?;
     }
 
     let instance_state = lifecycle_instance_state(room.status());

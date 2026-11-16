@@ -37,6 +37,7 @@ pub(crate) mod public_watch;
 pub(crate) mod reception;
 pub(crate) mod reminders;
 mod resource_ids;
+pub(crate) mod room_live_view;
 pub(crate) mod room_moderation_grants;
 pub(crate) mod room_people;
 pub(crate) mod room_role_changes;
