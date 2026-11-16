@@ -84,6 +84,7 @@ fn error_hint(code: &str) -> &'static str {
         .or_else(|| rooms_hint(code))
         .or_else(|| sub_room_hint(code))
         .or_else(|| crate::rooms::moderation_hint(code))
+        .or_else(|| crate::project::hint(code))
     {
         return hint;
     }

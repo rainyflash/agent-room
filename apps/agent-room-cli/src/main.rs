@@ -2,6 +2,7 @@ mod access;
 mod cli;
 mod output;
 mod profile;
+mod project;
 mod receiver;
 mod rooms;
 
@@ -114,6 +115,10 @@ async fn run(cli: Cli) -> CliResult<()> {
         );
         return success(created.await?);
     }
+    // 认领仓库不要档案；认上以后带 --wait 进房间时才像 join 一样挑人物。
+    if let Command::Project(args) = cli.command {
+        return project::run(backend, &data_root, service.as_str(), cli.profile, args).await;
+    }
     if cli.profile.is_some()
         || matches!(
             &cli.command,
@@ -142,6 +147,8 @@ async fn run_command(
         Command::Join { .. } | Command::Resume | Command::Ack { .. } | Command::Leave { .. } => {
             Err(CliFailure::validation("cli.profile.required"))
         }
+        // 在 `run` 里就交给认领那一条了，不会走到这里。
+        Command::Project(_) => Err(CliFailure::validation("cli.profile.command_unsupported")),
         Command::Guide => success(access::guide()),
         Command::Rooms(args) => success(list_rooms(backend, args).await?),
         command @ (Command::CreateRoom { .. }
