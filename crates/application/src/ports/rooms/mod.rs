@@ -26,6 +26,7 @@ mod private_room_invites;
 mod private_room_join_requests;
 mod private_room_listing;
 mod private_rooms;
+mod project_rooms;
 mod provisioning;
 mod public_room_directory;
 mod role_changes;
@@ -74,6 +75,13 @@ pub use private_rooms::{
     PrivateRoomDescriptionStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
     PrivateRoomNoticeGateway, PrivateRoomOwnerHandoverGateway, PrivateRoomPrincipalDirectory,
     PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway, RoomNoticeWrite,
+};
+pub use project_rooms::{
+    BindRepository, BindRepositoryOutcome, BoundRepositoryRoom, CreateProjectRoom, DueClaimQuery,
+    ProjectRoomCandidate, ProjectRoomCreation, ProjectRoomCreator, ProjectRoomSaveOutcome,
+    ProjectRoomStore, RepositoryBindingRecord, RepositoryCheckRecord, RepositoryClaimCheckStart,
+    RepositoryClaimInsertOutcome, RepositoryClaimRecord, RepositoryLinkReader,
+    RepositoryReadFailure, RepositoryScan, UnbindRepositoryOutcome,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,

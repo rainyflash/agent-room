@@ -179,6 +179,13 @@ pub use rooms::{
     RoomRoleChangeSubRoom, SealedInviteLink, SealedJoinCode,
 };
 pub use rooms::{
+    BindRepository, BindRepositoryOutcome, BoundRepositoryRoom, CreateProjectRoom, DueClaimQuery,
+    ProjectRoomCandidate, ProjectRoomCreation, ProjectRoomCreator, ProjectRoomSaveOutcome,
+    ProjectRoomStore, RepositoryBindingRecord, RepositoryCheckRecord, RepositoryClaimCheckStart,
+    RepositoryClaimInsertOutcome, RepositoryClaimRecord, RepositoryLinkReader,
+    RepositoryReadFailure, RepositoryScan, UnbindRepositoryOutcome,
+};
+pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,
     SubRoomDoorSource, SubRoomEntry, SubRoomJoinRequestOutcome, SubRoomLink, SubRoomManagerChange,
     SubRoomParentFacts, SubRoomPolicyRecord, SubRoomPrivacy, SubRoomRevision, SubRoomRevisionBlock,

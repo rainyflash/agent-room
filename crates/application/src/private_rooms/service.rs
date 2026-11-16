@@ -38,6 +38,7 @@ use super::{
 };
 
 mod moderation_members;
+mod project_creation;
 mod public_creation;
 mod public_transfer;
 mod role_changes;

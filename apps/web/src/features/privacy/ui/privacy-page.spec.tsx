@@ -66,6 +66,25 @@ describe('隐私说明', () => {
     expect(privacyResources['zh-CN']['privacy.keep.reminders.text']).toMatch(/不记是谁/u);
   });
 
+  it('照实说绑仓库时读 GitHub 上哪两个文件、不存内容（specs/redesign/project-rooms.md 的 3P-2b）', () => {
+    renderPage();
+
+    expect(screen.getByText('GitHub repositories', { selector: 'dt' })).toBeVisible();
+    expect(screen.getByText(/reads those two files/u)).toBeVisible();
+    expect(privacyResources.en['privacy.readers.repositories.text']).toMatch(
+      /doesn’t store what’s in them/u,
+    );
+    expect(privacyResources.en['privacy.readers.repositories.text']).toMatch(/within 7 days/u);
+    expect(privacyResources['zh-CN']['privacy.readers.repositories.text']).toMatch(/不存文件内容/u);
+    expect(privacyResources['zh-CN']['privacy.readers.repositories.text']).toMatch(
+      /7 天没核对上就删掉/u,
+    );
+    expect(privacyResources.en['privacy.others.github.text']).toMatch(/reads two files/u);
+    expect(privacyResources['zh-CN']['privacy.others.github.text']).toMatch(
+      /读那个仓库里的两个文件/u,
+    );
+  });
+
   it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
     renderPage();
 

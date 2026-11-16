@@ -10,8 +10,11 @@ use agent_room_domain::{
 };
 
 use crate::{
-    persistence::RepositoryResult,
-    ports::{MatrixResult, MatrixRoomId, PortFuture, PrivateRoomSnapshot, RoomRoleChange},
+    persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
+    ports::{
+        BindRepository, MatrixResult, MatrixRoomId, PortFuture, PrivateRoomSnapshot,
+        ProjectRoomSaveOutcome, RoomRoleChange,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +113,26 @@ pub trait PrivateRoomListingStore: Send + Sync {
         listing: &'a PrivateRoomListingRecord,
         created_at: UtcMillis,
     ) -> PortFuture<'a, RepositoryResult<PrivateRoomListingSaveOutcome>>;
+
+    /// 认上仓库以后建的项目房间（`specs/redesign/project-rooms.md` 的 3P-2b）：同一个事务里建房（目录上
+    /// 记成不加密）、写下公开设置、绑上仓库、删掉认领；原来绑着这个仓库的房间（`binding.replacing`）
+    /// 的绑定一起挪过来。绑着仓库的公开房间不占名额，不查限额。默认不支持：不关心项目房间的测试仓储
+    /// 不用管它。
+    fn create_project_room<'a>(
+        &'a self,
+        snapshot: &'a PrivateRoomSnapshot,
+        listing: &'a PrivateRoomListingRecord,
+        binding: &'a BindRepository,
+        created_at: UtcMillis,
+    ) -> PortFuture<'a, RepositoryResult<ProjectRoomSaveOutcome>> {
+        let _ = (snapshot, listing, binding, created_at);
+        Box::pin(async {
+            Err(RepositoryError::new(
+                "private_room.listing.create_project_room",
+                RepositoryErrorKind::Unavailable,
+            ))
+        })
+    }
 
     /// 存下转让了房主的房间。这间正公开着、没绑仓库、接手的人（`room` 现在的房主）名下又有别的不绑仓库
     /// 的公开房间时不存，回答 [`PrivateRoomListingSaveOutcome::OwnerLimitReached`]；绑定跟着房间走。

@@ -66,3 +66,4 @@ define_id!(ModerationActionId);
 define_id!(AuditEventId);
 define_id!(FederationRuleId);
 define_id!(SubRoomCategoryId);
+define_id!(RepositoryClaimId);

@@ -355,6 +355,31 @@ async fn export_account(
                 'lastEmailAt', NULL,
                 'coveredUntil', NULL
             )),
+            -- 项目房间（specs/redesign/project-rooms.md）：在等核对的仓库认领，和他核对上、还绑着的仓库。
+            -- 只记仓库名、码、时间和结果，不存 GitHub 上文件的内容。
+            'repositoryClaims', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'repository', claim.repository_owner || '/' || claim.repository_name,
+                    'shareCode', claim.share_code,
+                    'roomId', claim.target_catalog_entry_id,
+                    'claimedAt', claim.claimed_at,
+                    'lastCheckedAt', claim.last_checked_at,
+                    'lastCheckResult', claim.last_check_result,
+                    'checkCount', claim.check_count
+                ) ORDER BY claim.claimed_at, claim.id)
+                FROM agent_room.repository_claim AS claim
+                WHERE claim.principal_id = principal.id
+            ), '[]'::jsonb),
+            'repositoryBindings', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', binding.catalog_entry_id,
+                    'repository', binding.repository_owner || '/' || binding.repository_name,
+                    'verifiedAt', binding.verified_at,
+                    'verifiedFile', binding.verified_file
+                ) ORDER BY binding.verified_at, binding.catalog_entry_id)
+                FROM agent_room.room_repository_binding AS binding
+                WHERE binding.verified_by = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
