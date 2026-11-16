@@ -9,8 +9,9 @@ use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcCloseHostSessionRequest,
     IpcContentReference, IpcErrorCategory, IpcHostRoomTarget, IpcHostSessionState,
     IpcHostSessionSummary, IpcMessagePreviewSummary, IpcMessageSensitivity, IpcMethod,
-    IpcOpenHostSessionRequest, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomCursor, IpcRoomKind,
-    IpcRoomMembership, IpcRoomNotice, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
+    IpcOpenHostSessionRequest, IpcReadRoomNoticesRequest, IpcReadRoomPinsRequest, IpcReplyExcerpt,
+    IpcResponse, IpcRoomCursor, IpcRoomKind, IpcRoomMembership, IpcRoomNotice, IpcRoomPin,
+    IpcRoomPins, IpcRoomSummary, IpcSelfSummary, IpcSessionRoom,
 };
 use rmcp::ServiceExt;
 use serde_json::{Value, json};
@@ -131,6 +132,12 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
                 notices: vec![notice("!room:matrix.test", "回复要短。")],
             }),
         },
+        ExpectedCall {
+            method: changed_pins(),
+            response: Ok(IpcResponse::RoomPins {
+                rooms: vec![pins("!room:matrix.test")],
+            }),
+        },
     ]));
     let mut harness = McpHarness::start(bridge.clone()).await;
 
@@ -153,11 +160,14 @@ async fn 确认工具只转发_ack_inbox_不带位置的等消息从确认位置
         )
         .await;
     assert_ne!(waited["isError"], true);
-    // 交一批时带上改了的公告。
+    // 交一批时带上改了的公告和置顶。
     assert_eq!(
         waited["structuredContent"]["notices"][0]["text"],
         "回复要短。"
     );
+    let pinned = &waited["structuredContent"]["pins"][0]["pinned"][0];
+    assert_eq!(pinned["eventId"], "$pinned:matrix.test", "{waited}");
+    assert_eq!(pinned["message"]["excerpt"], "周五发版。");
     // 少了 eventId 不问 Bridge。
     let invalid = harness
         .call("agent_room_ack", json!({"sessionId":SESSION_A}))
@@ -222,6 +232,38 @@ fn changed_notices() -> IpcMethod {
             every_room: true,
             changed_only: true,
         })),
+    }
+}
+
+/// 公告之后问改了的置顶，看的房间一样。
+fn changed_pins() -> IpcMethod {
+    IpcMethod::WithSession {
+        session_id: SESSION_A.into(),
+        method: Box::new(IpcMethod::ReadRoomPins(IpcReadRoomPinsRequest {
+            room_id: None,
+            every_room: true,
+            changed_only: true,
+        })),
+    }
+}
+
+/// 置顶了一句的房间。
+fn pins(room_id: &str) -> IpcRoomPins {
+    IpcRoomPins {
+        room_id: room_id.to_owned(),
+        pinned: vec![IpcRoomPin {
+            event_id: "$pinned:matrix.test".to_owned(),
+            pinned_by: "@owner:test.invalid".to_owned(),
+            pinned_at_unix_ms: 1_000,
+            message: Some(IpcReplyExcerpt {
+                message_id: "0193a1b2-0000-7000-8000-000000000001".to_owned(),
+                actor_name: "Ada".to_owned(),
+                excerpt: "周五发版。".to_owned(),
+            }),
+            unreadable: None,
+        }],
+        updated_by: "@owner:test.invalid".to_owned(),
+        updated_at_unix_ms: 1_000,
     }
 }
 
@@ -324,6 +366,10 @@ async fn 等待工具通过真实_mcp_协议保持身份和正向游标且拒绝
         ExpectedCall {
             method: changed_notices(),
             response: Ok(IpcResponse::RoomNotices { notices: vec![] }),
+        },
+        ExpectedCall {
+            method: changed_pins(),
+            response: Ok(IpcResponse::RoomPins { rooms: vec![] }),
         },
     ]));
     let mut harness = McpHarness::start(bridge.clone()).await;
@@ -999,6 +1045,15 @@ impl JoinBridge {
                 }
                 Ok(IpcResponse::RoomNotices { notices })
             }
+            // 只有周报置顶了。
+            IpcMethod::ReadRoomPins(request) => {
+                assert!(!request.changed_only, "进房间时要现在的");
+                let rooms = (request.room_id.as_deref() == Some("!weekly:test.invalid"))
+                    .then(|| pins("!weekly:test.invalid"))
+                    .into_iter()
+                    .collect();
+                Ok(IpcResponse::RoomPins { rooms })
+            }
             IpcMethod::EnterRoom(request) => {
                 let room_id = self
                     .enter_lands_in
@@ -1669,6 +1724,10 @@ async fn 接入时带上这次进的房间现在的公告_子房间连父房间�
     assert_eq!(second["parentNotice"]["roomId"], "!project:test.invalid");
     assert_eq!(second["parentNotice"]["text"], "先说要做什么。");
     assert!(first.get("parentNotice").is_none(), "{first}");
+    // 置顶也一起给，没有置顶的不写。
+    assert_eq!(second["pins"]["roomId"], "!weekly:test.invalid");
+    assert_eq!(second["pins"]["pinned"][0]["message"]["actorName"], "Ada");
+    assert!(first.get("pins").is_none(), "{first}");
     // 按房间问，会话开在的那个也写明。
     assert_eq!(
         *bridge.notice_rooms.lock().unwrap(),

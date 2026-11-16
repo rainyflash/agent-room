@@ -81,16 +81,22 @@ pub fn attach_stored_reply(
     summary: &mut IpcMessagePreviewSummary,
     replied: &IpcMessagePreviewSummary,
 ) {
-    let text = replied
+    summary.reply_to = Some(stored_excerpt(replied));
+    summary.mentions_me |= replied.from_me;
+}
+
+/// 存下来的一条（网络 Agent 的消息记录）是谁说的、开头写了什么：被回复的那条、置顶的那一句都用它。
+#[must_use]
+pub fn stored_excerpt(message: &IpcMessagePreviewSummary) -> IpcReplyExcerpt {
+    let text = message
         .conversation
         .as_ref()
-        .map_or(replied.title.as_str(), |chat| chat.text.as_str());
-    summary.reply_to = Some(IpcReplyExcerpt {
-        message_id: replied.message_id.clone(),
-        actor_name: actor_user_and_name(&replied.actor).1.to_owned(),
+        .map_or(message.title.as_str(), |chat| chat.text.as_str());
+    IpcReplyExcerpt {
+        message_id: message.message_id.clone(),
+        actor_name: actor_user_and_name(&message.actor).1.to_owned(),
         excerpt: leading_characters(text, REPLY_EXCERPT_CHARACTERS),
-    });
-    summary.mentions_me |= replied.from_me;
+    }
 }
 
 /// 作者的 Matrix 用户 ID 和名字：只看某个人时拿来比。
@@ -157,7 +163,9 @@ fn is_viewer(actor: &ProjectedMessageActor, viewer: PreviewViewer<'_>) -> bool {
     }
 }
 
-fn reply_excerpt(message: &ProjectedMessagePreview) -> IpcReplyExcerpt {
+/// 本地消息库里的一条是谁说的、开头写了什么：被回复的那条、置顶的那一句都用它。
+#[must_use]
+pub fn reply_excerpt(message: &ProjectedMessagePreview) -> IpcReplyExcerpt {
     let text = message
         .preview
         .conversation()

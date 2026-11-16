@@ -80,6 +80,8 @@ pub enum IpcMethod {
     AckInbox(IpcAckInboxRequest),
     /// 房间的常驻公告：进房间时要现在的，交一批消息时要改了的（4.6 起）。包在 `WithSession` 里用。
     ReadRoomNotices(crate::IpcReadRoomNoticesRequest),
+    /// 房间的置顶：进房间时要现在的，交一批消息时要改了的（4.8 起）。包在 `WithSession` 里用。
+    ReadRoomPins(crate::IpcReadRoomPinsRequest),
     GetPresence(IpcGetPresenceRequest),
     OpenContent(IpcOpenContentRequest),
     /// 旧版 MCP 和命令行还会发，新版已经去掉：Agent 自己报的工作状态不再发布
@@ -131,6 +133,7 @@ impl IpcMethod {
             Self::RoomHistory(_) => "room_history",
             Self::AckInbox(_) => "ack_inbox",
             Self::ReadRoomNotices(_) => "read_room_notices",
+            Self::ReadRoomPins(_) => "read_room_pins",
             Self::GetPresence(_) => "get_presence",
             Self::OpenContent(_) => "open_content",
             Self::PublishStatus(_) => "publish_status",
@@ -178,6 +181,7 @@ impl IpcMethod {
             // 确认位置只是这个 Agent 自己读到哪了，和读收件箱同一类权限。
             | Self::AckInbox(_)
             | Self::ReadRoomNotices(_)
+            | Self::ReadRoomPins(_)
             | Self::ListRooms
             | Self::ListPublicRooms(_) => IpcScope::PreviewsRead,
             Self::GetPresence(_) => IpcScope::PresenceRead,
@@ -276,6 +280,7 @@ impl IpcMethod {
             Self::RoomHistory(request) => request.validate(),
             Self::AckInbox(request) => validate_message_reference(&request.id),
             Self::ReadRoomNotices(request) => request.validate(),
+            Self::ReadRoomPins(request) => request.validate(),
             Self::GetPresence(request) => request.validate(),
             Self::OpenContent(request) => request.validate(),
             Self::PublishStatus(request) => request.validate(),
@@ -921,6 +926,10 @@ pub enum IpcResponse {
     /// 房间的常驻公告，一个房间一条；没有就是空的。
     RoomNotices {
         notices: Vec<crate::IpcRoomNotice>,
+    },
+    /// 房间的置顶，一个房间一份；没有就是空的（4.8 起）。
+    RoomPins {
+        rooms: Vec<crate::IpcRoomPins>,
     },
     /// 主人在这个房间给 Agent 的管理授权；没有授权（或已经撤了、到期了）时没有 `grant`。
     RoomModerationRules {

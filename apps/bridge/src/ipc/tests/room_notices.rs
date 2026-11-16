@@ -23,6 +23,7 @@ async fn record(store: &SqliteMessageTimelineRepository, text: Option<&str>, at_
                     updated_at_ms: at_ms,
                 }),
                 parent_notice: None,
+                pins: None,
             }],
             UtcMillis::new(9_000).expect("时间有效"),
         )
@@ -49,6 +50,7 @@ async fn record_parent(store: &SqliteMessageTimelineRepository, text: Option<&st
                         updated_at_ms: at_ms,
                     },
                 }),
+                pins: None,
             }],
             UtcMillis::new(9_000).expect("时间有效"),
         )

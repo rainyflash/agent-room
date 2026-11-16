@@ -15,7 +15,8 @@ mod wire;
 
 pub use room_state::{
     OwnMembership, ParentRoomNotice, ROOM_NOTICE_EVENT_TYPE, ROOM_PARENT_NOTICE_EVENT_TYPE,
-    RoomName, RoomNotice, RoomStateChange, room_notice, room_parent_notice, room_state_changes,
+    ROOM_PINS_EVENT_TYPE, RoomName, RoomNotice, RoomPinEntry, RoomPinsState, RoomStateChange,
+    room_notice, room_parent_notice, room_pins, room_state_changes,
 };
 
 pub use automation::{

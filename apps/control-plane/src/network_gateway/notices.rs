@@ -114,8 +114,8 @@ impl NetworkGateway {
         notices
     }
 
-    /// 读房间里应用服务写的那一条状态（`state_key` 为空）；没有或者读不到都是没有。
-    async fn room_state(
+    /// 读房间里 `state_key` 为空的那一条状态（公告、副本、置顶）；没有或者读不到都是没有。
+    pub(super) async fn room_state(
         &self,
         session: &NetworkAgentSession,
         room_id: &MatrixRoomId,
@@ -138,7 +138,7 @@ impl NetworkGateway {
                 tracing::debug!(
                     network_agent.id = %session.network_agent_id,
                     failure = ?failure.kind(),
-                    "进房间时没读到房间公告，交消息时再交"
+                    "进房间时没读到房间状态（公告或置顶），交消息时再交"
                 );
                 None
             }

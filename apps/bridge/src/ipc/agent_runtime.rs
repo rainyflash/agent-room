@@ -75,6 +75,7 @@ mod every_room;
 mod inbox_ack;
 mod room_membership;
 mod room_notices;
+mod room_pins;
 mod viewing;
 
 pub(crate) use room_membership::AgentRoomEntry;

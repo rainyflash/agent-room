@@ -342,6 +342,10 @@ pub(super) struct FakeMessaging {
     pub(super) notice_reads: Mutex<Vec<(String, String)>>,
     /// 等消息时一起交出去的、改了的公告。
     pub(super) changed_notices: Mutex<Vec<NetworkAgentRoomNotice>>,
+    /// 进房间时那个房间现在的置顶。
+    pub(super) pins: Mutex<Option<agent_room_bridge_ipc::IpcRoomPins>>,
+    /// 等消息时一起交出去的、改了的置顶。
+    pub(super) changed_pins: Mutex<Vec<agent_room_bridge_ipc::IpcRoomPins>>,
     failure: Mutex<Option<NetworkGatewayFailure>>,
 }
 
@@ -490,6 +494,15 @@ impl NetworkAgentMessaging for FakeMessaging {
         Box::pin(async move { notice.into_iter().chain(parent).collect() })
     }
 
+    fn current_pins<'a>(
+        &'a self,
+        _token: &'a str,
+        _room_id: &'a str,
+    ) -> PortFuture<'a, Option<agent_room_bridge_ipc::IpcRoomPins>> {
+        let pins = self.pins.lock().unwrap().clone();
+        Box::pin(async move { pins })
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -500,6 +513,7 @@ impl NetworkAgentMessaging for FakeMessaging {
         let gaps = self.gaps.lock().unwrap().clone();
         let incoming_knocks = self.incoming.lock().unwrap().clone();
         let notices = self.changed_notices.lock().unwrap().clone();
+        let pins = self.changed_pins.lock().unwrap().clone();
         Box::pin(async move {
             if let Some(failure) = failure {
                 return Err(failure);
@@ -518,6 +532,7 @@ impl NetworkAgentMessaging for FakeMessaging {
                 gaps,
                 incoming_knocks,
                 notices,
+                pins,
             })
         })
     }

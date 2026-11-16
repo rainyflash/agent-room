@@ -9,7 +9,7 @@ use std::{
 
 use agent_room_bridge_ipc::{
     IpcErrorCategory, IpcGetMessagesRequest, IpcListPreviewsRequest, IpcMessagePreviewSummary,
-    IpcMethod, IpcResponse, IpcRoomCursor, IpcRoomNotice, IpcTimelineGap,
+    IpcMethod, IpcResponse, IpcRoomCursor, IpcRoomNotice, IpcRoomPins, IpcTimelineGap,
     limits::{INBOX_BLOCK_MILLIS, MESSAGE_LOOKUP_IDS},
     typing::TypingRooms,
     wake::{
@@ -20,7 +20,7 @@ use agent_room_bridge_ipc::{
 use tokio::time::Instant;
 
 use crate::{
-    BridgeToolClient, BridgeToolFailure, MessageWait, RoomModeration, moderation, notices,
+    BridgeToolClient, BridgeToolFailure, MessageWait, RoomModeration, moderation, notices, pins,
 };
 
 /// 最多攒这么多条还没交的，和网络 Agent 的收件箱一样；再多就丢掉最早的，交的时候算进跳过的。
@@ -63,11 +63,20 @@ pub struct WokenBatch {
     /// 交这一批时房间公告改了的（撤掉也算），每一版只交一次；没开 [`InboxWaiter::with_notices`]
     /// 时总是空的。
     pub notices: Vec<IpcRoomNotice>,
+    /// 交这一批时置顶改了的房间（全取消了也算），每个房间是整份，每一版只交一次；和公告一起，没开
+    /// [`InboxWaiter::with_notices`] 时总是空的。置顶改了不叫醒它。
+    pub pins: Vec<IpcRoomPins>,
     /// 这一批里主人交给它管的房间；没开 [`InboxWaiter::with_moderation`] 时总是空的。
     pub moderation: Vec<RoomModeration>,
 }
 
 impl WokenBatch {
+    /// 有没有要交给 Agent 的：消息，或者改了的公告、置顶（每一版只交一次，没有消息也要交出去）。
+    #[must_use]
+    pub fn has_content(&self) -> bool {
+        !self.previews.is_empty() || !self.notices.is_empty() || !self.pins.is_empty()
+    }
+
     /// MCP 和命令行给 Agent 看的形状：和原来的消息预览一样，多了为什么交、跳过和还攒着的条数。
     pub fn to_json(&self) -> serde_json::Value {
         let mut value = serde_json::json!({
@@ -85,6 +94,9 @@ impl WokenBatch {
         }
         if !self.notices.is_empty() {
             value["notices"] = self.notices.iter().map(notices::notice_json).collect();
+        }
+        if !self.pins.is_empty() {
+            value["pins"] = serde_json::json!(self.pins);
         }
         if !self.moderation.is_empty() {
             value["moderation"] = serde_json::json!(self.moderation);
@@ -305,8 +317,9 @@ impl InboxWaiter {
         self
     }
 
-    /// 交一批时顺带拿房间公告改了的那一版（MCP 和命令行用），放在 [`WokenBatch::notices`]。公告改了不叫醒
-    /// 它，跟着下一批交。后台回复不用：宿主那边只处理这一批。
+    /// 交一批时顺带拿房间公告改了的那一版（MCP 和命令行用），放在 [`WokenBatch::notices`]；置顶改了的
+    /// 也一起拿，放在 [`WokenBatch::pins`]。改了都不叫醒它，跟着下一批交。后台回复不用：宿主那边只处理
+    /// 这一批。
     #[must_use]
     pub const fn with_notices(mut self) -> Self {
         self.notices = Notices::Changed;
@@ -391,6 +404,7 @@ impl InboxWaiter {
                 WaitDecision::Deliver(delivery) => {
                     let mut batch = self.take(delivery);
                     batch.notices = self.changed_notices(backend).await;
+                    batch.pins = self.changed_pins(backend).await;
                     batch.moderation = self.granted_rooms(backend, &batch.previews).await;
                     if !matches!(wait, MessageWait::Continuous(_)) {
                         self.stop_waiting(backend).await;
@@ -461,6 +475,7 @@ impl InboxWaiter {
             cursor: cursor.cursor(),
             gaps,
             notices: self.changed_notices(backend).await,
+            pins: self.changed_pins(backend).await,
             moderation,
         })
     }
@@ -484,6 +499,21 @@ impl InboxWaiter {
         }
         let every_room = matches!(self.delivered_through, Position::EveryRoom(_));
         notices::changed_notices(
+            backend,
+            &self.session_id,
+            self.room_id.as_deref(),
+            every_room,
+        )
+        .await
+    }
+
+    /// 交这一批时置顶改了的；和公告一起，没开 [`Self::with_notices`] 时不问。
+    async fn changed_pins(&self, backend: &dyn BridgeToolClient) -> Vec<IpcRoomPins> {
+        if self.notices == Notices::Skip {
+            return Vec::new();
+        }
+        let every_room = matches!(self.delivered_through, Position::EveryRoom(_));
+        pins::changed_pins(
             backend,
             &self.session_id,
             self.room_id.as_deref(),
@@ -697,6 +727,7 @@ impl InboxWaiter {
             cursor: self.delivered_through.cursor(),
             gaps,
             notices: Vec::new(),
+            pins: Vec::new(),
             moderation: Vec::new(),
         }
     }

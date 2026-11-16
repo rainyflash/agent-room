@@ -14,10 +14,10 @@ use agent_room_application::{
         NetworkAgentInboxChange, NetworkAgentInboxMessage, NetworkAgentInboxPage,
         NetworkAgentInboxStore, NetworkAgentLookup, NetworkAgentMessageActor,
         NetworkAgentMessageHistory, NetworkAgentMessageRef, NetworkAgentMessageRetention,
-        NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomNotice,
-        NetworkAgentRoomParent, NetworkAgentRoomRecord, NetworkAgentSecretKind,
-        NetworkAgentStaleCutoff, NetworkAgentStore, NetworkAgentStoredMessage,
-        NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
+        NetworkAgentPin, NetworkAgentProvisioning, NetworkAgentRecord, NetworkAgentRoomNotice,
+        NetworkAgentRoomParent, NetworkAgentRoomPins, NetworkAgentRoomRecord,
+        NetworkAgentSecretKind, NetworkAgentStaleCutoff, NetworkAgentStore,
+        NetworkAgentStoredMessage, NetworkAgentSubmissionClaim, NetworkAgentSubmissionClaimOutcome,
         NetworkAgentSubmissionKind, NetworkAgentSubmissionState, NetworkAgentSubmissionStore,
         NetworkAgentTimelineGap, PrincipalRegistration, PrivateRoomAgentAccessStore,
         PrivateRoomSnapshot, PrivateRoomStore, RateWindowBucket, RateWindowDecision,
@@ -3064,6 +3064,7 @@ fn append(
         history_capacity: 500,
         undecryptable_before_join: Vec::new(),
         room_notices: Vec::new(),
+        room_pins: Vec::new(),
     }
 }
 
@@ -3367,4 +3368,94 @@ async fn connect_pool(url: &str) -> PgPool {
         .connect(url)
         .await
         .expect("真实 PostgreSQL 必须可连接")
+}
+
+fn room_pins(room: &MatrixRoomId, pinned: &[&str], at_ms: i64) -> NetworkAgentRoomPins {
+    NetworkAgentRoomPins {
+        room_id: room.clone(),
+        entries: pinned
+            .iter()
+            .map(|event| NetworkAgentPin {
+                event_id: MatrixEventId::new(*event).expect("事件 ID 有效"),
+                pinned_by: "@owner:matrix.test".to_owned(),
+                pinned_at_ms: at_ms,
+            })
+            .collect(),
+        updated_by: "@owner:matrix.test".to_owned(),
+        updated_at_ms: at_ms,
+    }
+}
+
+async fn sync_pins(
+    repositories: &PostgresRepositories,
+    id: NetworkAgentId,
+    (expected, next): (Option<&str>, &str),
+    pins: Vec<NetworkAgentRoomPins>,
+) {
+    let mut synced = append(id, expected, next, Vec::new(), 10);
+    synced.room_pins = pins;
+    repositories.append(&synced).await.expect("写入");
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 置顶整份交一次_同一版和旧版不算改_全取消了也交一次_进房间交过的不再交() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let id = in_two_rooms(&database, &repositories).await;
+    // 从没交过的全取消了不说；不在的房间不记。
+    let elsewhere = MatrixRoomId::new("!elsewhere:matrix.test").expect("房间 ID 有效");
+    let first = room_pins(&den(), &["$a:matrix.test", "$b:matrix.test"], 100);
+    sync_pins(
+        &repositories,
+        id,
+        (None, "s1"),
+        vec![
+            first.clone(),
+            room_pins(&lobby(), &[], 100),
+            room_pins(&elsewhere, &["$c:matrix.test"], 100),
+        ],
+    )
+    .await;
+    assert_eq!(
+        repositories.take_room_pins(id, None, 4).await.expect("读"),
+        std::slice::from_ref(&first)
+    );
+    // 同一版、更旧的一版再同步到都不算改。
+    sync_pins(
+        &repositories,
+        id,
+        (Some("s1"), "s2"),
+        vec![first, room_pins(&den(), &["$old:matrix.test"], 50)],
+    )
+    .await;
+    assert!(
+        repositories
+            .take_room_pins(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+    // 全取消了交一次。
+    let cleared = room_pins(&den(), &[], 200);
+    sync_pins(&repositories, id, (Some("s2"), "s3"), vec![cleared.clone()]).await;
+    assert_eq!(
+        repositories
+            .take_room_pins(id, Some(&den()), 4)
+            .await
+            .expect("读"),
+        [cleared]
+    );
+    // 进房间时交了的那一版，之后同步到不再交。
+    let given = room_pins(&lobby(), &["$d:matrix.test"], 300);
+    repositories.give_room_pins(id, &given).await.expect("写入");
+    sync_pins(&repositories, id, (Some("s3"), "s4"), vec![given]).await;
+    assert!(
+        repositories
+            .take_room_pins(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+    database.close().await;
 }

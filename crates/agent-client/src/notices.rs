@@ -4,16 +4,22 @@
 //!
 //! 子房间里父房间的须知也算（`specs/redesign/brief-and-pins.md`“子房间里父房间的须知也算”）：Bridge 把
 //! 子房间里的副本当成父房间那一段交过来，`roomId` 是父房间的，形状和这一间自己的一样。
+//!
+//! 进房间时置顶也一起拿（[`crate::pins`]）：须知说怎么做，置顶指着房间里要紧的那几句。
 
-use agent_room_bridge_ipc::{IpcMethod, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice};
+use agent_room_bridge_ipc::{
+    IpcMethod, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice, IpcRoomPins,
+};
 
-use crate::BridgeToolClient;
+use crate::{BridgeToolClient, pins};
 
-/// 进房间时拿到的须知：这间房自己的（`notice`），子房间里还有父房间的那一段（`parentNotice`）。
+/// 进房间时拿到的须知：这间房自己的（`notice`），子房间里还有父房间的那一段（`parentNotice`），
+/// 再加上这间房现在的置顶（`pins`）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnteredNotices {
     pub notice: Option<IpcRoomNotice>,
     pub parent_notice: Option<IpcRoomNotice>,
+    pub pins: Option<IpcRoomPins>,
 }
 
 impl EnteredNotices {
@@ -25,10 +31,14 @@ impl EnteredNotices {
         if let Some(parent) = &self.parent_notice {
             result["parentNotice"] = notice_json(parent);
         }
+        if let Some(pins) = &self.pins {
+            result["pins"] = serde_json::json!(pins);
+        }
     }
 }
 
-/// 进房间时拿这个房间现在的公告，子房间里连父房间的那一段一起。没有公告、撤掉了或者拿不到都是没有。
+/// 进房间时拿这个房间现在的公告，子房间里连父房间的那一段一起，再拿现在的置顶。没有、撤掉了或者
+/// 拿不到都是没有。
 pub async fn room_notices(
     backend: &dyn BridgeToolClient,
     session_id: &str,
@@ -51,6 +61,7 @@ pub async fn room_notices(
             *slot = Some(notice);
         }
     }
+    entered.pins = pins::room_pins(backend, session_id, room_id).await;
     entered
 }
 
@@ -96,9 +107,46 @@ pub fn notice_json(notice: &IpcRoomNotice) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use agent_room_bridge_ipc::IpcRoomNotice;
+    use agent_room_bridge_ipc::{IpcPinUnreadable, IpcRoomNotice, IpcRoomPin, IpcRoomPins};
 
     use super::{EnteredNotices, notice_json};
+
+    #[test]
+    fn 进房间时置顶照原样写_读不到的那一句写明为什么() {
+        let mut result = serde_json::json!({});
+        EnteredNotices {
+            pins: Some(IpcRoomPins {
+                room_id: "!room:matrix.test".to_owned(),
+                pinned: vec![IpcRoomPin {
+                    event_id: "$a:matrix.test".to_owned(),
+                    pinned_by: "@owner:matrix.test".to_owned(),
+                    pinned_at_unix_ms: 1_000,
+                    message: None,
+                    unreadable: Some(IpcPinUnreadable::NotLoaded),
+                }],
+                updated_by: "@owner:matrix.test".to_owned(),
+                updated_at_unix_ms: 1_000,
+            }),
+            ..EnteredNotices::default()
+        }
+        .add_to(&mut result);
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "pins": {
+                    "roomId": "!room:matrix.test",
+                    "pinned": [{
+                        "eventId": "$a:matrix.test",
+                        "pinnedBy": "@owner:matrix.test",
+                        "pinnedAtUnixMs": 1_000,
+                        "unreadable": "not_loaded",
+                    }],
+                    "updatedBy": "@owner:matrix.test",
+                    "updatedAtUnixMs": 1_000,
+                }
+            })
+        );
+    }
 
     #[test]
     fn 进子房间时两段分开写_没有的不写() {
@@ -112,6 +160,7 @@ mod tests {
         EnteredNotices {
             notice: Some(notice("!sub:matrix.test", "只改前端。")),
             parent_notice: Some(notice("!project:matrix.test", "先说要做什么。")),
+            pins: None,
         }
         .add_to(&mut result);
         assert_eq!(result["notice"]["roomId"], "!sub:matrix.test");

@@ -257,7 +257,11 @@ async fn http未请求进度通知也不会在一百五十五秒截断并可正�
     // 交之前问一次这一批的房间有没有交给它管（这个假 Bridge 不认，就当没有）。
     let (moderation, inner) = inner.split_last().unwrap();
     assert!(matches!(moderation, IpcMethod::ModerateRoom(request) if request.room_id.is_some()));
-    // 再之前问一次改了的公告（也当没有）。
+    // 再之前问一次改了的公告和置顶（也当没有）。
+    let (pins, inner) = inner.split_last().unwrap();
+    assert!(
+        matches!(pins, IpcMethod::ReadRoomPins(request) if request.every_room && request.changed_only)
+    );
     let (notices, holds) = inner.split_last().unwrap();
     assert!(
         matches!(notices, IpcMethod::ReadRoomNotices(request) if request.every_room && request.changed_only)
@@ -332,15 +336,17 @@ async fn 真实_http_协商列出工具打开会话并保持等待身份() {
     }})).await;
     assert_ne!(wait["result"]["isError"], true);
     let calls = server.bridge.calls.lock().unwrap();
-    assert_eq!(calls.len(), 4);
+    assert_eq!(calls.len(), 5);
     assert!(
         matches!(&calls[2], IpcMethod::WithSession { session_id, method }
         if session_id == SESSION && matches!(method.as_ref(), IpcMethod::ReadInbox(request)
             if request.every_room && after(request) == Some("$last")))
     );
-    // 看一眼也顺带问改了的公告。
+    // 看一眼也顺带问改了的公告和置顶。
     assert!(matches!(&calls[3], IpcMethod::WithSession { method, .. }
         if matches!(method.as_ref(), IpcMethod::ReadRoomNotices(request) if request.every_room)));
+    assert!(matches!(&calls[4], IpcMethod::WithSession { method, .. }
+        if matches!(method.as_ref(), IpcMethod::ReadRoomPins(request) if request.every_room)));
 }
 
 #[tokio::test(start_paused = true)]

@@ -3,8 +3,12 @@
 //!
 //! 子房间里父房间的须知也算（`specs/redesign/brief-and-pins.md`“子房间里父房间的须知也算”）：进子房间
 //! 的回答另带 `parentNotice`，等消息的 `notices` 里父房间那一段的 `roomId` 是父房间的，形状不变。
+//!
+//! 置顶（“Agent 读置顶”）也在这里一起拿：进房间的回答带这个房间现在的（`pins`），之后改了，等消息的
+//! 回答带一次（`pins`，每个房间整份）。形状和本机 MCP 一样。
 
 use agent_room_application::ports::NetworkAgentRoomNotice;
+use agent_room_bridge_ipc::IpcRoomPins;
 use serde::Serialize;
 
 use super::{NetworkAgentHttpState, RoomResponse};
@@ -35,14 +39,16 @@ impl From<NetworkAgentRoomNotice> for NoticeResponse {
     }
 }
 
-/// 进房间时给的：这一间的公告，子房间里还有父房间那一段。
+/// 进房间时给的：这一间的公告，子房间里还有父房间那一段，再加上这一间现在的置顶。
 #[derive(Debug, Default)]
 pub(super) struct EnteredNotices {
     pub(super) notice: Option<NoticeResponse>,
     pub(super) parent_notice: Option<NoticeResponse>,
+    pub(super) pins: Option<IpcRoomPins>,
 }
 
 impl EnteredNotices {
+    /// 有没有公告（置顶不算）：有公告时远程 MCP 先说一句公告是房间的规矩。
     pub(super) const fn any(&self) -> bool {
         self.notice.is_some() || self.parent_notice.is_some()
     }
@@ -72,6 +78,10 @@ pub(super) async fn entered(
             *slot = Some(NoticeResponse::from(notice));
         }
     }
+    entered.pins = state
+        .messaging
+        .current_pins(token, &room.matrix_room_id)
+        .await;
     entered
 }
 
