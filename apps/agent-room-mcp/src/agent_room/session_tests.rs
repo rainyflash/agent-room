@@ -1888,6 +1888,21 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             assert_eq!(schema["properties"]["code"]["maxLength"], 64);
             continue;
         }
+        // 认领仓库替这台电脑的账户做，不在会话里：只要仓库名，房间和等不等可选。
+        if tool.name == "agent_room_claim_repository" {
+            assert_eq!(schema["required"], json!(["repo"]));
+            let properties = schema["properties"].as_object().unwrap();
+            assert_eq!(
+                properties.keys().map(String::as_str).collect::<Vec<_>>(),
+                ["repo", "room", "wait"]
+            );
+            assert_eq!(properties["repo"]["minLength"], 3);
+            assert_eq!(properties["repo"]["maxLength"], 140);
+            assert_eq!(properties["room"]["minLength"], 1);
+            assert_eq!(properties["room"]["maxLength"], 256);
+            assert_eq!(properties["wait"]["type"], "boolean");
+            continue;
+        }
         // 建房也不在会话里：会话由服务按宿主任务开好再交回，调用方只给房间名。
         if tool.name == "agent_room_create_room" {
             assert_eq!(schema["required"], json!(["name"]));

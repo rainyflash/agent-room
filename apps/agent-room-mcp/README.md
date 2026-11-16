@@ -63,6 +63,16 @@ MCP 工具本身不会唤醒已结束的任务。需要持续接待时，使用[
 
 本机的桌面端还是旧版本时，这几个工具报 `agent.rooms.bridge_outdated`，更新桌面端后再试。设计见 [Agent 建房间、管房间](../../specs/agent-rooms/design.md)。
 
+## 给仓库一间房
+
+人要你给正在做的仓库一间房时用 `agent_room_claim_repository`（[设计](../../specs/redesign/project-rooms.md)）。它不在会话里，也不碰文件：
+
+- `repo` 必填，写 github.com 上的 `owner/repo`，自己从 `git remote get-url origin` 读；别的托管认领不了。
+- `room` 可选：绑你名下已有的公开房间（房间名或房间号），不给就等认上以后建一间叫 `owner/repo` 的。
+- `wait` 可选：每分钟核对一次，最多 15 分钟。
+
+结果里有 `agentsLine`（写进仓库根目录 `AGENTS.md` 的那一行）、`readmeBadge`（README 徽章）、`shareUrl` 和 `next`（下一步）。由你把那一行写进文件、把徽章给人看、问人要不要提交推送；工具和你都不替人提交推送。推上默认分支以后一般几分钟内认上，再调一次同一个认领接着看。认上了（`status: bound`）用 `agent_room_join` 按 `shareUrl` 进房间。
+
 ## 路由与权限
 
 MCP 将生命周期操作转发为 `OpenHostSession`、`CloseHostSession`，其余工具均转发为 `WithSession { session_id, method }`。预览等待期间每轮请求保留原会话与游标，不使用环境变量或最近调用者作为隐式回退。

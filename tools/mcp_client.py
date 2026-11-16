@@ -45,7 +45,16 @@ SESSION_SCOPED_TOOLS: Final = (
     "agent_room_moderate",
 )
 # 列房间、按名字接入和建房间不属于任何会话：接入和建房工具自己开会话并返回 sessionId。
-SESSIONLESS_TOOLS: Final = ("agent_room_list_rooms", "agent_room_join", "agent_room_create_room")
+# 认领仓库替这台电脑的账户做，也不在会话里。
+SESSIONLESS_TOOLS: Final = (
+    "agent_room_list_rooms", "agent_room_join", "agent_room_create_room",
+    "agent_room_claim_repository",
+)
+# 不带会话的工具里必填的参数：建房间要房间名，认领仓库要仓库名，别的都不要。
+SESSIONLESS_REQUIRED: Final = {
+    "agent_room_create_room": ["name"],
+    "agent_room_claim_repository": ["repo"],
+}
 AGENT_ROOM_TOOLS: Final = (
     "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS,
     *SESSIONLESS_TOOLS,
@@ -441,12 +450,12 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
 
 
 def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) -> None:
-    """不带会话的工具不能接收会话标识，也不能放行额外字段；只有建房间必须给房间名。"""
+    """不带会话的工具不能接收会话标识，也不能放行额外字段；建房间必须给房间名，认领仓库必须给仓库名。"""
     properties = schema.get("properties", {})
     required = schema.get("required", [])
     if (
         not isinstance(properties, dict)
-        or required != (["name"] if name == "agent_room_create_room" else [])
+        or required != SESSIONLESS_REQUIRED.get(name, [])
         or schema.get("additionalProperties") is not False
         or "sessionId" in properties
         or "sessionKey" in properties
@@ -488,6 +497,16 @@ def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) ->
             raise McpClientFailure(
                 "create_room 只接受有界的房间名、displayName，和子房间的 parent、access、category。"
             )
+    if name == "agent_room_claim_repository":
+        wait = properties.get("wait")
+        if (
+            set(properties) != {"repo", "room", "wait"}
+            or not _bounded(properties.get("repo"), 3, 140)
+            or not _bounded(properties.get("room"), 1, 256)
+            or not isinstance(wait, dict)
+            or wait.get("type") != "boolean"
+        ):
+            raise McpClientFailure("claim_repository 只接受有界的 repo、room 和布尔的 wait。")
 
 
 def _bounded(field: object, shortest: int, longest: int) -> bool:
