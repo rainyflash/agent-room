@@ -454,7 +454,7 @@
     - 核对太快时控制面回 429 带 `Retry-After`，IPC 的错误里没有地方放等多久，Bridge 只回 `bridge.project_room.check_too_soon`、不标成可重试；命令行 `--wait` 本来就一分钟核对一次。
     - 网络 Agent 照旧不能认领：它们没有设备签名，走不到这两个地址；用例那边见到网络 Agent 一律 403（流程测试补了一条）。
   - 测试：IPC 的编码、校验、权限（`bridge-ipc` 的 `project_rooms.rs`），握手认 4.4 到 4.9，Bridge 的网关（另起一个本机的 HTTP 服务，路径、签名、错误码、回答不像样）和分派（`host_sessions/tests/project_rooms.rs`），控制面设备签名的两个地址（`features/project_rooms/tests/device.rs`），应用层本机设备和网页认领是同一个、网络 Agent 403。
-- 2026-11-16 3P-4b（命令行 `agent-room project`，还没有本机 MCP 的工具）：
+- 2026-11-16 3P-4b（#906，命令行 `agent-room project`，还没有本机 MCP 的工具）：
   - 在仓库目录里跑：问 git 仓库根目录（`git rev-parse --show-toplevel`）和 `origin` 的地址，认出 `owner/repo`；经 Bridge 认领（IPC 4.9 的 `ClaimRepository`），把那一行写进仓库根目录的 `AGENTS.md`，回 README 徽章那一行和下一步（`next`：提交、推上去，一般几分钟内认上）。不替人 `git commit`、不推送。
   - 回答照别的命令一样是一份 JSON：`repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`，在等的有 `claimId`、`lastCheck`，认上了的有 `catalogId`，写文件的结果在 `agentsFile`（`created`、`appended`、`already_linked` 带 `link` 和 `sameRoom`，不在 git 仓库里是 `skipped`）。
   - 认 `origin` 只认 github.com 的 https 和 ssh 两种写法：`https://github.com/o/r(.git)`（可以带账号令牌、`:443`）、`git@github.com:o/r(.git)`、`ssh://git@github.com(:22)/o/r(.git)`；地址里的账号令牌不留下。别的托管、`http://`、`git://`、本机路径都认不出，要 `--repo owner/repo`。认的规矩放在 `agent-client` 的 `project_rooms.rs`（`repository_from_remote`），3P-4c 的本机 MCP 也用这一份里的认领和等待。
