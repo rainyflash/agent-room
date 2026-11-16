@@ -23,7 +23,12 @@ async fn 只列没归档的子房间_父房间归档了一间都不列_最近说
         SubRoomArchiveOutcome::Done
     );
 
-    assert_eq!(listed(&repositories).await, [id(&alpha)], "归档了的不读");
+    let ours = [id(&alpha), id(&beta)];
+    assert_eq!(
+        listed(&repositories, &ours).await,
+        [id(&alpha)],
+        "归档了的不读"
+    );
 
     let before = load(&repositories, id(&alpha)).await.room().version();
     for at in [9_000, 8_000] {
@@ -44,19 +49,21 @@ async fn 只列没归档的子房间_父房间归档了一间都不列_最近说
 
     archive(&repositories, parent, owner).await;
     assert!(
-        listed(&repositories).await.is_empty(),
+        listed(&repositories, &ours).await.is_empty(),
         "父房间归档了，下面的都不读"
     );
 
     database.close().await;
 }
 
-async fn listed(repositories: &PostgresRepositories) -> Vec<RoomCatalogId> {
+/// 只看这条测试建的：库是各条测试共用的，别的测试建的子房间也在名单上。
+async fn listed(repositories: &PostgresRepositories, ours: &[RoomCatalogId]) -> Vec<RoomCatalogId> {
     SubRoomActivityStore::sub_rooms_for_activity(repositories)
         .await
         .expect("列得出")
         .into_iter()
         .map(|(catalog_id, _)| catalog_id)
+        .filter(|catalog_id| ours.contains(catalog_id))
         .collect()
 }
 
