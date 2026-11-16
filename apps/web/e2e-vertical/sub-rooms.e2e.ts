@@ -4,7 +4,11 @@ import { isAbsolute } from 'node:path';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { z } from 'zod';
 
-import { collectUnhandledFailures, connectLiveSession } from '../e2e-live/support/live-session';
+import {
+  collectUnhandledFailures,
+  connectLiveSession,
+  readMatrixSession,
+} from '../e2e-live/support/live-session';
 import {
   closeRoomSettings,
   expectSaid,
@@ -21,6 +25,8 @@ import {
 // 子房间（specs/redesign/sub-rooms.md 第 2k-2a 步）：房主在真实网页上建房间、建分类，在下面开一间直接能进的
 // 和一间要申请的；第二个人凭邀请链接进来，他的本机 Agent 按“父房间名/子房间名”进那间直接能进的说一句，
 // 两边网页都解开，他的左栏里有了这一间。他申请另一间，房主在子房间设置里批准，他进去说话，房主看得到。
+// 第 2k-2b 步接着：房主归档 Agent 在的那间，Agent 说不了话；原来在里面的他恢复，Agent 接着说；房主把他移出
+// 上面那间，他和他的 Agent 在两间子房间里都出去了（由纵向验收问 Synapse）。
 // 网页和纵向验收靠三个文件对步子（tools/vertical.py 的 verify_sub_rooms_in_web）。
 const guestUsername = process.env.AGENT_ROOM_E2E_USERNAME;
 const guestPassword = process.env.AGENT_ROOM_E2E_PASSWORD;
@@ -33,14 +39,31 @@ const categoryName = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_CATEGORY;
 const joinedPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_JOINED;
 const spokePath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_SPOKE;
 const checkedPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_CHECKED;
+const archivedPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_ARCHIVED;
+const refusedPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_REFUSED;
+const restoredPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_RESTORED;
+const spokeAgainPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_SPOKE_AGAIN;
+const removedPath = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_REMOVED;
 
 const inviteUrlPattern = /https:\/\/app\.agent-room\.localhost:18443\/join#[0-9a-hjkmnp-tv-z]{26}/u;
 const spokeSchema = z.object({ agentName: z.string().min(1), text: z.string().min(1) }).strict();
+const matrixSessionSchema = z.object({ userId: z.string().regex(/^@[^:]+:.+$/u) }).loose();
 
 function catalogOf(page: Page): string {
   const catalogId = roomPathPattern.exec(page.url())?.[1];
   if (catalogId === undefined) throw new Error('这一页不在房间里。');
   return catalogId;
+}
+
+// 地址里 `/instance/` 后面是 Matrix 房间。
+function matrixRoomOf(page: Page): string {
+  const instance = new URL(page.url()).pathname.split('/instance/')[1]?.split('/')[0];
+  if (instance === undefined || instance === '') throw new Error('这一页不在房间里。');
+  return decodeURIComponent(instance);
+}
+
+function archivedNotice(page: Page) {
+  return page.locator('.sub-room-archived');
 }
 
 function places(page: Page) {
@@ -171,6 +194,36 @@ async function approve(owner: Page, catalogId: string, person: string): Promise<
   await expect(dialog).toBeHidden();
 }
 
+// 管这一间的人在子房间设置里归档它。
+async function archiveSubRoom(owner: Page, catalogId: string, name: string): Promise<void> {
+  await owner.goto(`/lobby/${catalogId}`);
+  await expect(owner).toHaveURL(inRoom(catalogId), { timeout: 90_000 });
+  await owner.getByRole('button', { name: 'Room settings', exact: true }).click();
+  const dialog = owner.getByRole('dialog', { name: 'Sub-room settings' });
+  const section = dialog.getByRole('region', { name: 'This sub-room' });
+  await section.getByRole('button', { name: 'Archive this sub-room' }).click();
+  await section
+    .getByRole('group', { name: `Archive “${name}”?` })
+    .getByRole('button', { name: 'Archive', exact: true })
+    .click();
+  await expect(dialog).toHaveCount(0, { timeout: 60_000 });
+  await expect(archivedNotice(owner)).toContainText('This sub-room is archived.', {
+    timeout: 60_000,
+  });
+}
+
+// 房主在上面那间的“成员”一节里移出一个人。移出要最近登录过，所以用刚登录的那一页。
+async function removeFromRoom(page: Page, parentCatalogId: string, person: string): Promise<void> {
+  await page.goto(`/lobby/${parentCatalogId}`);
+  await expect(page).toHaveURL(inRoom(parentCatalogId), { timeout: 90_000 });
+  const settings = await openRoomSettings(page, 'Members');
+  const row = settings.locator('.room-members > li', { hasText: person });
+  await row.getByRole('button', { name: `More about ${person}` }).click();
+  await row.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(row).toContainText('Removed', { timeout: 60_000 });
+  await closeRoomSettings(page, settings);
+}
+
 test.use({ actionTimeout: 90_000 });
 
 test('子房间：建分类和两间子房间，第二个人的 Agent 按名字进来，申请的那一间房主批准以后进来说话', async ({
@@ -187,11 +240,25 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
       categoryName === undefined ||
       joinedPath === undefined ||
       spokePath === undefined ||
-      checkedPath === undefined,
+      checkedPath === undefined ||
+      archivedPath === undefined ||
+      refusedPath === undefined ||
+      restoredPath === undefined ||
+      spokeAgainPath === undefined ||
+      removedPath === undefined,
     '缺少子房间纵向验收变量。',
   );
-  test.setTimeout(1_200_000);
-  for (const path of [joinedPath, spokePath, checkedPath]) {
+  test.setTimeout(1_800_000);
+  for (const path of [
+    joinedPath,
+    spokePath,
+    checkedPath,
+    archivedPath,
+    refusedPath,
+    restoredPath,
+    spokeAgainPath,
+    removedPath,
+  ]) {
     expect(isAbsolute(path ?? '')).toBe(true);
   }
 
@@ -204,11 +271,12 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
       owner: collectUnhandledFailures(owner),
     };
 
-    await connectLiveSession(owner, {
+    const ownerCredentials = {
       expectedDisplayName: 'Local Collaborator',
       password: ownerPassword ?? '',
       username: ownerUsername ?? '',
-    });
+    };
+    await connectLiveSession(owner, ownerCredentials);
     await waitUntilDeviceReady(owner);
     const parentCatalogId = await createRoom(owner, parentName ?? '');
     await createCategory(owner, categoryName ?? '');
@@ -258,9 +326,41 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
     await owner.goto(`/lobby/${requestCatalogId}`);
     await openConversation(owner);
     await expectSaid(owner, approved);
-
+    const requestRoomId = matrixRoomOf(owner);
+    const guestMatrix = matrixSessionSchema.parse(await readMatrixSession(guest));
     expect(failures).toEqual({ guest: [], owner: [] });
-    await writeFile(checkedPath ?? '', `${JSON.stringify({ requestCatalogId })}\n`, 'utf8');
+    await writeFile(
+      checkedPath ?? '',
+      `${JSON.stringify({ guestMatrixUserId: guestMatrix.userId, requestCatalogId, requestRoomId })}\n`,
+      'utf8',
+    );
+
+    // 归档以后谁都说不了话：网页上写着，纵向验收看他的 Agent 发不出去。
+    await archiveSubRoom(owner, openCatalogId, openName ?? '');
+    await guest.goto(`/lobby/${openCatalogId}`);
+    await expect(archivedNotice(guest)).toContainText('nobody can post', { timeout: 120_000 });
+    await writeFile(archivedPath ?? '', '{}\n', 'utf8');
+    await waitForStep(refusedPath ?? '');
+
+    // 原来在里面的人谁都能恢复：他点“恢复”，Agent 接着说，房主看得到。
+    await archivedNotice(guest).getByRole('button', { name: 'Restore' }).click();
+    await expect(archivedNotice(guest)).toHaveCount(0, { timeout: 60_000 });
+    await writeFile(restoredPath ?? '', '{}\n', 'utf8');
+    await waitForStep(spokeAgainPath ?? '');
+    const again = spokeSchema.parse(JSON.parse(await readFile(spokeAgainPath ?? '', 'utf8')));
+    await owner.goto(`/lobby/${openCatalogId}`);
+    await openConversation(owner);
+    await expectSaid(owner, again.text);
+    expect(failures).toEqual({ guest: [], owner: [] });
+
+    // 移出要最近登录过：另开一页刚登录的。移出以后他的网页还开着、会读不到房间，那边的报错不算。
+    const remover = await openIsolatedPage(browser, contexts);
+    const removerFailures = collectUnhandledFailures(remover);
+    await connectLiveSession(remover, ownerCredentials);
+    await waitUntilDeviceReady(remover);
+    await removeFromRoom(remover, parentCatalogId, 'Local Developer');
+    expect({ owner: failures.owner, remover: removerFailures }).toEqual({ owner: [], remover: [] });
+    await writeFile(removedPath ?? '', '{}\n', 'utf8');
   } finally {
     await Promise.all(
       contexts.map(async (context) => {
