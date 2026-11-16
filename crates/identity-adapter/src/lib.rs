@@ -34,6 +34,7 @@ mod account_encryption;
 mod device_grant;
 mod join_codes;
 mod network_agents;
+mod reminders;
 mod sign_in_removal;
 
 pub use account_encryption::AesGcmAccountEncryptionKeySealer;
@@ -45,6 +46,7 @@ pub use network_agents::{
     AesGcmNetworkAgentSealer, Ed25519NetworkAgentKeyFactory, NETWORK_AGENT_SEAL_KEY_BYTES,
     NetworkAgentSealKey, NetworkSourceDigester,
 };
+pub use reminders::{HmacReminderUnsubscribeTokens, ReminderTokenConfigurationError};
 pub use sign_in_removal::{
     KeycloakAccountRemovalConfig, KeycloakAccountRemovalConfigError, KeycloakSignInAccountRemoval,
 };

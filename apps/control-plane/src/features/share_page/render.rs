@@ -13,7 +13,7 @@ const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 const PREVIEW_CHARS: usize = 150;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Language {
+pub(crate) enum Language {
     Chinese,
     English,
 }
@@ -458,7 +458,7 @@ fn age(created_at: UtcMillis, now: UtcMillis, text: &Wording) -> String {
 }
 
 /// HTML 正文和属性里都能用：五个特殊字符都换掉。
-pub(super) fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
         match character {

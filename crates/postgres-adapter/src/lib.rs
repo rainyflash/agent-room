@@ -25,6 +25,7 @@ mod network_agent_submissions;
 mod network_agents;
 mod principals;
 mod reception;
+mod reminders;
 mod rooms;
 mod transaction;
 
