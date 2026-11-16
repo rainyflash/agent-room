@@ -20,7 +20,7 @@ import { useAppServices } from '@/app/app-services';
 import { latestReadingCursor, type RoomUnread } from '@/features/inbox/domain/inbox';
 import { RoomDeskMenu } from '@/features/lobby/ui/room-desk-menu';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
-import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
+import { refreshRoomsAfterClosing } from '@/features/private-rooms/data/private-room-queries';
 import type { PrivateRoomFailure } from '@/features/private-rooms/domain/private-room';
 import {
   managesSubRoom,
@@ -203,7 +203,7 @@ function RowMenuBody({
         return;
       }
       // 退出、归档以后这一间不在你的房间里了；连子房间的名单（挂在房间列表下面）一起重读。
-      await queries.invalidateQueries({ queryKey: privateRoomListQueryKey });
+      await refreshRoomsAfterClosing(queries, room.catalogId);
       done();
     })();
   };

@@ -5,7 +5,10 @@ import { useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
-import { privateRoomListQueryKey } from '@/features/private-rooms/data/private-room-queries';
+import {
+  privateRoomListQueryKey,
+  refreshRoomsAfterClosing,
+} from '@/features/private-rooms/data/private-room-queries';
 import {
   subRoomAccessValues,
   type ReviseSubRoomInput,
@@ -136,7 +139,7 @@ export function SubRoomSettings({ list, managing = null, onArchived, room }: Sub
       setArchiveFailure(result?.error.code ?? 'sub_room.unavailable');
       return;
     }
-    await queryClient.invalidateQueries({ queryKey: privateRoomListQueryKey });
+    await refreshRoomsAfterClosing(queryClient, room.catalogId);
     onArchived();
   };
   const addsDoor = room.access === 'open' && draft.access !== 'open';

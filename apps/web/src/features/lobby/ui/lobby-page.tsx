@@ -598,13 +598,17 @@ function ReadyLobby({
       ? null
       : (directSessions.sessions.find((session) => session.catalogId === selectedDirectSessionId)
           ?.target.displayName ?? t('roomWorkspace.direct'));
-  const rosterPolicy = (
-    <AgentRosterPolicyPanel
-      key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
-      catalogId={catalogId}
-      days={room.archiveAfterDays ?? 7}
-    />
-  );
+  // 归档了的房间不再管 Agent 离线多久归档，也就不问管不管得了（问了回 404）。私人房间等列表到了
+  // 再看，免得列表还没到时先问一次；公开大厅不在私人房间列表里。
+  const roomStatusKnown = room.publicLobby === true || privateRoomList.data !== undefined;
+  const rosterPolicy =
+    archived || !roomStatusKnown ? null : (
+      <AgentRosterPolicyPanel
+        key={`${catalogId}:${String(room.archiveAfterDays ?? 7)}`}
+        catalogId={catalogId}
+        days={room.archiveAfterDays ?? 7}
+      />
+    );
   // 对话版面是表格（`RoomRoster`），右栏和窄的时候的抽屉里都只列 Agent 和人：私聊在左栏，
   // 窄了在房间名旁边的下拉里。场景里照旧是原来那份紧凑的名册，抽屉里连私聊一起列。
   const rosterPanel = () =>
