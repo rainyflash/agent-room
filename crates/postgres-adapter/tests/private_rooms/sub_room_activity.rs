@@ -32,7 +32,12 @@ async fn 只列没归档的子房间_父房间归档了一间都不列_最近说
         SubRoomArchiveOutcome::Done
     );
 
-    assert_eq!(listed(&repositories).await, [id(&alpha)], "归档了的不读");
+    let ours = [id(&alpha), id(&beta)];
+    assert_eq!(
+        listed(&repositories, &ours).await,
+        [id(&alpha)],
+        "归档了的不读"
+    );
 
     let before = load(&repositories, id(&alpha)).await.room().version();
     for at in [9_000, 8_000] {
@@ -53,7 +58,7 @@ async fn 只列没归档的子房间_父房间归档了一间都不列_最近说
 
     archive(&repositories, parent, owner).await;
     assert!(
-        listed(&repositories).await.is_empty(),
+        listed(&repositories, &ours).await.is_empty(),
         "父房间归档了，下面的都不读"
     );
 
@@ -75,6 +80,7 @@ async fn 领走安静的子房间_恢复的从恢复那一刻算_租期里别人
         assert_eq!(create(&repositories, sub_room).await, None);
     }
     let id = |sub_room: &NewSubRoom| sub_room.snapshot.catalog().id();
+    let ours = [id(&alpha), id(&beta), id(&gamma)];
     SubRoomActivityStore::record_sub_room_last_message(&repositories, id(&beta), time(40 * DAY))
         .await
         .expect("记得下");
@@ -96,7 +102,7 @@ async fn 领走安静的子房间_恢复的从恢复那一刻算_租期里别人
     // 第 45 天：30 天以前就没人说话的只有 Alpha。
     let now = 45 * DAY;
     assert_eq!(
-        claim(&repositories, now).await,
+        claim(&repositories, &ours, now).await,
         [QuietSubRoom {
             catalog_id: id(&alpha),
             parent_catalog_id: parent,
@@ -104,11 +110,13 @@ async fn 领走安静的子房间_恢复的从恢复那一刻算_租期里别人
         }]
     );
     assert!(
-        claim(&repositories, now).await.is_empty(),
+        claim(&repositories, &ours, now).await.is_empty(),
         "租期里别人领不到"
     );
     assert_eq!(
-        claim(&repositories, now + 11 * 60 * 1000).await.len(),
+        claim(&repositories, &ours, now + 11 * 60 * 1000)
+            .await
+            .len(),
         1,
         "租期过了再领"
     );
@@ -116,7 +124,7 @@ async fn 领走安静的子房间_恢复的从恢复那一刻算_租期里别人
     // 第 51 天：Gamma 恢复也满 30 天了。
     let later = 51 * DAY;
     assert_eq!(
-        ids(claim(&repositories, later).await),
+        ids(claim(&repositories, &ours, later).await),
         [id(&alpha), id(&gamma)]
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>()
@@ -134,21 +142,30 @@ async fn 领走安静的子房间_恢复的从恢复那一刻算_租期里别人
         version: version(1),
     };
     assert!(save_policy(&repositories, &off, None).await);
-    assert!(claim(&repositories, 60 * DAY).await.is_empty());
+    assert!(claim(&repositories, &ours, 60 * DAY).await.is_empty());
 
     database.close().await;
 }
 
-async fn claim(repositories: &PostgresRepositories, now: i64) -> Vec<QuietSubRoom> {
+/// 领走安静的子房间，只看这条测试建的：库是各条测试共用的，别的测试建的子房间也一样安静，一起被领走。
+/// 一次领得多一些，免得名额都被别的测试的占了。
+async fn claim(
+    repositories: &PostgresRepositories,
+    ours: &[RoomCatalogId],
+    now: i64,
+) -> Vec<QuietSubRoom> {
     SubRoomActivityStore::claim_quiet_sub_rooms(
         repositories,
         time(now - 30 * DAY),
         time(now),
         time(now + 10 * 60 * 1000),
-        50,
+        u16::MAX,
     )
     .await
     .expect("领得到")
+    .into_iter()
+    .filter(|room| ours.contains(&room.catalog_id))
+    .collect()
 }
 
 fn ids(rooms: Vec<QuietSubRoom>) -> std::collections::BTreeSet<RoomCatalogId> {
@@ -161,12 +178,14 @@ async fn listed_rooms(repositories: &PostgresRepositories) -> Vec<(RoomCatalogId
         .expect("列得出")
 }
 
-async fn listed(repositories: &PostgresRepositories) -> Vec<RoomCatalogId> {
+/// 只看这条测试建的：库是各条测试共用的，别的测试建的子房间也在名单上。
+async fn listed(repositories: &PostgresRepositories, ours: &[RoomCatalogId]) -> Vec<RoomCatalogId> {
     SubRoomActivityStore::sub_rooms_for_activity(repositories)
         .await
         .expect("列得出")
         .into_iter()
         .map(|(catalog_id, _)| catalog_id)
+        .filter(|catalog_id| ours.contains(catalog_id))
         .collect()
 }
 
