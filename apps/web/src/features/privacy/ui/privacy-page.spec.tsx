@@ -56,6 +56,16 @@ describe('隐私说明', () => {
     expect(screen.queryByText(/can(?:no|’)t read/u)).not.toBeInTheDocument();
   });
 
+  it('照实说算提醒时替你读什么、不读什么（specs/redesign/reminders.md 的 4R-4c）', () => {
+    renderPage();
+
+    expect(screen.getByText(/works out who has new messages/u)).toBeVisible();
+    expect(privacyResources.en['privacy.keep.reminders.text']).toMatch(/not at what it says/u);
+    expect(privacyResources.en['privacy.keep.reminders.text']).toMatch(/never who/u);
+    expect(privacyResources['zh-CN']['privacy.keep.reminders.text']).toMatch(/不看说了什么/u);
+    expect(privacyResources['zh-CN']['privacy.keep.reminders.text']).toMatch(/不记是谁/u);
+  });
+
   it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
     renderPage();
 

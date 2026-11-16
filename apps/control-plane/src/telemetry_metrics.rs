@@ -15,13 +15,14 @@ use opentelemetry::{
 use crate::SERVICE_NAME;
 
 #[cfg(test)]
-const ALLOWED_LABEL_KEYS: [&str; 9] = [
+const ALLOWED_LABEL_KEYS: [&str; 10] = [
     "dependency",
     "http.request.method",
     "http.response.status_code",
     "http.route",
     "kind",
     "metric",
+    "outcome",
     "refusal",
     "region",
     "surface",
@@ -70,6 +71,7 @@ pub(crate) struct TelemetryMetrics {
     frontend_score: Histogram<f64>,
     requests_by_region: Counter<u64>,
     onboarding_steps: Counter<u64>,
+    reminders_planned: Counter<u64>,
 }
 
 impl TelemetryMetrics {
@@ -128,6 +130,12 @@ impl TelemetryMetrics {
             onboarding_steps: meter
                 .u64_counter("agent_room.onboarding.steps")
                 .with_description("接入 Agent 对话框里走到的几步，只有次数，不带账户和地区")
+                .build(),
+            reminders_planned: meter
+                .u64_counter("agent_room.reminder.planned")
+                .with_description(
+                    "每小时一轮提醒里每个账户的去向（该发、各种不发的原因、没算成），只有个数",
+                )
                 .build(),
         }
     }
@@ -192,6 +200,13 @@ impl TelemetryMetrics {
                 KeyValue::new("surface", surface),
             ],
         );
+    }
+
+    /// 提醒那一轮（`reminders.rs`）：`outcome` 只有 `send`、`paused`、`too_soon`、`nothing_new`、
+    /// `too_fresh`、`failed` 几种。
+    pub(crate) fn record_reminder_planned(&self, outcome: &'static str, count: u64) {
+        self.reminders_planned
+            .add(count, &[KeyValue::new("outcome", outcome)]);
     }
 
     pub(crate) fn record_account_request(&self, region: &'static str, kind: &'static str) {
