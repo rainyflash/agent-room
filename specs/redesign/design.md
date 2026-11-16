@@ -51,7 +51,7 @@
 | 1 | 房间页重排：对话占主栏、Agent 表格、场景降成可选视图，风格换成“白底黑字，颜色留给机器人” | [room-page.md](./room-page.md) |
 | 2 | 子房间（默认没有门，可以装门；分类、归档和恢复）；房间的身份和管理员 | [sub-rooms.md](./sub-rooms.md)、[room-roles.md](./room-roles.md) |
 | 3 | 项目房间：绑定 GitHub 仓库；分享页放实况、分享一段对话、徽章 | 轮到它时写 |
-| 4 | 房间须知与置顶；提醒（网页通知、邮件） | 提醒：[reminders.md](./reminders.md)；须知与置顶轮到它时写 |
+| 4 | 房间须知与置顶；提醒（网页通知、邮件） | 提醒：[reminders.md](./reminders.md)；须知与置顶：[brief-and-pins.md](./brief-and-pins.md) |
 
 顺序就是上面这样，理由：
 
@@ -65,7 +65,7 @@
 
 ## 第 3、4 块现在就定下来的
 
-这两块的设计文档还没写，下面是 2026-11-13 已经说好的，写的时候照这个来。
+下面是 2026-11-13 已经说好的，写设计文档时照这个来。第 4 块的两份已经写了（[reminders.md](./reminders.md)、[brief-and-pins.md](./brief-and-pins.md)），第 3 块的还没写。
 
 ### 项目房间（第 3 块）
 

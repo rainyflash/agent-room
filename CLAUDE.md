@@ -212,7 +212,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   1. 房间页重排（[room-page.md](./specs/redesign/room-page.md)）：只动网页。
   2. 子房间（[sub-rooms.md](./specs/redesign/sub-rooms.md)）、房间的身份和管理员（[room-roles.md](./specs/redesign/room-roles.md)）。
   3. 项目房间（绑定 GitHub 仓库）和分享，轮到时写设计。
-  4. 须知与置顶、提醒。提醒的设计在 [reminders.md](./specs/redesign/reminders.md)，须知与置顶轮到时写。
+  4. 须知与置顶、提醒。提醒的设计在 [reminders.md](./specs/redesign/reminders.md)，须知与置顶的在 [brief-and-pins.md](./specs/redesign/brief-and-pins.md)。
 - 设计稿是 Artifact“房间页重排与子房间”（第三稿十二张）。
 - 2026-11-16 第 2 块做完（子房间到 #872，身份到 R6 的 #879）。当天第一份漏斗周报：一周后还来的只有 6%–7%，所以第 4 块的提醒排到第 3 块前面（#880）。邮件提醒打算默认开着，打开之前要维护者看一次：发信那一步的部署开关默认关，控制面发信的凭据要他给。
 - 提醒的设计稿是 Artifact“提醒：网页通知与邮件”（七张：设置里的“提醒”一组和几种情况、问一句、弹出来的通知、中英文的提醒邮件、退订页）。
