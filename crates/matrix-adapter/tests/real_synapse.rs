@@ -46,6 +46,8 @@ mod cross_signing_upload;
 mod human_session;
 #[path = "real_synapse/moderation_expiry.rs"]
 mod moderation_expiry;
+#[path = "real_synapse/owner_handover.rs"]
+mod owner_handover;
 #[path = "real_synapse/owner_identity.rs"]
 mod owner_identity;
 #[path = "real_synapse/presence.rs"]

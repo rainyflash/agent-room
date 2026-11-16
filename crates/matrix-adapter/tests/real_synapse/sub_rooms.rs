@@ -260,7 +260,10 @@ async fn family() -> Family {
 }
 
 /// 一间受管的私人房间，邀请制、不加密。子房间和父房间在聊天服务器上是同一种房间。
-fn room_creation(owner: &MatrixUserId, member: &MatrixUserId) -> PrivateMatrixRoomCreation {
+pub(super) fn room_creation(
+    owner: &MatrixUserId,
+    member: &MatrixUserId,
+) -> PrivateMatrixRoomCreation {
     let alias = MatrixRoomAliasLocalpart::new(format!(
         "agent-room-private-test-{}",
         Uuid::now_v7().simple()
