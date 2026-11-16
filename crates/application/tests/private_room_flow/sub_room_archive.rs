@@ -7,7 +7,7 @@
 
 use agent_room_application::{
     ports::{SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveStore, SubRoomRestoration},
-    private_rooms::{ArchiveSubRoom, RequestSubRoomJoin, RestoreSubRoom},
+    private_rooms::{ArchiveSubRoom, InactiveSubRoomArchival, RequestSubRoomJoin, RestoreSubRoom},
 };
 use agent_room_domain::room_join_requests::JoinRequestStatus;
 
@@ -412,6 +412,44 @@ async fn 手动归档的只有管得了的人能恢复_自动归档的原来在�
         .await
         .expect("30 天没人说话自动收起来的，原来在里面的人能恢复");
     assert_eq!(rooms.status_of(20), PrivateRoomLifecycleStatus::Active);
+}
+
+#[tokio::test]
+async fn 没人说话自动归档_没有动手的人_已经归档的和不挂在这间房下面的不动() {
+    let rooms = release_managed_by_member().await;
+    let archive = |parent: u128, catalog: u128| {
+        InactiveSubRoomArchival::archive_inactive_sub_room(
+            &rooms.service,
+            catalog_id(parent),
+            catalog_id(catalog),
+        )
+    };
+
+    assert!(!archive(20, 20).await.expect("不报错"), "不挂在这间房下面");
+    assert!(!archive(PARENT, 99).await.expect("不报错"), "没有这一间");
+    assert!(archive(PARENT, 20).await.expect("归档成功"));
+    assert_eq!(rooms.status_of(20), PrivateRoomLifecycleStatus::Archived);
+    assert_eq!(
+        rooms.store.link(20).link.archived,
+        Some(SubRoomArchiveRecord {
+            at: UtcMillis::new(1_000).expect("时间有效"),
+            by: None,
+            reason: SubRoomArchiveReason::Inactive,
+        })
+    );
+    assert_eq!(
+        rooms.matrix.changes_in(&room(20)),
+        ["archive"],
+        "聊天服务器上也锁住了"
+    );
+
+    rooms.clear_events();
+    assert!(!archive(PARENT, 20).await.expect("不报错"), "已经归档了");
+    assert!(!rooms.events().contains(&"sub_rooms.archive"));
+    rooms
+        .restore_sub_room(MEMBER, 20)
+        .await
+        .expect("自动归档的，原来在里面的人能恢复");
 }
 
 #[tokio::test]

@@ -73,7 +73,8 @@ pub use service::{
     AccessibleSubRoom, AccountSubRoomListing, AdmitPersonByAgent, AgentOwnerSeat,
     AgentSubRoomArchival, AgentSubRoomCreation, AgentSubRoomItem, AgentSubRoomListing,
     AgentSubRoomManagement, AgentSubRooms, ArchiveAgentSubRoom, FindAgentManagedSubRoom,
-    ListAgentSubRooms, PrivateRoomDependencies, PrivateRoomLinkInvitations, PrivateRoomRetirement,
-    PrivateRoomService, PrivateRoomUseCases, SubRoomAgentOwnerSeating, SubRoomSyncOutcome,
-    SubRoomSyncRetry, SubRoomSyncUseCases, SubRoomUseCases,
+    InactiveSubRoomArchival, ListAgentSubRooms, PrivateRoomDependencies,
+    PrivateRoomLinkInvitations, PrivateRoomRetirement, PrivateRoomService, PrivateRoomUseCases,
+    SubRoomAgentOwnerSeating, SubRoomSyncOutcome, SubRoomSyncRetry, SubRoomSyncUseCases,
+    SubRoomUseCases,
 };

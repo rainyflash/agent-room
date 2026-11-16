@@ -19,6 +19,7 @@ mod public_watch;
 mod request_regions;
 mod runtime;
 mod shutdown;
+mod sub_room_auto_archive;
 mod sub_room_sync;
 mod telemetry_metrics;
 
@@ -88,6 +89,7 @@ use agent_room_application::{
         LobbyProvisioningPolicy, LobbyProvisioningService,
     },
     sign_out_elsewhere::{SignOutElsewhereDependencies, SignOutElsewhereService},
+    sub_room_auto_archive::{SubRoomAutoArchiveDependencies, SubRoomAutoArchiveService},
 };
 use agent_room_domain::time::{DurationMillis, SlidingLifetime};
 use agent_room_identity_adapter::{
@@ -162,6 +164,8 @@ struct IdentityRuntime {
     public_room_activity: public_room_activity::PublicRoomActivityWorker,
     /// 父房间变了以后，子房间在聊天服务器上跟着做：请求里没做成的、来不及做的由它补上。
     sub_room_sync: sub_room_sync::SubRoomSyncWorker,
+    /// 30 天没人说话的子房间每小时一轮自动归档。
+    sub_room_auto_archive: sub_room_auto_archive::SubRoomAutoArchiveWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -305,6 +309,7 @@ pub async fn run() -> Result<(), StartupError> {
         join_request_cleanup,
         public_room_activity,
         sub_room_sync,
+        sub_room_auto_archive,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -336,6 +341,7 @@ pub async fn run() -> Result<(), StartupError> {
     join_request_cleanup.shutdown().await;
     public_room_activity.shutdown().await;
     sub_room_sync.shutdown().await;
+    sub_room_auto_archive.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -515,6 +521,7 @@ async fn build_identity_router(
         ),
         public_room_activity: start_public_room_activity(&agent_dependencies),
         sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
+        sub_room_auto_archive: start_sub_room_auto_archive(config, &agent_dependencies)?,
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -749,6 +756,23 @@ fn start_sub_room_sync(
 ) -> Result<sub_room_sync::SubRoomSyncWorker, StartupError> {
     Ok(sub_room_sync::SubRoomSyncWorker::start(
         build_private_room_service(config, dependencies)?,
+    ))
+}
+
+/// 30 天没人说话的子房间自动归档：动手前问一次聊天服务器，归档走私人房间服务那一套。
+fn start_sub_room_auto_archive(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<sub_room_auto_archive::SubRoomAutoArchiveWorker, StartupError> {
+    Ok(sub_room_auto_archive::SubRoomAutoArchiveWorker::start(
+        Arc::new(SubRoomAutoArchiveService::new(
+            SubRoomAutoArchiveDependencies {
+                store: dependencies.repositories.clone(),
+                matrix: dependencies.matrix_identities.clone(),
+                archival: build_private_room_service(config, dependencies)?,
+                clock: dependencies.system_runtime.clone(),
+            },
+        )),
     ))
 }
 

@@ -8,7 +8,8 @@ use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
     ports::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-        PortFuture, PublicRoomActivityMatrix, PublicRoomActivityStore, SubRoomActivityStore,
+        PortFuture, PublicRoomActivityMatrix, PublicRoomActivityStore, QuietSubRoom,
+        SubRoomActivityStore,
     },
     public_room_activity::{
         PublicRoomActivityDependencies, PublicRoomActivityRound, PublicRoomActivityService,
@@ -158,6 +159,16 @@ impl SubRoomActivityStore for MemoryActivity {
             .unwrap()
             .push((catalog_id, at));
         Box::pin(async { Ok(()) })
+    }
+
+    fn claim_quiet_sub_rooms(
+        &self,
+        _quiet_before: UtcMillis,
+        _now: UtcMillis,
+        _lease_until: UtcMillis,
+        _limit: u16,
+    ) -> PortFuture<'_, RepositoryResult<Vec<QuietSubRoom>>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 

@@ -171,13 +171,16 @@ async fn restore(
     )
     .await?;
     sqlx::query(
+        // 恢复以后从这一刻重新算 30 天没人说话（第 2j-2 步）。
         r"UPDATE agent_room.private_room_parent
              SET archived_at = NULL,
                  archived_by_principal_id = NULL,
-                 archived_reason = NULL
+                 archived_reason = NULL,
+                 restored_at = to_timestamp($2::double precision / 1000.0)
            WHERE catalog_entry_id = $1",
     )
     .bind(sub_room.as_uuid())
+    .bind(restoration.at.value())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;

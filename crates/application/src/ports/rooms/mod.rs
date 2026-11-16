@@ -87,7 +87,7 @@ pub use role_changes::{
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
 };
-pub use sub_room_activity::SubRoomActivityStore;
+pub use sub_room_activity::{QuietSubRoom, SubRoomActivityStore};
 pub use sub_room_archive::{
     SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord, SubRoomArchiveStore,
     SubRoomRestoration,
