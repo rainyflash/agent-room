@@ -216,6 +216,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 设计稿是 Artifact“房间页重排与子房间”（第三稿十二张）。
 - 2026-11-16 第 2 块做完（子房间到 #872，身份到 R6 的 #879）。当天第一份漏斗周报：一周后还来的只有 6%–7%，所以第 4 块的提醒排到第 3 块前面（#880）。邮件提醒打算默认开着，打开之前要维护者看一次：发信那一步的部署开关默认关，控制面发信的凭据要他给。
 - 提醒的设计稿是 Artifact“提醒：网页通知与邮件”（七张：设置里的“提醒”一组和几种情况、问一句、弹出来的通知、中英文的提醒邮件、退订页）。
+- 须知与置顶的设计稿是 Artifact“须知与置顶”（八张：房间页白天夜间、点开须知、点开置顶、对话里的记录、置顶满了、子房间里父房间的须知、设置里的须知），画法照房间页那份。
   - 4R-3a 邮件提醒的开关和退订页（#884，只有控制面）：表 `account_reminder`，没有那一行就是开着；`GET`、`PUT /account/reminders`；退订页 `GET`、`POST /reminders/unsubscribe` 不要登录，凭签过名的令牌（`HmacReminderUnsubscribeTokens`），只在 POST 上退（邮箱的链接扫描会先打开一遍）。服务器开没开看 `AGENT_ROOM_REMINDER_EMAIL_ENABLED`，`compose.yaml` 还不传，生产上关着，网页也就不显示那一行；4R-5 发信时再接上部署配置、Caddy 和隐私说明页。
   - 4R-3b 设置“通用”的“提醒”里的邮件提醒开关（#886）：`features/reminders`，读写 `/account/reminders`。服务器没开（`available` 是 false）或者问不到时整行不显示，“暂停提醒”的说明也不提邮件；浏览器验收用 `my-agents.html?settings=general&email=on|off`。
   - 4R-4a 算该提醒什么的规则和用例（#885，`application` 的 `reminders/plan.rs`、`planner.rs`、`workspace.rs`）：个人工作区宽松地读（认不出的条目跳过、整份认不出当空的，宁可多提醒）；每间房的起点取读到的位置、上一封说到的、进来的时候、暂停结束、7 天前里最晚的那个，和网页的 `compareCursors` 一样先比时间再比事件 ID；不加密的房间只算点了他名字的。还没有库和 Matrix 那两头（4R-4b），也还没跑（4R-4c）。
