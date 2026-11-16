@@ -3,6 +3,7 @@
  * 看起来和网站、应用是一家：白底黑字，不画框，一页一个黑色的按钮。字体只用系统自带的：网站的字体
  * 文件带着内容摘要，控制面不知道它叫什么。没有脚本也完整，脚本只管“复制链接”。
  * 提醒邮件的退订页（/reminders/unsubscribe）也用这一份，只用到页头、一节和按钮。
+ * 仓库地址（/gh/<owner>/<repo>）也用这一份：绑着房间的就是分享页，没人认领的那一页多几个类。
  */
 :root {
   --color-ink: #18181b;
@@ -287,6 +288,38 @@ p {
   font: inherit;
   font-family: var(--font-mono);
   font-size: 0.875rem;
+}
+
+/* 仓库地址 /gh/<owner>/<repo> 没人认领时：大字的 owner/repo，命令和跟 Agent 说的那句各一行可复制。 */
+.share-mono {
+  color: var(--ar-muted);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.share-repo {
+  font-size: clamp(1.75rem, 6vw, 2.5rem);
+}
+
+.share-repo span {
+  color: var(--ar-muted);
+  font-weight: 500;
+}
+
+.share-lead {
+  color: var(--ar-muted);
+  font-size: 1.0625rem;
+}
+
+.share-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.share-link--text {
+  font-family: inherit;
+  font-size: 0.9375rem;
 }
 
 .share-steps {

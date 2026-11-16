@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     ports::{Clock, PortFuture, PublicRoomRecord},
+    project_rooms::RepositoryRoomPages,
     public_room_directory::{
         BrowsePublicRooms, PublicDirectoryFailure, PublicDirectoryFailureKind,
         PublicDirectoryResult, PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomOnline,
@@ -11,6 +12,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::RoomCatalogId,
+    project_rooms::GithubRepository,
     room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
 };
@@ -26,18 +28,18 @@ use uuid::Uuid;
 use super::{SharePageHttpState, router};
 use crate::features::anonymous_limits::{AnonymousLimiter, PER_MINUTE};
 
-const NOW: i64 = 1_790_000_000_000;
+pub(super) const NOW: i64 = 1_790_000_000_000;
 const DAY: i64 = 24 * 60 * 60 * 1_000;
 
 /// 分享码 `aB3xYz` 是 `room`，别的码照 `failure` 回答（没设就是没有这间房）。
-struct FakeDirectory {
-    room: Mutex<PublicRoomDetailView>,
+pub(super) struct FakeDirectory {
+    pub(super) room: Mutex<PublicRoomDetailView>,
     failure: Mutex<Option<PublicDirectoryFailureKind>>,
-    asked: Mutex<Vec<(bool, String)>>,
+    pub(super) asked: Mutex<Vec<(bool, String)>>,
 }
 
 impl FakeDirectory {
-    fn new(detail: PublicRoomDetailView) -> Arc<Self> {
+    pub(super) fn new(detail: PublicRoomDetailView) -> Arc<Self> {
         Arc::new(Self {
             room: Mutex::new(detail),
             failure: Mutex::new(None),
@@ -80,6 +82,51 @@ struct TestClock;
 impl Clock for TestClock {
     fn now(&self) -> UtcMillis {
         UtcMillis::new(NOW).unwrap()
+    }
+}
+
+/// 仓库地址认的房间：照 `answer` 回答，记下问过哪些仓库。`gate` 设了就等它放行再回答。
+pub(super) struct FakeRepositories {
+    pub(super) answer: Mutex<Result<PublicRoomDetailView, PublicDirectoryFailureKind>>,
+    pub(super) asked: Mutex<Vec<String>>,
+    pub(super) gate: Option<Arc<tokio::sync::Semaphore>>,
+}
+
+impl FakeRepositories {
+    pub(super) fn answering(
+        answer: Result<PublicRoomDetailView, PublicDirectoryFailureKind>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            answer: Mutex::new(answer),
+            asked: Mutex::new(Vec::new()),
+            gate: None,
+        })
+    }
+
+    pub(super) fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+impl RepositoryRoomPages for FakeRepositories {
+    fn public_room(
+        &self,
+        repository: GithubRepository,
+    ) -> PortFuture<'_, PublicDirectoryResult<PublicRoomDetailView>> {
+        self.asked.lock().unwrap().push(repository.full_name());
+        let answer = self
+            .answer
+            .lock()
+            .unwrap()
+            .clone()
+            .map_err(|kind| PublicDirectoryFailure::new("test", kind));
+        let gate = self.gate.clone();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.acquire().await.unwrap().forget();
+            }
+            answer
+        })
     }
 }
 
@@ -303,6 +350,7 @@ async fn 一个来源一分钟打开太多次就请它等一分钟_样式和脚�
 fn test_router(directory: Arc<FakeDirectory>) -> Router {
     router(SharePageHttpState::new(
         directory,
+        FakeRepositories::answering(Err(PublicDirectoryFailureKind::NotFound)),
         Arc::new(TestClock),
         Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(TestClock))),
         "agent-room.test",
@@ -329,7 +377,7 @@ async fn get(
     (status, headers, String::from_utf8(body.to_vec()).unwrap())
 }
 
-fn detail(
+pub(super) fn detail(
     name: &str,
     description: &str,
     join_mode: RoomJoinMode,
