@@ -1,5 +1,6 @@
-//! 转让房主也守着每个账户 1 间公开房间（`specs/public-rooms/design.md` 的“限额”）。私密的房间照常转：
-//! 接手的人以后要公开，公开的时候再查。
+//! 转让房主也守着每个账户 1 间不绑仓库的公开房间（`specs/public-rooms/design.md` 的“限额”）。私密的房间
+//! 照常转：接手的人以后要公开，公开的时候再查。绑着仓库的公开房间转给谁都不占他的名额，绑定跟着房间走
+//! （`specs/redesign/project-rooms.md` 的“限额”）。
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
@@ -33,9 +34,17 @@ impl PrivateRoomService {
         if !listing.is_some_and(|listing| listing.settings.listed()) {
             return Ok(());
         }
+        let bound = self
+            .listings
+            .repository_bound(catalog_id)
+            .await
+            .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
+        if bound {
+            return Ok(());
+        }
         let listed = self
             .listings
-            .listed_rooms_owned_by(target)
+            .unbound_listed_rooms_owned_by(target)
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
         if listed.iter().any(|room| *room != catalog_id) {

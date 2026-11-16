@@ -698,7 +698,7 @@ impl ApiError {
                 StatusCode::CONFLICT,
                 "private_room.public_limit_reached",
                 ErrorCategory::Conflict,
-                "每个账户只能有一间公开房间，先把另一间改回私密。",
+                "不绑仓库的公开房间每个账户只能有一间，先把另一间改回私密。",
             ),
             PrivateRoomFailureKind::SubRoom(refusal) => sub_room_refusal(refusal),
             PrivateRoomFailureKind::Internal => (

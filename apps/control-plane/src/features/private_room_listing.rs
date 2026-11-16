@@ -1,7 +1,8 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）：`GET`、`PUT /private-rooms/{c}/listing`。
 //! 房间里已加入的人都看得到（公开房间的成员都能分享），只有房主能改。房主
 //! `POST /private-rooms/{c}/listing/share-code` 换一个分享码，回换好以后的设置。回答里的
-//! `shareUrl` 是整条分享链接（裸域上的 `/r/<分享码>`）：网页不知道裸域在哪。
+//! `shareUrl` 是整条分享链接（裸域上的 `/r/<分享码>`）：网页不知道裸域在哪。绑着仓库的房间不能换码
+//! （`specs/redesign/project-rooms.md`），回 409 `room_listing.repository_bound`。
 //!
 //! 单独一个接口，不往私人房间的回答里加字段：网页对它 `.strict()` 校验，旧版桌面端多看到一个字段，
 //! 整个房间都读不出来。
@@ -338,9 +339,15 @@ fn failure_response(failure: ListingFailure, correlation_id: CorrelationId) -> R
             StatusCode::CONFLICT,
             "room_listing.limit_reached",
             ErrorCategory::Conflict,
-            "每个账户只能有一间公开房间，先把另一间改回私密。",
+            "不绑仓库的公开房间每个账户只能有一间，先把另一间改回私密。",
         ),
         ListingFailureKind::ParentOnly => crate::error::SUB_ROOM_PARENT_ONLY,
+        ListingFailureKind::RepositoryBound => (
+            StatusCode::CONFLICT,
+            "room_listing.repository_bound",
+            ErrorCategory::Conflict,
+            "这间房绑着 GitHub 仓库，仓库里写着它的分享链接，不能换分享码。",
+        ),
         ListingFailureKind::NeverListed => (
             StatusCode::CONFLICT,
             "room_listing.never_listed",

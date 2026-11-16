@@ -36,7 +36,7 @@ async fn 公开设置往返_改回私密分享码留着_版本对不上不覆盖
         Some(listed.clone())
     );
     assert_eq!(
-        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, owner)
+        PrivateRoomListingStore::unbound_listed_rooms_owned_by(&repositories, owner)
             .await
             .expect("可读"),
         [room]
@@ -80,7 +80,7 @@ async fn 公开设置往返_改回私密分享码留着_版本对不上不覆盖
     assert_eq!(stored, unlisted);
     assert_eq!(stored.share_code, listed.share_code);
     assert!(
-        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, owner)
+        PrivateRoomListingStore::unbound_listed_rooms_owned_by(&repositories, owner)
             .await
             .expect("可读")
             .is_empty()
@@ -156,7 +156,7 @@ async fn 每个账户最多一间公开房间_改回私密和归档的不算() {
 }
 
 /// 把 `new_owner` 拉进房间、让他加入，再转让给他（还没存）。
-async fn transfer_room(
+pub(super) async fn transfer_room(
     repositories: &PostgresRepositories,
     catalog_id: RoomCatalogId,
     owner: PrincipalId,
@@ -252,13 +252,13 @@ async fn 转让公开房间也守每个账户一间_私密的照常_转走以后
         Saved
     );
     assert_eq!(
-        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, receiver)
+        PrivateRoomListingStore::unbound_listed_rooms_owned_by(&repositories, receiver)
             .await
             .expect("可读"),
         [listed_room]
     );
     assert!(
-        PrivateRoomListingStore::listed_rooms_owned_by(&repositories, owner)
+        PrivateRoomListingStore::unbound_listed_rooms_owned_by(&repositories, owner)
             .await
             .expect("可读")
             .is_empty()

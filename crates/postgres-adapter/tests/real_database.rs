@@ -14,10 +14,11 @@ use agent_room_application::{
         AgentRetirementTransaction, ClaimTargetedHandoff, DeviceRevocationOutcome,
         DeviceRevocationTransaction, HandoffAccessRepository, MatrixUserId,
         PendingAgentMatrixDeviceStore, PrincipalRegistration, PrincipalRepository,
-        QueueTargetedHandoff, QueueTargetedHandoffOutcome, RecordTargetedHandoffReceipt,
-        ReminderAccount, ReminderSettingsRepository, SealedSecret, SecretDigest, SignInAccount,
-        StoredAgentInstanceRegistration, StoredEncryptionKey, TargetedHandoffReceiptOutcome,
-        TargetedHandoffRepository, TargetedHandoffRequestFingerprint,
+        PrivateRoomSnapshot, PrivateRoomStore, QueueTargetedHandoff, QueueTargetedHandoffOutcome,
+        RecordTargetedHandoffReceipt, ReminderAccount, ReminderSettingsRepository, SealedSecret,
+        SecretDigest, SignInAccount, StoredAgentInstanceRegistration, StoredEncryptionKey,
+        TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
+        TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -41,16 +42,21 @@ use agent_room_domain::{
     ids::{
         AccountDeletionJobId, AdapterBindingId, AgentCardSnapshotId, AgentCreationRequestId,
         AgentId, AgentInstanceId, AgentInstanceRegistrationRequestId, ContentId, DeviceId,
-        HandoffId, MessageId, PrincipalId,
+        HandoffId, MessageId, PrincipalId, RoomCatalogId, RoomInstanceId,
     },
-    rooms::MatrixRoomReference,
+    private_rooms::PrivateRoom,
+    rooms::{
+        MatrixRoomReference, RoomCapacity, RoomCatalog, RoomCatalogFields, RoomCatalogKind,
+        RoomCatalogStatus, RoomCatalogVisibility, RoomInstance, RoomInstanceFields,
+        RoomInstanceState,
+    },
     time::{DurationMillis, UtcMillis},
 };
 use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 74] = [
+const EXPECTED_TABLES: [&str; 76] = [
     "account_deletion_job",
     "account_reminder",
     "adapter_binding",
@@ -118,12 +124,14 @@ const EXPECTED_TABLES: [&str; 74] = [
     "private_room_sub_room_sync",
     "public_room_platform_hold",
     "reception_execution",
+    "repository_claim",
     "revoked_agent_departure",
     "room_capacity_reservation",
     "room_catalog_entry",
     "room_instance",
     "room_moderation_grant",
     "room_provisioning_job",
+    "room_repository_binding",
     "web_session",
 ];
 
@@ -294,6 +302,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     assert_fresh_export(&repositories, principal_id).await;
 
     store_encryption_key_twice(&repositories, principal_id).await;
+    let project_room = seed_project_room(&repositories, &database.runtime, principal_id).await;
 
     let job_id = AccountDeletionJobId::from_uuid(Uuid::now_v7());
     let receipt_digest = SecretDigest::from_array([91; 32]);
@@ -352,6 +361,7 @@ async fn 账户导出与删除状态机在真实事务中完成() {
             .await
             .expect("本地匿名化应完成");
     assert_eq!(completed.stage, AccountDeletionStage::Completed);
+    assert_project_room_released(&database.runtime, principal_id, project_room).await;
     assert_eq!(
         AccountDeletionRepository::find_by_receipt(&repositories, &receipt_digest)
             .await
@@ -385,6 +395,98 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     );
 
     database.close().await;
+}
+
+/// 他名下一间绑着仓库的房间，外加一个在等的仓库认领（`specs/redesign/project-rooms.md`）。
+async fn seed_project_room(
+    repositories: &PostgresRepositories,
+    pool: &PgPool,
+    principal_id: PrincipalId,
+) -> RoomCatalogId {
+    let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
+    let catalog = RoomCatalog::new(
+        catalog_id,
+        RoomCatalogFields {
+            kind: RoomCatalogKind::PrivateRoom,
+            slug: None,
+            name: "项目房间".to_owned(),
+            description: "绑着仓库".to_owned(),
+            language: None,
+            matrix_space_id: None,
+            owner_principal_id: Some(principal_id),
+            visibility: RoomCatalogVisibility::Private,
+            retention_days: Some(30),
+            status: RoomCatalogStatus::Active,
+        },
+    )
+    .expect("私人目录有效");
+    let instance_id = RoomInstanceId::from_uuid(Uuid::now_v7());
+    let instance = RoomInstance::restore(
+        instance_id,
+        RoomInstanceFields {
+            catalog_id,
+            matrix_room_id: MatrixRoomReference::new(format!(
+                "!project{}:matrix.test",
+                instance_id.as_uuid().simple()
+            ))
+            .expect("Matrix 房间标识有效"),
+            region: None,
+            capacity: RoomCapacity::new(8, 16).expect("私人房间容量有效"),
+            allocated_slots: 0,
+            state: RoomInstanceState::Active,
+        },
+    )
+    .expect("私人实例有效");
+    let snapshot = PrivateRoomSnapshot::new(
+        catalog,
+        instance,
+        PrivateRoom::create(catalog_id, principal_id),
+    )
+    .expect("私人房间快照有效");
+    PrivateRoomStore::create(repositories, &snapshot, test_time())
+        .await
+        .expect("建房应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.room_repository_binding
+              (catalog_entry_id, host, repository_owner, repository_name, verified_by,
+               verified_at, verified_file)
+          VALUES ($1, 'github', 'deleting-owner', 'project-room', $2, now(), 'README.md')",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("绑定写入应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.repository_claim
+              (id, principal_id, host, repository_owner, repository_name, share_code, claimed_at)
+          VALUES ($1, $2, 'github', 'deleting-owner', 'next-project', 'Dlt001', now())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("认领写入应成功");
+    catalog_id
+}
+
+/// 删账户时他在等的认领、他名下房间绑着的仓库都清掉。
+async fn assert_project_room_released(
+    pool: &PgPool,
+    principal_id: PrincipalId,
+    room: RoomCatalogId,
+) {
+    let remaining: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM agent_room.repository_claim WHERE principal_id = $1),
+                (SELECT count(*) FROM agent_room.room_repository_binding
+                  WHERE catalog_entry_id = $2)",
+    )
+    .bind(principal_id.as_uuid())
+    .bind(room.as_uuid())
+    .fetch_one(pool)
+    .await
+    .expect("可数");
+    assert_eq!(remaining, (0, 0), "删账户时认领和绑着的仓库一起清掉");
 }
 
 /// 服务器替账户保管的签名钥匙（ADR 0011）：存、覆盖、读回。

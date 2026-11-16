@@ -1,6 +1,7 @@
 //! 新建时就选公开（`specs/public-rooms/design.md` 第 3a-2 步）：房间不加密，建好就公开。Matrix 上照旧
 //! 隐藏、邀请制，只是没写 `m.room.encryption`；建好以后先写下公开的时间（`room.listing.v1`），再在
-//! 一个事务里存房间和公开设置，顺带查每个账户只能有一间公开房间。
+//! 一个事务里存房间和公开设置，顺带查每个账户只能有一间不绑仓库的公开房间（绑着仓库的不算，
+//! `specs/redesign/project-rooms.md` 的“限额”）。
 
 use agent_room_domain::{
     room_listing::{RoomListingSettings, RoomShareCode},
@@ -57,7 +58,8 @@ impl PrivateRoomService {
         self.ensure_same_room(request, existing, operation).await
     }
 
-    /// 先查一遍限额，免得白建一个 Matrix 房间；存的时候在事务里还会再查。
+    /// 先查一遍限额，免得白建一个 Matrix 房间；存的时候在事务里还会再查。新建的房间没绑仓库，只数房主
+    /// 名下不绑仓库的公开房间。
     pub(super) async fn ensure_public_room_quota(
         &self,
         request: &CreatePrivateRoom,
@@ -65,7 +67,7 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<()> {
         let listed = self
             .listings
-            .listed_rooms_owned_by(request.actor.principal_id())
+            .unbound_listed_rooms_owned_by(request.actor.principal_id())
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Directory, &error))?;
         if listed.is_empty() {

@@ -419,3 +419,12 @@
 
 - 2026-11-16 写设计（#897）。
 - 2026-11-16 设计稿：Artifact“项目房间与分享”（https://claude.ai/artifact/DapJojEafKpJ9kGX8WHGWi ），十一张：1 没人认领的仓库地址、2 绑了仓库的房间的分享页（带实况）、3 分享页（手机）、4 一条命令认领或者跟 Agent 说一句、5 README 徽章（三种样子）、6 房间设置“公开与加入”（还没绑、等着、绑上）、7 在对话里选一段、8 分享这一段、9 分享出去的一段对话、10 预览图、11 预览图的英文和一段对话。画法照房间页那份（白底黑字，颜色留给机器人）；例子用的是 `rainyflash/agent-room` 自己。
+- 2026-11-16 3P-2a（#900，只有控制面，还没有接口往里写）：
+  - 迁移 `202611160005_project_room_repositories.sql` 建 `repository_claim`、`room_repository_binding`。小写的 owner、repo 是库算的列（`GENERATED ... STORED`），写的时候只给原样的。
+  - 认领：同一个人同一个仓库只有一个（表里的都是在等的）；认领的码全表不重，所以绑已有房间的认领，同一间房同时只有一个；上次核对的结果只卡成小写字母和下划线，取哪几个值留给 3P-2b。绑定：一间房一个，小写的那一对全站一间，文件只认 `AGENTS.md`、`README.md`。
+  - 限额：`owner_lists_another` 和 `unbound_listed_rooms_owned_by`（原来叫 `listed_rooms_owned_by`）只数不绑仓库的公开房间，这一间自己绑着仓库就不查。转让（`save_transferred_room`，锁行照旧）和房主删账户时交房间也不占接手的人的名额，绑定跟着房间走。
+  - 绑着仓库的房间不能换码：`POST /private-rooms/{c}/listing/share-code` 回 409 `room_listing.repository_bound`。说法和这个接口别的错误一样是中文：这个接口只有网页用，Agent 碰不到，网页按错误码换中英文的说法（3P-5 补）。库里 `update_listing` 也拦着：换了码的算版本对不上，挡住查过以后刚绑上的那一下。
+  - 解绑：改回私密（`save_listing`）、归档和关掉（`write_room_rows`：房主归档、网络 Agent 关房、停用时系统关、房主离开都走这里）、删账户（`archive_private_rooms`）都在同一个事务里删；删房间靠外键。平台冻结、拿掉不动。归档的房间恢复以后不绑回去。
+  - 控制面两处“每个账户只能有一间公开房间”改成“不绑仓库的公开房间每个账户只能有一间”（控制面只有中文）；网页的中英文说法留给 3P-5。
+  - 设计里没写、这一步加的：删账户时解绑、删他在等的认领；库里也拦换码；删账户交房间也不占名额。“下载我的数据”还不带认领和绑定，随 3P-2b 的接口和隐私说明页一起加。3P-2b 绑上、房主解绑照转让的先后锁：先房间目录那一行，再房主那一行（`rooms/repository_bindings.rs` 开头写着）。
+  - 真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_bindings.rs`，`real_database.rs` 删账户那一条）只在派发 `suite=all` 时跑。

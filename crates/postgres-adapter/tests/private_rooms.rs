@@ -37,6 +37,8 @@ mod listing;
 mod moderation_grants;
 #[path = "private_rooms/public_directory.rs"]
 mod public_directory;
+#[path = "private_rooms/repository_bindings.rs"]
+mod repository_bindings;
 #[path = "private_rooms/role_changes.rs"]
 mod role_changes;
 #[path = "private_rooms/sub_rooms.rs"]

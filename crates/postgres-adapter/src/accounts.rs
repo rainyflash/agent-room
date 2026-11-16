@@ -689,8 +689,9 @@ async fn finalize_local(
     // 申请进公开房间时留的话、交给 Agent 管房间时写的规则跟着账户删掉（隐私说明页）。Agent 照规则动手时
     // 写下的理由跟着授权删（`moderation_action_agent` 和 `moderation_action_agent_reversal` 的外键）。
     // 他在别人的子房间里已经记成移出，子房间管理员的记录跟着删（存房间时也是这样：管理员得是里面
-    // 已加入的人）。
+    // 已加入的人）。他在等的仓库认领一起删（`specs/redesign/project-rooms.md`）。
     for statement in [
+        r"DELETE FROM agent_room.repository_claim WHERE principal_id = $1",
         r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
         r"DELETE FROM agent_room.room_moderation_grant WHERE granted_by = $1",
         r"DELETE FROM agent_room.private_room_sub_room_manager WHERE principal_id = $1",
@@ -820,6 +821,17 @@ async fn archive_private_rooms(
     )
     .bind(principal_id.as_uuid())
     .bind(changed_at)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 归档了的房间解绑仓库（`specs/redesign/project-rooms.md`），和房主自己归档一样。
+    sqlx::query(
+        r"DELETE FROM agent_room.room_repository_binding AS binding
+          USING agent_room.room_catalog_entry AS room
+          WHERE binding.catalog_entry_id = room.id
+            AND room.owner_principal_id = $1 AND room.kind = 'private_room'",
+    )
+    .bind(principal_id.as_uuid())
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
