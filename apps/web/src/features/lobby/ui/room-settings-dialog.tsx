@@ -267,6 +267,7 @@ function RoomSettingsContent({
     privateRoomListings,
     privateRoomMatrix,
     privateRooms,
+    projectRooms,
     publicRoomJoins,
     roomNotices,
     roomRoleChanges,
@@ -332,6 +333,7 @@ function RoomSettingsContent({
         <PrivateRoomPublicSettings
           listings={privateRoomListings}
           principalId={principal.principalId}
+          projects={projectRooms}
           room={room}
         />
       );

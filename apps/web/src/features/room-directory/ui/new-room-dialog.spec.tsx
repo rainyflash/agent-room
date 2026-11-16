@@ -250,7 +250,7 @@ describe('新建房间', () => {
 
     expect(
       await screen.findByText(
-        'Each account can have one public room. Choose Private, or make your other public room private first.',
+        'Each account can have only one public room that isn’t linked to a repository. Choose Private, or make your other one private first.',
       ),
     ).toBeInTheDocument();
     const privateChoice = screen.getByRole('radio', { name: /^Private/u });

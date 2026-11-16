@@ -54,7 +54,8 @@ export type PrivateRoomListingGateway = {
   listing(catalogId: string): Promise<Result<PrivateRoomListing, PrivateRoomFailure>>;
   /**
    * Only the owner may change them. Fails with `room_listing.limit_reached` when the owner already has
-   * another public room.
+   * another public room that isn't linked to a repository. Changing the share code of a room linked to a
+   * repository fails with `room_listing.repository_bound`.
    */
   updateListing(
     catalogId: string,

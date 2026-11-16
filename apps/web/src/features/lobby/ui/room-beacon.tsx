@@ -4,12 +4,15 @@ import { useId, type ReactNode, type Ref } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { RoomKindLabel, type RoomKind } from './room-kind-label';
+import { RoomTitle, type RoomRepositoryMark } from './repository-mark';
 
 export type RoomBeaconProps = RoomKind & {
   readonly agentCount: number;
   /** “对话 / 场景”的切换，排在房间设置前面。 */
   readonly layoutSwitch?: ReactNode;
   readonly membersButtonRef: Ref<HTMLButtonElement>;
+  /** 房间绑着的 GitHub 仓库：房间名旁边一个勾。 */
+  readonly repository?: RoomRepositoryMark | null;
   readonly roomName: string;
   readonly topic?: string;
   /** 没登录时没有房间设置。 */
@@ -29,6 +32,7 @@ export function RoomBeacon({
   archived = false,
   layoutSwitch,
   membersButtonRef,
+  repository = null,
   roomName,
   topic,
   onOpenSettings,
@@ -58,7 +62,7 @@ export function RoomBeacon({
           serverReadable={serverReadable}
           unencrypted={unencrypted}
         />
-        <h1>{roomName}</h1>
+        <RoomTitle name={roomName} repository={repository} />
       </div>
       {topic === undefined ? null : <p className="workspace-header__topic">{topic}</p>}
       {layoutSwitch}
