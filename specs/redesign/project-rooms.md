@@ -454,6 +454,20 @@
     - 核对太快时控制面回 429 带 `Retry-After`，IPC 的错误里没有地方放等多久，Bridge 只回 `bridge.project_room.check_too_soon`、不标成可重试；命令行 `--wait` 本来就一分钟核对一次。
     - 网络 Agent 照旧不能认领：它们没有设备签名，走不到这两个地址；用例那边见到网络 Agent 一律 403（流程测试补了一条）。
   - 测试：IPC 的编码、校验、权限（`bridge-ipc` 的 `project_rooms.rs`），握手认 4.4 到 4.9，Bridge 的网关（另起一个本机的 HTTP 服务，路径、签名、错误码、回答不像样）和分派（`host_sessions/tests/project_rooms.rs`），控制面设备签名的两个地址（`features/project_rooms/tests/device.rs`），应用层本机设备和网页认领是同一个、网络 Agent 403。
+- 2026-11-16 3P-3（#904，只有控制面和 Caddy，`/gh/` 页上教人跑的命令要等 3P-4 才有，所以 3P-3、3P-4、3P-5 同一版发）：
+  - `GET /gh/{owner}/{repo}` 和 `GET /gh/{owner}/{repo}/badge.svg` 在控制面的 `features/share_page.rs` 里（`share_page/unclaimed.rs` 是“还没人认领”那一页，`share_page/badge.rs` 是徽章），和分享页共用页头、样式、脚本、语言规则和转义。Caddy 在裸域上把 `/gh/*` 和 `/r/*` 一样转给控制面（`render.py`），`APP_PAGE_PATHS` 不加它。
+  - 认房间的是 `application` 的 `project_rooms/pages.rs`（`RepositoryRoomPageService`）：先按仓库（不论大小写）找绑定（`ProjectRoomStore::bound_room`，3P-2b 就有），平台冻结、拿掉的、没有分享码的当成没有；再拿分享码问发现页的目录（`detail`，公开着、没关、没拿掉由它再查一遍，在线数也是它那个，`PublicRoomPresenceMatrix`）；两次读之间码换给了别的房间也当成没有。没加 SQL、没加迁移。
+  - 页面：名字先照 GitHub 的规矩验，不合的直接 404、不查库。绑着、公开着的出和 `/r/<分享码>` 一字不差的分享页（实况等 3P-6）；别的出同一页“还没人认领”，回 404。和 `/r/` 合起来按来源限流（`AnonymousLimiter`，每个来源每分钟 120 次）、`noindex`、`Cache-Control: public, max-age=60`；语言照分享页：先看 `Accept-Language`，绑着的房间再看房间名里有没有中文，“还没人认领”默认英文。不读 GitHub。
+  - 徽章：照设计稿 5，20 像素高，左边黑底白字“Agent Room”带一个小机器人，右边白底黑字“N online”（`?lang=zh-CN` 写“N 在线”），没房间写“no room”（“没有房间”）。不按来源限流；每个仓库的结果在内存里留 60 秒，“没有房间”留 5 分钟；同一个仓库同时只算一次（另起任务算，等着的人走了也算完、记下）；全站每秒最多算 50 个新的；回答带 `Cache-Control: public, max-age=300` 和 `ETag`，认 `If-None-Match`（弱比较、`*`）回 304。图里只有固定的字和算出来的数。
+  - 和设计不一样、设计里没写的：
+    - 名字不合规矩的不出“还没人认领”，出一页“找不到这个页面”（404、`no-store`），地址里的字不写回页面；徽章也是 404。限流也不算它们。
+    - “还没人认领”照设计缓存 60 秒（谁看都一样）；`/r/` 的 404 照旧不缓存。库读不了时和分享页一样回 503“暂时打不开”，不说成没人认领。
+    - 那一页第 3 条原来写“谁点开都先看到里面正在说的话”，实况 3P-6 才有，这一版写“房间建好就公开、不加密，谁打开这个地址都进得来”；3P-6a 放实况时改回来。
+    - “在房间设置的‘公开与加入’里绑上”写成“公开”：网页设置里那一节就叫“公开”（英文 “Public”）。3P-5 要是改了节名，这里跟着改。
+    - 手机上和分享页一样不给下载按钮，换成一句“在电脑上打开这个地址，装好桌面应用再跑命令”。命令和那一句各一个复制按钮；`share.js` 改成把结果写在按钮所在的 `data-copy-scope` 里（分享页只有一个按钮，照旧）。
+    - 徽章：在线数问不到（`online` 是空的）时和忙不过来一样只画左边那段，但照常缓存；没问全的写“200+ online”。忙不过来、库读不了的那张 `no-store`、不带 `ETag`、不记在内存里。`ETag` 是图的内容算出来的哈希（标准库的 `DefaultHasher`，不加依赖），样子改了自己就变。`?lang=` 以 `zh` 开头的都算中文。小机器人是 SVG 里画的，不是官网那几张 PNG。
+    - 徽章的缓存、每秒的额度都只在这个进程的内存里，开几个控制面各算各的。
+  - 测试：控制面 `share_page/repository_tests.rs`（名字不合规矩的不查库、绑着的和 `/r/` 一字不差、“还没人认领”不分哪一种、语言、和 `/r/` 合起来限流、徽章的缓存和 `ETag`/304、“没有房间”留 5 分钟、每秒 50 个以后给不带数的、同一个仓库只算一次），应用层 `project_room_flow.rs` 的“仓库地址只认绑着它、此刻公开着的那间房”，`test_prodops` 里 `/gh/*` 转给控制面、不算应用的页面。
 - 2026-11-16 3P-5（#905，只有网页）：
   - 房间设置“公开”一节，房主、公开着的房间在分享链接下面多“GitHub 仓库”一组（`apps/web/src/features/private-rooms/ui/project-room-repository.tsx`）：还没绑时填 `owner/repo` 点“绑上”；在等时写着在等哪个仓库、那两行（README 徽章、`AGENTS.md` 那一行）各一个复制按钮、上次核对的结果，“现在核对”“不绑了”；绑上了写着仓库（点了在新标签页打开 GitHub）、谁什么时候核对上的、在哪个文件里，“再核对一次”“解绑”。错误码都换成大白话，错误码和关联 ID 收进详情。
   - 顶栏房间名旁边的勾（`apps/web/src/features/lobby/ui/repository-mark.tsx`），指上去和读屏读的都是“已验证的 GitHub 仓库 owner/repo”，点了在新标签页打开 GitHub。

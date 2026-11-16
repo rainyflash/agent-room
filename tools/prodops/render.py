@@ -653,7 +653,7 @@ worker_log_config: /config/log.config
 
 
 def _server_name_block(config: DeploymentConfig) -> str:
-    """裸域：Matrix 的 .well-known、接入说明和公开房间的分享页，其余跳到网页，或者出 agentroom.chat 的静态网站。"""
+    """裸域：Matrix 的 .well-known、接入说明、公开房间的分享页和仓库地址，其余跳到网页，或者出 agentroom.chat 的静态网站。"""
     public = config.public
     common = f'''{public.server_name} {{
 \thandle /.well-known/matrix/* {{
@@ -671,6 +671,10 @@ def _server_name_block(config: DeploymentConfig) -> str:
 \t}}
 \t# 公开房间的分享页（specs/public-rooms/design.md）由控制面出整页，样式和脚本是 /r/_/ 下的两个文件。
 \thandle /r/* {{
+\t\treverse_proxy control-plane:8090
+\t}}
+\t# 仓库的地址和 README 徽章（specs/redesign/project-rooms.md）也由控制面出，样式和脚本借 /r/_/ 那两个。
+\thandle /gh/* {{
 \t\treverse_proxy control-plane:8090
 \t}}
 \t# 接入说明在裸域、网页和 API 域名上都是同一份；搜索引擎只认裸域的 /agents.txt，别的副本不算重复网页。

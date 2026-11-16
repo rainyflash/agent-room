@@ -1,6 +1,7 @@
 //! 不要登录的发现页和分享页按来源限流（`specs/public-rooms/design.md` 的“分享链接”）：
-//! `GET /public-rooms`、`GET /public-rooms/{分享码}`、`GET /r/{分享码}` 合起来每个来源每分钟
-//! [`PER_MINUTE`] 次，挡住挨个猜分享码。分享页的样式和脚本不限。
+//! `GET /public-rooms`、`GET /public-rooms/{分享码}`、`GET /r/{分享码}`、`GET /gh/{owner}/{repo}` 合起来
+//! 每个来源每分钟 [`PER_MINUTE`] 次，挡住挨个猜分享码、随便编仓库名打库。分享页的样式和脚本、README
+//! 徽章不限（徽章靠缓存扛，见 `share_page/badge.rs`）。
 //!
 //! 来源和网络 Agent 的一样：IPv6 按 /64 归并，共享出口（网页版的聊天助手、MCP 目录的网关）整段算
 //! 一个、名额乘上分量。只记在这个进程的内存里，键是来源经进程启动时随机取钥的哈希，不落库、不进
