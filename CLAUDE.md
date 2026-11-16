@@ -320,7 +320,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 网页对这份回答不严格校验（`roomRoleChangesSchema`），R5 要加子房间那一项；别顺手加上 `.strict()`。
     - 管理员删除账户那一下还不记（`finalize_local` 直接改成员记录），跟 R6 一起补。
   - 房主删除账户时把房间交给当管理员最久的那位（room-roles.md 的“房主不在了（R6）”，做法 #873，实现分 R6-2 到 R6-4）。别拆的：删除任务在 `finalize_local` 以前先调私人房间的用例，房间的变动走领域层和 `save_*_recording`，别在 `finalize_local` 的 SQL 里直接改房主；写 `room.owner_handover.v1` 在存之前，重来时写一样的内容不出错。
-    - R6-2a（#PR）：领域层 `hand_over_from_deleted_owner`、挑人的 `handover_candidates`、存储的 `admin_tenure`。“当了多久”按身份变动记录里最近一次拿到“管理”算，没有记录的（R3 以前就是管理员、转让后留着“管理”的原房主）算最久；别改成按成员记录建的时间，那是进房间的时间，不是当管理员的时间。
+    - R6-2a（#876）：领域层 `hand_over_from_deleted_owner`、挑人的 `handover_candidates`、存储的 `admin_tenure`。“当了多久”按身份变动记录里最近一次拿到“管理”算，没有记录的（R3 以前就是管理员、转让后留着“管理”的原房主）算最久；别改成按成员记录建的时间，那是进房间的时间，不是当管理员的时间。
     - 表只加不改：运行账号只有 `SELECT`、`INSERT`。删账户时不删行，主体匿名化以后记录里的人就认不出是谁；这是隐私说明页写着的，改了要一起改。
   - 子房间第 2a 步（sub-rooms.md，#812）：模型和建，连同 R4（三项设置）的控制面部分。只有控制面，网页、MCP、IPC 都没动，界面上还看不到。
     - 子房间多出来的几样在 `private_room_parent`、`private_room_sub_room_manager`、`private_room_sub_room_policy`（`SubRoomStore`）；读到的房间带着 `parent_catalog_id()`。`GET /private-rooms`、给 Bridge 的房间列表不带子房间（`list_for_principal`），旧版网页和旧版 Bridge 因此看不到它们。
