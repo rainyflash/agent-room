@@ -556,7 +556,7 @@
     - “下载我的数据”加了 `liveViews`（他打开、还开着的：哪间房、什么时候）。
     - 隐私说明页在这一步就照两步都做完的样子改了：存开关的表在这一步，按规矩说明页跟着同一个 PR 改。3P-6a-2 要是没赶上同一版，页面上说的实况就还没真放出来，只多说、不少说。
   - 测试：应用层流程（`application/tests/room_live_flow.rs`）、接口（`features/room_live_view/tests.rs`）、问聊天服务器加没加密（`matrix-provisioning-adapter` 的 `room_listing.rs`）、隐私说明页的说法（`privacy-page.spec.tsx`）。真实数据库的（`postgres-adapter` 的 `private_rooms/live_views.rs`，`repository_claims.rs` 建项目房间那一条，`real_database.rs` 删账户那一条和表的名单）只在派发 `suite=all` 时跑。
-- 2026-11-16 3P-6a-2（分享页真放出来，控制面和 Caddy；网页的开关、建房时的勾、顶栏那一行小字是 3P-6b）：
+- 2026-11-16 3P-6a-2（#912，分享页真放出来，控制面和 Caddy；网页的开关、建房时的勾、顶栏那一行小字是 3P-6b）：
   - `GET /r/{分享码}/live` 在 `features/share_page.rs`；快照是 `public_watch/rooms.rs` 的 `RoomLiveWatch`，拼成什么样在 `public_watch/live_view.rs`。按分享码找房间是新的 `LiveRoomLookup`（`postgres-adapter` 的 `rooms/live_views.rs`），一句 SQL 查齐：公开着、直接进、私人房间、在用、目录上不加密、实例在用、平台没拿掉、不是子房间、开着实况，回房间、Matrix 房间号和开的那一刻。
   - 和围观公开大厅共用：解析和验签（`reading::verified_messages`）、隐藏的消息（`reading::hidden_events`，只认建房间的应用服务账号写的）、编号（`view::Keys`，两边各一份盐）、哪些是网络 Agent（拆成 `public_watch/agent_kinds.rs`，两边各记一份）。消息 3 秒一读、旧快照最多再给 1 分钟、一次最多等 8 秒，和围观一样。
   - 按房间：库里查到的放不放在内存里留 5 秒（最多记 4096 个码，满了先清过期的）；不放了、换了一刻，原来那份快照扔掉。快照按“房间、开的那一刻”存，最多 200 间，久没人看的先扔；同时重读的最多 4 间，排不上的先给旧的。房间状态 30 秒读一次：隐藏了哪些、在线数（目录 `detail` 那一份，和卡片上同一个数；目录说没有这间房了就当不放）、说话的本机 Agent 是谁的（`RoomPeopleDirectory::agent_owners`，只问还不知道的，读房间状态时清掉重问）。状态里有 `m.room.encryption`（`state_key` 为空）就封住这一份：以后都回 404、不再读，直到换了一刻。
