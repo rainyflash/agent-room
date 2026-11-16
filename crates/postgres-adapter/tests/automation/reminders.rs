@@ -90,7 +90,7 @@ async fn 提醒只看他加入了的私人房间_归档了的不算() {
         .bind(reader.catalog.as_uuid()).bind(reader.principal.as_uuid()).execute(&mut *transaction).await.expect("私人房间");
     sqlx::query("INSERT INTO agent_room.private_room_state(catalog_entry_id,room_instance_id,created_at,updated_at) SELECT $1,id,clock_timestamp(),clock_timestamp() FROM agent_room.room_instance WHERE catalog_entry_id=$1")
         .bind(reader.catalog.as_uuid()).execute(&mut *transaction).await.expect("房间状态");
-    sqlx::query("INSERT INTO agent_room.private_room_membership(catalog_entry_id,principal_id,membership_status,permission_bits,created_at,status_changed_at) VALUES($1,$2,'joined',31,clock_timestamp(),to_timestamp(1790000100))")
+    sqlx::query("INSERT INTO agent_room.private_room_membership(catalog_entry_id,principal_id,membership_status,permission_bits,created_at,status_changed_at) VALUES($1,$2,'joined',31,to_timestamp(1790000100),to_timestamp(1790000100))")
         .bind(reader.catalog.as_uuid()).bind(reader.principal.as_uuid()).execute(&mut *transaction).await.expect("加入");
     transaction.commit().await.expect("私人房间完整");
 
