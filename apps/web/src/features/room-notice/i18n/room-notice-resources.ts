@@ -3,6 +3,10 @@ export const roomNoticeResources = {
   en: {
     'roomNotice.label': 'Room brief',
     'roomNotice.title': 'Brief',
+    'roomNotice.parentLabel': 'Brief from {{name}}',
+    'roomNotice.from': 'From {{name}}',
+    'roomNotice.ownLabel': 'This sub-room’s brief',
+    'roomNotice.ownTitle': 'This sub-room’s brief',
     'roomNotice.unseen': 'Changed since you last looked',
     'roomNotice.expand': 'Show the whole brief',
     'roomNotice.collapse': 'Show less',
@@ -52,6 +56,10 @@ export const roomNoticeResources = {
   'zh-CN': {
     'roomNotice.label': '房间须知',
     'roomNotice.title': '须知',
+    'roomNotice.parentLabel': '{{name}} 的须知',
+    'roomNotice.from': '来自 {{name}}',
+    'roomNotice.ownLabel': '这一间的须知',
+    'roomNotice.ownTitle': '这一间的须知',
     'roomNotice.unseen': '改过了，你还没看',
     'roomNotice.expand': '看全文',
     'roomNotice.collapse': '收起',

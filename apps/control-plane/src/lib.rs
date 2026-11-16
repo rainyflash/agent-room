@@ -16,11 +16,7 @@ mod observability;
 mod operational_metrics;
 mod public_room_activity;
 mod public_watch;
-/// 提醒那一轮的后台任务随 4R-4c 加在这里；先放真实 Synapse 上读的验收。
-#[cfg(test)]
-mod reminders {
-    mod real_dependency_tests;
-}
+mod reminders;
 mod request_regions;
 mod runtime;
 mod shutdown;
@@ -90,7 +86,10 @@ use agent_room_application::{
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
-    reminders::{ReminderDependencies, ReminderService},
+    reminders::{
+        ReminderDependencies, ReminderDryRun, ReminderPlanner, ReminderPlannerDependencies,
+        ReminderService,
+    },
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
@@ -174,6 +173,8 @@ struct IdentityRuntime {
     sub_room_sync: sub_room_sync::SubRoomSyncWorker,
     /// 30 天没人说话的子房间每小时一轮自动归档。
     sub_room_auto_archive: sub_room_auto_archive::SubRoomAutoArchiveWorker,
+    /// 每小时算一轮该提醒什么；现在是演练，只记日志和指标。
+    reminder_dry_run: reminders::ReminderDryRunWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -318,6 +319,7 @@ pub async fn run() -> Result<(), StartupError> {
         public_room_activity,
         sub_room_sync,
         sub_room_auto_archive,
+        reminder_dry_run,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -350,6 +352,7 @@ pub async fn run() -> Result<(), StartupError> {
     public_room_activity.shutdown().await;
     sub_room_sync.shutdown().await;
     sub_room_auto_archive.shutdown().await;
+    reminder_dry_run.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -488,7 +491,7 @@ async fn build_identity_router(
         &matrix_identities,
         &system_runtime,
     )?;
-    let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
+    let operational_metrics = start_operational_metrics(config, &repositories, metrics.clone())?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let public_rooms =
         build_public_room_shared(config, &repositories, &matrix_identities, &system_runtime);
@@ -529,6 +532,7 @@ async fn build_identity_router(
         public_room_activity: start_public_room_activity(&agent_dependencies),
         sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
         sub_room_auto_archive: start_sub_room_auto_archive(config, &agent_dependencies)?,
+        reminder_dry_run: start_reminder_dry_run(&agent_dependencies, metrics),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -823,6 +827,24 @@ fn start_sub_room_auto_archive(
             },
         )),
     ))
+}
+
+/// 提醒的每小时一轮：库里列候选和房间，以应用服务替本人读聊天服务器（4R-4c 是演练，不发信）。
+fn start_reminder_dry_run(
+    dependencies: &AgentFeatureDependencies,
+    metrics: TelemetryMetrics,
+) -> reminders::ReminderDryRunWorker {
+    let planner = ReminderPlanner::new(ReminderPlannerDependencies {
+        recipients: dependencies.repositories.clone(),
+        matrix: dependencies.matrix_identities.clone(),
+    });
+    reminders::ReminderDryRunWorker::start(
+        Arc::new(ReminderDryRun::new(
+            planner,
+            dependencies.system_runtime.clone(),
+        )),
+        metrics,
+    )
 }
 
 fn build_frontend_telemetry_state(
