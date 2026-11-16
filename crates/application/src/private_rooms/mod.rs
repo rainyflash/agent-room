@@ -6,6 +6,7 @@ mod listing;
 mod models;
 mod moderation_grants;
 mod notice;
+mod owner_handover;
 mod platform_hold;
 mod public_join;
 mod service;
@@ -58,6 +59,10 @@ pub use notice::{
     NOTICES_PER_HOUR, NoticeFailure, NoticeFailureKind, NoticeResult,
     PrivateRoomNoticeDependencies, PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice,
     UpdateRoomNotice,
+};
+pub use owner_handover::{
+    DeletedOwnerRooms, OwnerHandoverDependencies, OwnerHandoverFailure, OwnerHandoverOutcome,
+    OwnerHandoverService,
 };
 pub use platform_hold::{
     HoldPublicRoom, MAX_PLATFORM_HOLD_REASON_CHARS, PlatformHoldFailure, PlatformHoldFailureKind,

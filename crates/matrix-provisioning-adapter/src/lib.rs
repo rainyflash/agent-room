@@ -22,6 +22,7 @@ mod cross_signing;
 mod human_devices;
 mod human_sessions;
 mod moderation;
+mod owner_handover;
 mod public_lobby;
 mod room_listing;
 mod room_notices;

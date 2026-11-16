@@ -17,6 +17,7 @@ use agent_room_application::{
         OidcFailureKind, OidcResult, PortFuture, SecretDigest, SecretGenerationFailure,
         SecretValue, SignInAccount, SignInAccountRemoval,
     },
+    private_rooms::{DeletedOwnerRooms, OwnerHandoverFailure, OwnerHandoverOutcome},
 };
 use agent_room_domain::{
     ids::{AccountDeletionJobId, PrincipalId},
@@ -249,6 +250,40 @@ impl SignInAccountRemoval for FakeSignIn {
     }
 }
 
+/// 他名下的房间交出去（R6）：记下替谁交、原房主在 Matrix 上是谁。
+struct FakeRooms {
+    outcome: Result<OwnerHandoverOutcome, OwnerHandoverFailure>,
+    calls: Mutex<Vec<(PrincipalId, MatrixUserId)>>,
+    steps: Steps,
+}
+
+impl FakeRooms {
+    fn new(outcome: Result<OwnerHandoverOutcome, OwnerHandoverFailure>, steps: &Steps) -> Self {
+        Self {
+            outcome,
+            calls: Mutex::new(Vec::new()),
+            steps: steps.clone(),
+        }
+    }
+}
+
+impl DeletedOwnerRooms for FakeRooms {
+    fn hand_over_rooms_of<'a>(
+        &'a self,
+        principal_id: PrincipalId,
+        former_owner: &'a MatrixUserId,
+    ) -> PortFuture<'a, Result<OwnerHandoverOutcome, OwnerHandoverFailure>> {
+        Box::pin(async move {
+            self.calls
+                .lock()
+                .expect("测试锁不得中毒")
+                .push((principal_id, former_owner.clone()));
+            self.steps.lock().expect("测试锁不得中毒").push("rooms");
+            self.outcome
+        })
+    }
+}
+
 #[tokio::test]
 async fn 删除请求必须近期认证并明确确认联邦残留() {
     let status = queued_status();
@@ -374,7 +409,8 @@ async fn matrix_失败时指数退避且不得提前擦除本地数据() {
         &steps,
     ));
     let sign_in = Arc::new(FakeSignIn::new(Ok(()), &steps));
-    let worker = worker(repository.clone(), matrix, sign_in);
+    let rooms = Arc::new(FakeRooms::new(Ok(OwnerHandoverOutcome::default()), &steps));
+    let worker = worker(repository.clone(), matrix, sign_in, rooms.clone());
 
     assert_eq!(
         worker.run_once().await.expect("退避调度应成功"),
@@ -389,6 +425,7 @@ async fn matrix_失败时指数退避且不得提前擦除本地数据() {
         &[("matrix.timeout".to_owned(), time(NOW + 10_000))]
     );
     assert_eq!(*repository.finalizations.lock().expect("测试锁不得中毒"), 0);
+    assert!(rooms.calls.lock().expect("测试锁不得中毒").is_empty());
 }
 
 #[tokio::test]
@@ -406,7 +443,8 @@ async fn 登录服务暂时不可用时退避重试_聊天账户和本地数据�
         Err(OidcFailure::new(OidcFailureKind::DependencyUnavailable)),
         &steps,
     ));
-    let worker = worker(repository.clone(), matrix.clone(), sign_in);
+    let rooms = Arc::new(FakeRooms::new(Ok(OwnerHandoverOutcome::default()), &steps));
+    let worker = worker(repository.clone(), matrix.clone(), sign_in, rooms);
 
     assert_eq!(
         worker.run_once().await.expect("退避调度应成功"),
@@ -429,18 +467,25 @@ async fn 登录服务暂时不可用时退避重试_聊天账户和本地数据�
 }
 
 #[tokio::test]
-async fn 删除工作流先删登录账户_再停用_matrix_最后本地匿名化() {
+async fn 删除工作流先删登录账户_再停用_matrix_交出房间_最后本地匿名化() {
     let status = queued_status();
     let repository = Arc::new(FakeRepository::new(status.clone()));
-    *repository.claim.lock().expect("测试锁不得中毒") = Some(claim(
+    let claimed = claim(
         status.job_id,
         AccountDeletionStage::FederatedDeactivation,
         1,
-    ));
+    );
+    *repository.claim.lock().expect("测试锁不得中毒") = Some(claimed.clone());
     let steps = Steps::default();
     let matrix = Arc::new(FakeMatrix::new(Ok(()), &steps));
     let sign_in = Arc::new(FakeSignIn::new(Ok(()), &steps));
-    let worker = worker(repository.clone(), matrix.clone(), sign_in.clone());
+    let rooms = Arc::new(FakeRooms::new(Ok(OwnerHandoverOutcome::default()), &steps));
+    let worker = worker(
+        repository.clone(),
+        matrix.clone(),
+        sign_in.clone(),
+        rooms.clone(),
+    );
 
     assert_eq!(
         worker.run_once().await.expect("完整删除应成功"),
@@ -451,16 +496,55 @@ async fn 删除工作流先删登录账户_再停用_matrix_最后本地匿名�
         sign_in.calls.lock().expect("测试锁不得中毒").as_slice(),
         &[sign_in_account()]
     );
-    // 先删登录账户：之后就登录不了，再停用聊天账户。
+    // 先删登录账户：之后就登录不了，再停用聊天账户，然后才交房间。匿名化只归档房主还是他的房间。
     assert_eq!(
         steps.lock().expect("测试锁不得中毒").as_slice(),
-        &["sign_in", "matrix"]
+        &["sign_in", "matrix", "rooms"]
+    );
+    assert_eq!(
+        rooms.calls.lock().expect("测试锁不得中毒").as_slice(),
+        &[(claimed.principal_id, claimed.matrix_user_id.clone())]
     );
     assert_eq!(
         *repository.federated_records.lock().expect("测试锁不得中毒"),
         1
     );
     assert_eq!(*repository.finalizations.lock().expect("测试锁不得中毒"), 1);
+}
+
+#[tokio::test]
+async fn 房间没交完时退避重试_不进匿名化() {
+    let status = queued_status();
+    let repository = Arc::new(FakeRepository::new(status.clone()));
+    *repository.claim.lock().expect("测试锁不得中毒") = Some(claim(
+        status.job_id,
+        AccountDeletionStage::FederatedDeactivation,
+        1,
+    ));
+    let steps = Steps::default();
+    let matrix = Arc::new(FakeMatrix::new(Ok(()), &steps));
+    let sign_in = Arc::new(FakeSignIn::new(Ok(()), &steps));
+    let rooms = Arc::new(FakeRooms::new(Err(OwnerHandoverFailure::MATRIX), &steps));
+    let worker = worker(repository.clone(), matrix, sign_in, rooms);
+
+    assert_eq!(
+        worker.run_once().await.expect("退避调度应成功"),
+        AccountDeletionWorkerOutcome::Retrying(status.job_id)
+    );
+    assert_eq!(
+        repository
+            .retries
+            .lock()
+            .expect("测试锁不得中毒")
+            .as_slice(),
+        &[("private_room.handover.matrix".to_owned(), time(NOW + 5_000))]
+    );
+    assert_eq!(
+        *repository.federated_records.lock().expect("测试锁不得中毒"),
+        0,
+        "重来时从停用外部账户那一步接着走，几步都能重放"
+    );
+    assert_eq!(*repository.finalizations.lock().expect("测试锁不得中毒"), 0);
 }
 
 fn service(repository: Arc<FakeRepository>) -> AccountLifecycleService {
@@ -475,11 +559,13 @@ fn worker(
     repository: Arc<FakeRepository>,
     matrix: Arc<FakeMatrix>,
     sign_in: Arc<FakeSignIn>,
+    rooms: Arc<FakeRooms>,
 ) -> AccountDeletionWorker {
     AccountDeletionWorker::new(AccountDeletionWorkerDependencies {
         repository,
         matrix,
         sign_in,
+        rooms,
         clock: Arc::new(FixedClock),
         lease_duration: duration(30_000),
         initial_retry_delay: duration(5_000),

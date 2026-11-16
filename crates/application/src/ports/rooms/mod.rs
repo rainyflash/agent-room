@@ -64,11 +64,11 @@ pub use private_room_listing::{
     PrivateRoomListingStore, SubRoomPrivacy,
 };
 pub use private_rooms::{
-    PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
+    OwnerHandoverWrite, PrincipalAgents, PrivateMatrixMembership, PrivateMatrixRoomCreation,
     PrivateMatrixSpeakingAssignment, PrivateRoomAgentDescription, PrivateRoomAgentDirectory,
     PrivateRoomDescriptionStore, PrivateRoomMatrixGateway, PrivateRoomMatrixProvisioner,
-    PrivateRoomNoticeGateway, PrivateRoomPrincipalDirectory, PrivateRoomSnapshot, PrivateRoomStore,
-    PrivateRoomTopicGateway, RoomNoticeWrite,
+    PrivateRoomNoticeGateway, PrivateRoomOwnerHandoverGateway, PrivateRoomPrincipalDirectory,
+    PrivateRoomSnapshot, PrivateRoomStore, PrivateRoomTopicGateway, RoomNoticeWrite,
 };
 pub use provisioning::{
     RoomProvisioningClaim, RoomProvisioningClaimOutcome, RoomProvisioningFailureCode,

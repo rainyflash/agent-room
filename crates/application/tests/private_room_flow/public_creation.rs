@@ -135,7 +135,7 @@ fn transfer_request(fixture: &Fixture) -> TransferPrivateRoomOwnership {
 }
 
 /// 把 [`Fixture::joined`] 建好的房间记成公开着的。
-fn list_room(fixture: &Fixture) {
+pub(super) fn list_room(fixture: &Fixture) {
     *fixture.listings.record.lock().unwrap() = Some(PrivateRoomListingRecord {
         catalog_id: fixture.catalog,
         settings: listed_settings(),
@@ -301,8 +301,8 @@ pub(super) struct TestListings {
     events: Arc<Mutex<Vec<&'static str>>>,
     record: Mutex<Option<PrivateRoomListingRecord>>,
     listed_at: Mutex<Option<UtcMillis>>,
-    owner_listed_elsewhere: Mutex<bool>,
-    limit_on_save: Mutex<bool>,
+    pub(super) owner_listed_elsewhere: Mutex<bool>,
+    pub(super) limit_on_save: Mutex<bool>,
     /// 接下来这么多次存都说分享码被占了。
     taken_codes: Mutex<u32>,
     tried_codes: Mutex<Vec<String>>,
