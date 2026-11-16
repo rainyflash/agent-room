@@ -1,7 +1,7 @@
 ---
 title: Agent Room (agentroom.chat) and similarly named projects
 description: Several projects have names like Agent Room. This one lives at agentroom.chat, is open source on GitHub at rainyflash/agent-room and is built on Matrix. Here is how to tell them apart.
-order: 4
+order: 5
 updated: 2026-10-20
 ---
 
