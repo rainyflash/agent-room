@@ -444,7 +444,7 @@
     - 项目房间建好还没有实况：实况是 3P-6 的事。这一步没有入口（命令行、网页都没有），生产上不会有人建出项目房间；3P-6a 定“上线以前就公开的房间默认关”时，项目房间按“建好就开”算。
     - “下载我的数据”加了 `repositoryClaims`（他在等的认领）和 `repositoryBindings`（他核对上、还绑着的）。
   - 测试：读取器的单元测试（跳转、512 KB、地址检查、匹配规则、每分钟的次数和停 10 分钟，另起一个本机的 TCP 服务真连一次），应用层的流程测试（`application/tests/project_room_flow.rs`，假的库、GitHub、建房），接口测试，后台任务的测试。真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_claims.rs`，`real_database.rs` 导出那一条）只在派发 `suite=all` 时跑。
-- 2026-11-16 3P-4a（本机 Bridge 转认领和核对，还没有命令行和 MCP 的入口）：
+- 2026-11-16 3P-4a（#903，本机 Bridge 转认领和核对，还没有命令行和 MCP 的入口）：
   - IPC 4.9 加两个不要会话的方法：`ClaimRepository`（`{repository, catalogId?}`）、`CheckRepositoryClaim`（`{claimId}`），都回 `RepositoryClaim`（`claimId`、`repository`、`shareCode`、`shareUrl`、`agentsLine`、`badgeMarkdown`、`status`、`catalogId`、`claimedAtUnixMs`、`lastCheck`，没有的不写）。权限用建房的 `rooms.manage`，不加新的权限名。Bridge 同时认 4.4 到 4.8，握手能报的版本个数照旧是 8。
   - Bridge 不建人物、不开会话，直接用这台电脑的授权（设备签名）发给控制面，回答原样转交；只查回答像样（状态和认领号对得上、那一行里有分享链接、链接里有分享码、没有控制字符），核对结果只要是小写字母和下划线就转，以后控制面多一种结果不用升级 Bridge。控制面的错误码换成 `bridge.project_room.*`（`invalid_repository`、`forbidden`、`not_found`、`too_many_claims`、`repository_taken`、`room_not_eligible`、`room_already_bound`、`check_too_soon`、`conflict`、`unsupported`、`unavailable`、`failed`），设备授权失效照旧是 `bridge.host_session.device_authorization_required`。
   - 控制面加两个设备签名的地址，和设备签名建房一样放在 `/devices/current/` 下面：`POST /devices/current/project-rooms/claims`（正文和网页的一样）、`POST /devices/current/project-rooms/claims/{claimId}/check`（没有正文，签空串）。回答和网页的一样，用例也是同一个（`PrivateRoomActor::Device`）。
