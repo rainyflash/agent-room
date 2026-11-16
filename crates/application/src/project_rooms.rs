@@ -11,9 +11,12 @@
 //!
 //! 开始核对之前先在库里记下这一刻（`start_check`），同一个认领别处就不再同时核对：多个控制面一起跑时
 //! 也只读一遍 GitHub、只建一间房。
+//!
+//! 不登录看的仓库地址 `/gh/<owner>/<repo>` 和徽章认哪间房，见 [`RepositoryRoomPages`]（3P-3）。
 
 mod bindings;
 mod checking;
+mod pages;
 
 use std::{
     collections::HashMap,
@@ -36,6 +39,8 @@ use crate::{
     },
     private_rooms::{PrivateRoomActor, SHARE_CODE_ATTEMPTS, random_share_code},
 };
+
+pub use pages::{RepositoryRoomPageService, RepositoryRoomPages};
 
 /// 每个账户同时最多几个等着的认领，免得刷后台核对的次数。
 pub const MAX_PENDING_CLAIMS: u32 = 3;

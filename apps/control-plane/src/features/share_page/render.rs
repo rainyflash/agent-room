@@ -7,7 +7,7 @@ use agent_room_application::public_room_directory::PublicRoomDetailView;
 use agent_room_domain::{room_listing::RoomJoinMode, time::UtcMillis};
 
 /// 桌面应用去 GitHub 上最新的发行版下载，和网站一样。
-const LATEST_RELEASE: &str = "https://github.com/rainyflash/agent-room/releases/latest";
+pub(super) const LATEST_RELEASE: &str = "https://github.com/rainyflash/agent-room/releases/latest";
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 /// `og:description` 最多取简介的前几个字。
 const PREVIEW_CHARS: usize = 150;
@@ -208,6 +208,17 @@ pub(super) fn unavailable_page(language: Language, origins: &Origins<'_>) -> Str
 pub(super) fn busy_page(language: Language, origins: &Origins<'_>) -> String {
     let text = text(language);
     notice_page(text, origins, text.busy_title, text.busy_text)
+}
+
+/// 别的整页（仓库地址的“还没人认领”）也套这一层：同样的页头、`og:` 标签、样式和脚本。
+pub(super) fn shell(
+    language: Language,
+    title: &str,
+    description: &str,
+    origins: &Origins<'_>,
+    body: &str,
+) -> String {
+    page(text(language), title, description, origins, body)
 }
 
 fn notice_page(text: &Wording, origins: &Origins<'_>, title: &str, message: &str) -> String {
