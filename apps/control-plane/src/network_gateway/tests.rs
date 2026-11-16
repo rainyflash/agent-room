@@ -881,7 +881,16 @@ struct InboxState {
     /// 加入之前解不开的一段：哪一次加入（服务器收到加入的时间），说过没有。
     before_join: HashMap<MatrixRoomId, (UtcMillis, bool)>,
     /// 每个房间现在的公告，和交过的是哪一版（改的时间）。
-    notices: HashMap<MatrixRoomId, (NetworkAgentRoomNotice, Option<i64>)>,
+    /// 按它在的房间记；子房间里父房间那一段另记一份（第二项是 true）。
+    notices: HashMap<(MatrixRoomId, bool), (NetworkAgentRoomNotice, Option<i64>)>,
+}
+
+/// 公告记在它在的哪一间、是不是子房间里父房间那一段。
+fn notice_key(notice: &NetworkAgentRoomNotice) -> (MatrixRoomId, bool) {
+    notice.in_sub_room.as_ref().map_or_else(
+        || (notice.room_id.clone(), false),
+        |sub_room| (sub_room.clone(), true),
+    )
 }
 
 struct HistoryRow {
@@ -956,7 +965,8 @@ impl InboxState {
     /// 和数据库一样只往新的改；进房间时交的（`given`）和记着的一样新也算交过。
     fn record_notice(&mut self, notice: &NetworkAgentRoomNotice, given: bool) {
         let at = notice.updated_at_ms;
-        let current = self.notices.get(&notice.room_id);
+        let key = notice_key(notice);
+        let current = self.notices.get(&key);
         let newer = current.is_none_or(|(known, _)| {
             known.updated_at_ms < at || (given && known.updated_at_ms == at)
         });
@@ -966,8 +976,7 @@ impl InboxState {
             } else {
                 current.and_then(|(_, given_at)| *given_at)
             };
-            self.notices
-                .insert(notice.room_id.clone(), (notice.clone(), given_at));
+            self.notices.insert(key, (notice.clone(), given_at));
         }
     }
 
@@ -977,18 +986,19 @@ impl InboxState {
         room: Option<&MatrixRoomId>,
         limit: u16,
     ) -> Vec<NetworkAgentRoomNotice> {
-        let mut changed: Vec<&MatrixRoomId> = self
+        let mut changed: Vec<&(MatrixRoomId, bool)> = self
             .notices
             .iter()
-            .filter(|(id, _)| room.is_none_or(|room| room == *id))
+            .filter(|((id, _), _)| room.is_none_or(|room| room == id))
             .filter(|(_, (notice, given_at))| match given_at {
                 None => notice.text.is_some(),
                 Some(given_at) => *given_at < notice.updated_at_ms,
             })
-            .map(|(id, _)| id)
+            .map(|(key, _)| key)
             .collect();
-        changed.sort_by_key(|id| id.as_str().to_owned());
-        let changed: Vec<MatrixRoomId> = changed
+        // 各间自己的在前，子房间里父房间那一段在后。
+        changed.sort_by_key(|(id, parent)| (*parent, id.as_str().to_owned()));
+        let changed: Vec<(MatrixRoomId, bool)> = changed
             .into_iter()
             .take(usize::from(limit))
             .cloned()
@@ -1316,6 +1326,8 @@ struct ScriptedMatrix {
     state_read_fails: Mutex<bool>,
     /// 每个房间现在的公告（状态事件的内容）。
     notices: Mutex<HashMap<String, Value>>,
+    /// 子房间里父房间须知的副本（`room.parent_notice.v1`），按子房间记。
+    parent_notices: Mutex<HashMap<String, Value>>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
     /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
@@ -1562,6 +1574,16 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
             assert_eq!(state_key.as_str(), "", "公告的 state_key 是空的");
             let notice = self.notices.lock().unwrap().get(room_id.as_str()).cloned();
             return Box::pin(async move { Ok(notice) });
+        }
+        if event_type.as_str() == agent_room_bridge_core::messages::ROOM_PARENT_NOTICE_EVENT_TYPE {
+            assert_eq!(state_key.as_str(), "", "副本的 state_key 是空的");
+            let copy = self
+                .parent_notices
+                .lock()
+                .unwrap()
+                .get(room_id.as_str())
+                .cloned();
+            return Box::pin(async move { Ok(copy) });
         }
         assert_eq!(state_key.as_str(), OWN_INSTANCE);
         if *self.state_read_fails.lock().unwrap() {

@@ -725,6 +725,16 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         Box::pin(async { Ok(None) })
     }
 
+    /// 子房间里父房间须知的副本，规矩和 [`Self::take_room_notice`] 一样，和这一间自己的公告分开记
+    /// 交过哪一版。不是子房间就没有。
+    fn take_parent_notice<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<super::ParentRoomNotice>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// 按 ID 找仍然有效的消息，不限房间；找不到的跳过，不保证顺序。能不能看那个房间由调用方查。
     fn lookup_messages<'a>(
         &'a self,

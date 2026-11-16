@@ -1,7 +1,7 @@
 //! 房间的常驻公告（`ReadRoomNotices`），用真的本地消息库。
 
 use agent_room_application::ports::MatrixRoomId;
-use agent_room_bridge_core::messages::{RoomNotice, RoomStateChange};
+use agent_room_bridge_core::messages::{ParentRoomNotice, RoomNotice, RoomStateChange};
 use agent_room_bridge_ipc::{IpcMethod, IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice};
 use agent_room_bridge_storage_adapter::SqliteMessageTimelineRepository;
 use agent_room_domain::time::UtcMillis;
@@ -21,6 +21,33 @@ async fn record(store: &SqliteMessageTimelineRepository, text: Option<&str>, at_
                     text: text.map(str::to_owned),
                     updated_by: "@owner:matrix.test".to_owned(),
                     updated_at_ms: at_ms,
+                }),
+                parent_notice: None,
+            }],
+            UtcMillis::new(9_000).expect("时间有效"),
+        )
+        .await
+        .expect("可以记");
+}
+
+const PARENT: &str = "!project:matrix.test";
+
+/// 子房间里父房间须知的副本。
+async fn record_parent(store: &SqliteMessageTimelineRepository, text: Option<&str>, at_ms: i64) {
+    store
+        .record_room_state(
+            &[RoomStateChange {
+                room_id: MatrixRoomId::new(ROOM).expect("房间标识有效"),
+                name: None,
+                membership: None,
+                notice: None,
+                parent_notice: Some(ParentRoomNotice {
+                    parent_room_id: MatrixRoomId::new(PARENT).expect("房间标识有效"),
+                    notice: RoomNotice {
+                        text: text.map(str::to_owned),
+                        updated_by: "@owner:matrix.test".to_owned(),
+                        updated_at_ms: at_ms,
+                    },
                 }),
             }],
             UtcMillis::new(9_000).expect("时间有效"),
@@ -90,4 +117,56 @@ async fn 进房间拿现在的_改了以后只拿一次_撤掉也说一次() {
     record(&store, None, 3_000).await;
     assert_eq!(read(&handler, BATCH).await, [notice(None, 3_000)]);
     assert_eq!(read(&handler, enter_room).await, [], "撤掉了就没有公告");
+}
+
+#[tokio::test]
+async fn 子房间里父房间那一段按父房间号交_排在这一间的后面_两段各自只交一次() {
+    let (_directory, store) = store_with(&[]).await;
+    let handler = handler(store.clone());
+    let parent = |text: Option<&str>, at_ms: i64| IpcRoomNotice {
+        room_id: PARENT.to_owned(),
+        ..notice(text, at_ms)
+    };
+
+    record_parent(&store, Some("先说要做什么。"), 1_000).await;
+    record(&store, Some("只改前端。"), 1_500).await;
+    assert_eq!(
+        read(&handler, ENTER).await,
+        [
+            notice(Some("只改前端。"), 1_500),
+            parent(Some("先说要做什么。"), 1_000)
+        ],
+        "进子房间时两段一起给；旧版只拿第一段，所以这一间的在前"
+    );
+    assert_eq!(read(&handler, BATCH).await, []);
+
+    // 只往新的改：从头同步再给一遍同一版、更早的一版都不算改。
+    record_parent(&store, Some("先说要做什么。"), 1_000).await;
+    record_parent(&store, Some("更早的一版"), 500).await;
+    assert_eq!(read(&handler, BATCH).await, []);
+
+    record_parent(&store, Some("做完告诉主人。"), 2_000).await;
+    assert_eq!(
+        read(&handler, BATCH).await,
+        [parent(Some("做完告诉主人。"), 2_000)],
+        "父房间改了只交父房间那一段"
+    );
+    assert_eq!(read(&handler, BATCH).await, []);
+
+    record_parent(&store, None, 3_000).await;
+    assert_eq!(read(&handler, BATCH).await, [parent(None, 3_000)]);
+    assert_eq!(
+        read(&handler, ENTER).await,
+        [notice(Some("只改前端。"), 1_500)],
+        "父房间撤掉了，进房间时只有这一间的"
+    );
+}
+
+#[tokio::test]
+async fn 撤掉的副本从没交过就不说() {
+    let (_directory, store) = store_with(&[]).await;
+    let handler = handler(store.clone());
+    record_parent(&store, None, 1_000).await;
+    assert_eq!(read(&handler, BATCH).await, []);
+    assert_eq!(read(&handler, ENTER).await, []);
 }

@@ -17,6 +17,7 @@ const LOBBY: &str = "!lobby:matrix.test";
 pub(in crate::features::network_agents) fn notice(text: Option<&str>) -> NetworkAgentRoomNotice {
     NetworkAgentRoomNotice {
         room_id: MatrixRoomId::new(LOBBY).unwrap(),
+        in_sub_room: None,
         text: text.map(str::to_owned),
         updated_by: "@owner:matrix.test".to_owned(),
         updated_at_ms: 1_793_692_801_000,
@@ -112,5 +113,66 @@ async fn 等消息的回答带上改了的公告_撤掉的写明_没有就不给
             "updatedBy": "@owner:matrix.test",
             "updatedAtUnixMs": 1_793_692_801_000_i64,
         }])
+    );
+}
+
+/// 子房间里父房间那一段：`roomId` 是父房间的。
+pub(in crate::features::network_agents) fn parent_notice(
+    text: Option<&str>,
+) -> NetworkAgentRoomNotice {
+    NetworkAgentRoomNotice {
+        room_id: MatrixRoomId::new("!project:matrix.test").unwrap(),
+        in_sub_room: Some(MatrixRoomId::new(LOBBY).unwrap()),
+        ..notice(text)
+    }
+}
+
+#[tokio::test]
+async fn 进子房间的回答另带父房间那一段_等消息时按父房间号给() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.parent_notice.lock().unwrap() = Some(parent_notice(Some("先说要做什么。")));
+    let entered = app(&messaging)
+        .oneshot(post("/v1/network-agents/me/rooms", r#"{"room":"general"}"#))
+        .await
+        .unwrap();
+    let body = body_json(entered).await;
+    assert!(body.get("notice").is_none(), "这一间没有自己的：{body}");
+    assert_eq!(
+        body["parentNotice"],
+        json!({
+            "roomId": "!project:matrix.test",
+            "text": "先说要做什么。",
+            "updatedBy": "@owner:matrix.test",
+            "updatedAtUnixMs": 1_793_692_801_000_i64,
+        })
+    );
+    *messaging.notice.lock().unwrap() = Some(notice(Some("只改前端。")));
+    let created = app(&messaging)
+        .oneshot(post("/v1/network-agents", r#"{"name":"Scout"}"#))
+        .await
+        .unwrap();
+    let body = body_json(created).await;
+    assert_eq!(body["notice"]["text"], "只改前端。");
+    assert_eq!(body["parentNotice"]["roomId"], "!project:matrix.test");
+
+    *messaging.changed_notices.lock().unwrap() =
+        vec![notice(Some("只改前端。")), parent_notice(None)];
+    let changed = app(&messaging).oneshot(wait()).await.unwrap();
+    assert_eq!(
+        body_json(changed).await["notices"],
+        json!([
+            {
+                "roomId": LOBBY,
+                "text": "只改前端。",
+                "updatedBy": "@owner:matrix.test",
+                "updatedAtUnixMs": 1_793_692_801_000_i64,
+            },
+            {
+                "roomId": "!project:matrix.test",
+                "removed": true,
+                "updatedBy": "@owner:matrix.test",
+                "updatedAtUnixMs": 1_793_692_801_000_i64,
+            }
+        ])
     );
 }

@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use super::super::super::tests::{FakeAgents, FakeMessaging, TOKEN, notices::notice};
+use super::super::super::tests::{
+    FakeAgents, FakeMessaging, TOKEN,
+    notices::{notice, parent_notice},
+};
 use super::{app, call, rpc};
 
 fn texts(response: &Value) -> Vec<&str> {
@@ -99,4 +102,33 @@ async fn 没有公告时进房间和等消息都不提() {
             .iter()
             .all(|text| !text.starts_with("This room has a notice"))
     );
+}
+
+#[tokio::test]
+async fn 进子房间时另带父房间那一段_只有它也先说公告是房间的规矩() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.parent_notice.lock().unwrap() = Some(parent_notice(Some("先说要做什么。")));
+    let app = app(Arc::new(FakeAgents::default()), messaging);
+    let entered = rpc(
+        app.clone(),
+        &call("agent_room_enter_room", &json!({"room": "general"})),
+        Some(TOKEN),
+    )
+    .await;
+    let content = &entered["result"]["structuredContent"];
+    assert!(content.get("notice").is_none(), "{content}");
+    assert_eq!(content["parentNotice"]["roomId"], "!project:matrix.test");
+    assert!(texts(&entered)[0].starts_with("This room has a notice"));
+
+    let joined = rpc(
+        app,
+        &call("agent_room_join", &json!({"name": "Scout"})),
+        None,
+    )
+    .await;
+    assert_eq!(
+        joined["result"]["structuredContent"]["parentNotice"]["text"],
+        "先说要做什么。"
+    );
+    assert!(texts(&joined)[1].starts_with("This room has a notice"));
 }

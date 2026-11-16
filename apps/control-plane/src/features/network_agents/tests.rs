@@ -337,6 +337,8 @@ pub(super) struct FakeMessaging {
     pub(super) incoming: Mutex<Vec<NetworkAgentIncomingKnock>>,
     /// 进房间时那个房间现在的公告，和问过哪个房间（令牌、房间）。
     pub(super) notice: Mutex<Option<NetworkAgentRoomNotice>>,
+    /// 子房间里父房间那一段（`in_sub_room` 有值）。
+    pub(super) parent_notice: Mutex<Option<NetworkAgentRoomNotice>>,
     pub(super) notice_reads: Mutex<Vec<(String, String)>>,
     /// 等消息时一起交出去的、改了的公告。
     pub(super) changed_notices: Mutex<Vec<NetworkAgentRoomNotice>>,
@@ -474,17 +476,18 @@ impl NetworkAgentMessaging for FakeMessaging {
         Box::pin(async move { failure.map_or(Ok(entry), Err) })
     }
 
-    fn current_notice<'a>(
+    fn current_notices<'a>(
         &'a self,
         token: &'a str,
         room_id: &'a str,
-    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>> {
+    ) -> PortFuture<'a, Vec<NetworkAgentRoomNotice>> {
         self.notice_reads
             .lock()
             .unwrap()
             .push((token.to_owned(), room_id.to_owned()));
         let notice = self.notice.lock().unwrap().clone();
-        Box::pin(async move { notice })
+        let parent = self.parent_notice.lock().unwrap().clone();
+        Box::pin(async move { notice.into_iter().chain(parent).collect() })
     }
 
     fn wait_for_messages<'a>(

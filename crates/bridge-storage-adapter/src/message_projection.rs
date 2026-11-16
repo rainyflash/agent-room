@@ -10,10 +10,10 @@ use agent_room_bridge_core::messages::{
     MessageProjectionMutation, MessageProjectionStoreFailure, MessageProjectionStoreFailureKind,
     MessageRecoveryBatch, MessageRoomContext, MessageSyncIssue, MessageSyncIssueReason,
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
-    MessageTimelineQueryRepository, MessagesAround, OwnMembership, PendingTimelineGap,
-    ProjectedActorInstanceVerification, ProjectedMessageActor, ProjectedMessagePreview,
-    ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange, TimelineLoss,
-    UndecryptableSession,
+    MessageTimelineQueryRepository, MessagesAround, OwnMembership, ParentRoomNotice,
+    PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
+    ProjectedMessagePreview, ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange,
+    TimelineLoss, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -494,6 +494,14 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         Box::pin(async move { self.take_notice(room_id, changed_only).await })
     }
 
+    fn take_parent_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<ParentRoomNotice>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.take_parent_copy(room_id, changed_only).await })
+    }
+
     fn lookup_messages<'a>(
         &'a self,
         ids: &'a [MessageLookupId],
@@ -597,7 +605,44 @@ impl SqliteMessageTimelineRepository {
             if let Some(notice) = &change.notice {
                 self.record_notice(&change.room_id, notice, now).await?;
             }
+            if let Some(copy) = &change.parent_notice {
+                self.record_parent_copy(&change.room_id, copy, now).await?;
+            }
         }
+        Ok(())
+    }
+
+    /// 父房间须知的副本也只往新的改，和公告一样。
+    async fn record_parent_copy(
+        &self,
+        room_id: &MatrixRoomId,
+        copy: &ParentRoomNotice,
+        now: UtcMillis,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        sqlx::query(
+            "INSERT INTO message_room_state (
+                 room_id, parent_notice_room_id, parent_notice_text, parent_notice_updated_by,
+                 parent_notice_updated_at_unix_ms, updated_at_unix_ms
+             ) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(room_id) DO UPDATE SET
+                 parent_notice_room_id = excluded.parent_notice_room_id,
+                 parent_notice_text = excluded.parent_notice_text,
+                 parent_notice_updated_by = excluded.parent_notice_updated_by,
+                 parent_notice_updated_at_unix_ms = excluded.parent_notice_updated_at_unix_ms,
+                 updated_at_unix_ms = excluded.updated_at_unix_ms
+             WHERE message_room_state.parent_notice_updated_at_unix_ms IS NULL
+                OR message_room_state.parent_notice_updated_at_unix_ms
+                   < excluded.parent_notice_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(copy.parent_room_id.as_str())
+        .bind(copy.notice.text.as_deref())
+        .bind(copy.notice.updated_by.as_str())
+        .bind(copy.notice.updated_at_ms)
+        .bind(now.value())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
         Ok(())
     }
 
@@ -665,6 +710,48 @@ impl SqliteMessageTimelineRepository {
                 updated_at_ms: updated_at_ms?,
             })
         }))
+    }
+
+    /// 交出父房间须知的副本，同样一条语句记下交过了这一版，和这一间自己的公告分开记。
+    async fn take_parent_copy(
+        &self,
+        room_id: &MatrixRoomId,
+        changed_only: bool,
+    ) -> Result<Option<ParentRoomNotice>, MessageTimelineQueryFailure> {
+        type Row = (Option<String>, Option<String>, Option<String>, Option<i64>);
+        let row = sqlx::query_as::<_, Row>(
+            "UPDATE message_room_state
+                SET parent_notice_given_at_unix_ms = parent_notice_updated_at_unix_ms
+              WHERE room_id = ?1
+                AND parent_notice_updated_at_unix_ms IS NOT NULL
+                AND (?2 = 0
+                     OR (parent_notice_given_at_unix_ms IS NULL
+                         AND parent_notice_text IS NOT NULL)
+                     OR parent_notice_given_at_unix_ms < parent_notice_updated_at_unix_ms)
+             RETURNING parent_notice_room_id, parent_notice_text, parent_notice_updated_by,
+                       parent_notice_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(changed_only)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?;
+        Ok(
+            row.and_then(|(parent_room_id, text, updated_by, updated_at_ms)| {
+                // 进房间时父房间撤掉了就是没有；等消息时撤掉也是一次改动。
+                if text.is_none() && !changed_only {
+                    return None;
+                }
+                Some(ParentRoomNotice {
+                    parent_room_id: MatrixRoomId::new(parent_room_id?).ok()?,
+                    notice: RoomNotice {
+                        text,
+                        updated_by: updated_by?,
+                        updated_at_ms: updated_at_ms?,
+                    },
+                })
+            }),
+        )
     }
 }
 

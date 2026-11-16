@@ -5,7 +5,9 @@
 //! `join` 事件，靠它的上一个成员状态区分；分不清时宁可不记，读消息时就不标。
 //!
 //! 房间的常驻公告（`room.notice.v1`，`specs/public-rooms/design.md`“常驻公告”）也从这里挑出来，
-//! 记下以后进房间、改了以后等消息时交给 Agent。
+//! 记下以后进房间、改了以后等消息时交给 Agent。子房间里还有一份父房间须知的副本
+//! （`room.parent_notice.v1`，`specs/redesign/brief-and-pins.md`“子房间里父房间的须知也算”）：
+//! 进子房间的 Agent 不一定在父房间里，读不到父房间的状态，所以控制面在子房间里写一份，一样交给它。
 
 use agent_room_application::ports::{
     MatrixRoomId, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch,
@@ -17,6 +19,9 @@ use serde_json::Value;
 
 /// 房间公告的状态事件类型，由控制面以应用服务写。
 pub const ROOM_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.room.notice.v1";
+/// 子房间里父房间须知的副本，由控制面以应用服务写；内容和公告一样，多一个 `parentRoomId`。
+pub const ROOM_PARENT_NOTICE_EVENT_TYPE: &str =
+    "io.github.rainyflash.agentroom.room.parent_notice.v1";
 
 /// 一个房间这段同步里的变化。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +33,16 @@ pub struct RoomStateChange {
     pub membership: Option<OwnMembership>,
     /// 这段同步里看到的公告（最新的那一版）；没看到就没有。
     pub notice: Option<RoomNotice>,
+    /// 这段同步里看到的父房间须知的副本（最新的那一版）；不是子房间、没看到就没有。
+    pub parent_notice: Option<ParentRoomNotice>,
+}
+
+/// 子房间里父房间须知的副本，某一版。交给 Agent 时按父房间的房间号交，和这一间自己的分开。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentRoomNotice {
+    pub parent_room_id: MatrixRoomId,
+    /// 父房间那一版须知；撤掉了正文是 `None`。
+    pub notice: RoomNotice,
 }
 
 /// 房间的常驻公告，某一版。
@@ -73,6 +88,7 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
         name: None,
         membership: None,
         notice: None,
+        parent_notice: None,
     };
     match room.kind() {
         MatrixRoomSyncKind::Joined => {}
@@ -103,11 +119,19 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
                     change.notice = Some(notice);
                 }
             }
+            ROOM_PARENT_NOTICE_EVENT_TYPE if event.state_key() == Some("") => {
+                if let Some(copy) = room_parent_notice(event.content()) {
+                    change.parent_notice = Some(copy);
+                }
+            }
             _ => {}
         }
     }
-    (change.name.is_some() || change.membership.is_some() || change.notice.is_some())
-        .then_some(change)
+    (change.name.is_some()
+        || change.membership.is_some()
+        || change.notice.is_some()
+        || change.parent_notice.is_some())
+    .then_some(change)
 }
 
 /// 读一条公告状态事件的内容；读不出来的不算一版。调用方只认状态事件（`state_key` 为空）：私人房间
@@ -115,7 +139,24 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
 /// 进房间时直接读房间状态，也用它。
 #[must_use]
 pub fn room_notice(content: &Value) -> Option<RoomNotice> {
-    if content.get("eventType").and_then(Value::as_str) != Some(ROOM_NOTICE_EVENT_TYPE) {
+    notice_of(content, ROOM_NOTICE_EVENT_TYPE)
+}
+
+/// 读子房间里父房间须知的副本；读不出来（包括父房间号不对）的不算一版。和公告一样只认应用服务写的
+/// 状态事件，网关进房间时也直接读它。
+#[must_use]
+pub fn room_parent_notice(content: &Value) -> Option<ParentRoomNotice> {
+    let notice = notice_of(content, ROOM_PARENT_NOTICE_EVENT_TYPE)?;
+    let parent_room_id =
+        MatrixRoomId::new(content.get("parentRoomId")?.as_str()?.to_owned()).ok()?;
+    Some(ParentRoomNotice {
+        parent_room_id,
+        notice,
+    })
+}
+
+fn notice_of(content: &Value, event_type: &str) -> Option<RoomNotice> {
+    if content.get("eventType").and_then(Value::as_str) != Some(event_type) {
         return None;
     }
     let text = RoomNoticeText::parse(content.get("text")?.as_str()?).ok()?;
@@ -205,6 +246,7 @@ mod tests {
             name,
             membership,
             notice: None,
+            parent_notice: None,
         }
     }
 
@@ -261,6 +303,104 @@ mod tests {
                 state(super::ROOM_NOTICE_EVENT_TYPE, "other", json!({}), 6_000),
                 // 撤回以后内容是空的。
                 state(super::ROOM_NOTICE_EVENT_TYPE, "", json!({}), 7_000),
+            ],
+        );
+        assert!(room_state_changes(&ignored, ME).is_empty());
+    }
+
+    #[test]
+    fn 父房间须知的副本按父房间号记_撤掉的没有正文_缺父房间号的不算() {
+        const PARENT: &str = "!project:matrix.test";
+        let copy = |text: &str, updated_at: &str, parent: Option<&str>, at: u64| {
+            let mut content = json!({
+                "schemaVersion": "1.0",
+                "eventType": super::ROOM_PARENT_NOTICE_EVENT_TYPE,
+                "text": text,
+                "updatedBy": "@owner:matrix.test",
+                "updatedAt": updated_at,
+            });
+            if let Some(parent) = parent {
+                content["parentRoomId"] = json!(parent);
+            }
+            state(super::ROOM_PARENT_NOTICE_EVENT_TYPE, "", content, at)
+        };
+        let copies = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                copy(
+                    "先说要做什么。",
+                    "2026-11-16T08:00:00.000Z",
+                    Some(PARENT),
+                    1_000,
+                ),
+                copy(
+                    "做完告诉主人。",
+                    "2026-11-16T09:00:00.000Z",
+                    Some(PARENT),
+                    2_000,
+                ),
+            ],
+        );
+        let [change] = room_state_changes(&copies, ME).try_into().unwrap();
+        assert_eq!(change.notice, None, "副本不是这一间自己的须知");
+        assert_eq!(
+            change.parent_notice,
+            Some(super::ParentRoomNotice {
+                parent_room_id: MatrixRoomId::new(PARENT).unwrap(),
+                notice: super::RoomNotice {
+                    text: Some("做完告诉主人。".to_owned()),
+                    updated_by: "@owner:matrix.test".to_owned(),
+                    updated_at_ms: 1_794_819_600_000,
+                },
+            })
+        );
+        let removed = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![copy("", "2026-11-16T10:00:00Z", Some(PARENT), 3_000)],
+        );
+        let [change] = room_state_changes(&removed, ME).try_into().unwrap();
+        assert_eq!(
+            change.parent_notice.map(|copy| copy.notice.text),
+            Some(None)
+        );
+
+        let ignored = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                copy("没有父房间号", "2026-11-16T10:00:00Z", None, 4_000),
+                copy(
+                    "父房间号不对",
+                    "2026-11-16T10:00:00Z",
+                    Some("project"),
+                    5_000,
+                ),
+                // 类型对不上的内容（把公告写进了副本的类型）不算。
+                state(
+                    super::ROOM_PARENT_NOTICE_EVENT_TYPE,
+                    "",
+                    json!({
+                        "schemaVersion": "1.0",
+                        "eventType": super::ROOM_NOTICE_EVENT_TYPE,
+                        "text": "公告",
+                        "updatedBy": "@owner:matrix.test",
+                        "updatedAt": "2026-11-16T10:00:00Z",
+                        "parentRoomId": PARENT,
+                    }),
+                    6_000,
+                ),
+                state(
+                    super::ROOM_PARENT_NOTICE_EVENT_TYPE,
+                    "other",
+                    json!({
+                        "schemaVersion": "1.0",
+                        "eventType": super::ROOM_PARENT_NOTICE_EVENT_TYPE,
+                        "text": "不是空的状态键",
+                        "updatedBy": "@owner:matrix.test",
+                        "updatedAt": "2026-11-16T10:00:00Z",
+                        "parentRoomId": PARENT,
+                    }),
+                    7_000,
+                ),
             ],
         );
         assert!(room_state_changes(&ignored, ME).is_empty());

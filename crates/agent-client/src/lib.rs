@@ -15,5 +15,5 @@ pub use desktop_launch::{
 };
 pub use inbox::{MAX_EXPLICIT_WAIT_SECONDS, MessageReadMode, MessageWait, wait_for_messages};
 pub use moderation::RoomModeration;
-pub use notices::{notice_json, room_notice};
+pub use notices::{EnteredNotices, notice_json, room_notices};
 pub use waiting::{CURSOR_BYTES, InboxWaiter, WokenBatch, cursor_events};
