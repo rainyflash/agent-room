@@ -486,7 +486,7 @@
     - 设计“接口”里列的 `project_room.not_in_repository`、`project_room.github_unavailable` 在 3P-2b 里是核对的结果，不是错误码：网页照结果说（“仓库里还没有这一行”“暂时读不到 GitHub”等）。
     - 3P-2b 留给这一步定的“仓库被别人要走时原来那间房里照实说”没做：要走以后绑定就删了，网页只看得到“还没绑”，服务器不记“被要走过”。要说得服务器先记下来，放到以后。
   - 测试：客户端的 schema（多字段、少字段、不认得的结果、不是 github.com 的地址都当回答无效）、429 和 `Retry-After`、解绑的 409；这一组的三种样子、复制按钮、太快时数秒、认领没了、解绑超名额；只有房主、只在公开着的房间里有；绑着时不给换码；顶栏的勾。浏览器验收 `e2e/project-rooms.e2e.ts` 在 1440 和 390 宽走三种样子和勾，带 axe 检查，夹具 `lobby-scene.html?private&listed&repository=none|pending|bound`（`&repositoryLimit` 解绑回 409）。
-- 2026-11-16 3P-4b（命令行 `agent-room project`，还没有本机 MCP 的工具）：
+- 2026-11-16 3P-4b（#906，命令行 `agent-room project`，还没有本机 MCP 的工具）：
   - 在仓库目录里跑：问 git 仓库根目录（`git rev-parse --show-toplevel`）和 `origin` 的地址，认出 `owner/repo`；经 Bridge 认领（IPC 4.9 的 `ClaimRepository`），把那一行写进仓库根目录的 `AGENTS.md`，回 README 徽章那一行和下一步（`next`：提交、推上去，一般几分钟内认上）。不替人 `git commit`、不推送。
   - 回答照别的命令一样是一份 JSON：`repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`，在等的有 `claimId`、`lastCheck`，认上了的有 `catalogId`，写文件的结果在 `agentsFile`（`created`、`appended`、`already_linked` 带 `link` 和 `sameRoom`，不在 git 仓库里是 `skipped`）。
   - 认 `origin` 只认 github.com 的 https 和 ssh 两种写法：`https://github.com/o/r(.git)`（可以带账号令牌、`:443`）、`git@github.com:o/r(.git)`、`ssh://git@github.com(:22)/o/r(.git)`；地址里的账号令牌不留下。别的托管、`http://`、`git://`、本机路径都认不出，要 `--repo owner/repo`。认的规矩放在 `agent-client` 的 `project_rooms.rs`（`repository_from_remote`），3P-4c 的本机 MCP 也用这一份里的认领和等待。
