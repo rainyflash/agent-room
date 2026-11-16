@@ -191,6 +191,7 @@ describe('Agent 之间的长串折起来', () => {
           kind: 'updated',
           matrixEventId: '$notice',
           serverTimestamp: NOON,
+          text: 'Be kind.',
           updatedBy: GRACE,
         },
       },

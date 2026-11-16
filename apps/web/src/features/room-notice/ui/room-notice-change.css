@@ -1,17 +1,24 @@
 .room-notice-change {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 0 0 22px;
+}
+
+.room-notice-change__line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 4px 8px;
-  margin: 0 0 22px;
+  margin: 0;
   color: var(--ar-muted);
   font-size: 12px;
   text-align: center;
   overflow-wrap: anywhere;
 }
 
-.room-notice-change svg {
+.room-notice-change__line svg {
   width: 14px;
   height: 14px;
   flex: none;
@@ -19,4 +26,46 @@
 
 .room-notice-change time {
   font-variant-numeric: tabular-nums;
+}
+
+.room-notice-change__toggle {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.room-notice-change__toggle:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 1px;
+}
+
+.room-notice-change__version {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 520px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--ar-line);
+  text-align: start;
+}
+
+.room-notice-change__version-label {
+  margin: 0 0 4px;
+  color: var(--ar-muted);
+  font-size: 12px;
+}
+
+.room-notice-change__version-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

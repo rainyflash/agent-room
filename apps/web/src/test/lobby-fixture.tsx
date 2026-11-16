@@ -197,9 +197,12 @@ const listedFixture = privateFixture && new URLSearchParams(window.location.sear
 // `?private&listed&requests` 里房间要申请才能进，有两个人在等批准：齿轮上亮点，“成员”一节列出申请。
 const requestsFixture =
   listedFixture && new URLSearchParams(window.location.search).has('requests');
-// `?private&notice` 里房间有一条 Grace 写的三行公告（时间固定，重新打开还是同一版）；不带时没有公告，
-// 房主能在设置的“公告”里写。
+// `?private&notice` 里房间有一条 Grace 写的三行须知（时间固定，重新打开还是同一版）；不带时没有须知，
+// 房主能在设置的“须知”里写。加 `&seenElsewhere` 是你在别的设备上看过这一版：个人工作区里记着，这个浏览器
+// 里没有。
 const noticeFixture = privateFixture && new URLSearchParams(window.location.search).has('notice');
+const noticeSeenElsewhere =
+  noticeFixture && new URLSearchParams(window.location.search).has('seenElsewhere');
 // `?private&handover` 里以前的房主删除了账户、房间交给了 Grace：对话里有一行“房间交给了 Grace”。
 const handoverFixture =
   privateFixture && new URLSearchParams(window.location.search).has('handover');
@@ -452,7 +455,7 @@ const fixtureChatter: readonly RoomMessageSignal[] = chatterFixture
     })
   : [];
 let historyWindow = historyPage;
-// 公告每改一次，对话里多一行“某某更新了公告”；`?notice` 一开始就有 Grace 那一次，`?handover` 一开始
+// 须知每改一次，对话里多一行“某某改了须知”；`?notice` 一开始就有 Grace 那一次，`?handover` 一开始
 // 就有房间交给 Grace 的那一行。
 const stateLines: RoomStateLine[] = [
   ...(handoverFixture
@@ -472,6 +475,7 @@ const stateLines: RoomStateLine[] = [
           kind: 'updated' as const,
           matrixEventId: '$fixture-notice',
           serverTimestamp: room.notice.updatedAtUnixMs,
+          text: room.notice.text,
           updatedBy: room.notice.updatedBy,
         },
       ]),
@@ -593,6 +597,14 @@ let remoteWorkspace: WorkspaceDocument = fixtureSubRoomInbox.reduce<WorkspaceDoc
   },
   emptyWorkspace,
 );
+if (noticeSeenElsewhere && room.notice !== undefined) {
+  const seen = changeWorkspace(
+    remoteWorkspace,
+    { kind: 'acknowledged', id: `brief:${room.roomId}`, value: room.notice.updatedAtUnixMs },
+    'other-device',
+  );
+  if (seen.ok) remoteWorkspace = seen.value;
+}
 const personalWorkspace = new PersonalWorkspaceStore(
   {
     scope: () => ({ accountId: fixtureIdentity.matrixUserId, writerId: 'fixture-device' }),
@@ -2194,7 +2206,7 @@ let fixtureListing: PrivateRoomListing = {
   shareUrl: listedFixture ? 'https://agentroom.test/r/aB3xYz' : null,
 };
 const fixtureShareCodes = ['aB3xYz', 'Q7mPz2', 'Zz9Zz9'];
-/** 改公告：像同步回来一样换掉房间状态里的公告，改的人是你。 */
+/** 改须知：像同步回来一样换掉房间状态里的须知，改的人是你。 */
 const roomNotices: RoomNoticeGateway = {
   updateNotice: (_catalogId, text) => {
     const updatedAtUnixMs = Date.now();
@@ -2208,6 +2220,7 @@ const roomNotices: RoomNoticeGateway = {
       kind: text === '' ? 'removed' : 'updated',
       matrixEventId: `$fixture-notice-${String(stateLines.length)}`,
       serverTimestamp: updatedAtUnixMs,
+      text,
       updatedBy: fixtureIdentity.matrixUserId,
     });
     for (const listener of lobbyListeners) listener();

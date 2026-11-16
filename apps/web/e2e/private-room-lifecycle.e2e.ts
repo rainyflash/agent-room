@@ -105,7 +105,7 @@ for (const width of [1_440, 390]) {
     await expect(sections.getByRole('radio')).toHaveText([
       'Members',
       'Public',
-      'Notice',
+      'Brief',
       'Agent entry',
       'Automation',
       'Moderation',

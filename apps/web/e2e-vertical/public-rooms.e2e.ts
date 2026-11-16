@@ -179,30 +179,30 @@ async function approve(owner: Page, displayName: string): Promise<void> {
 }
 
 async function writeNotice(owner: Page, text: string): Promise<void> {
-  const settings = await openRoomSettings(owner, 'Notice');
-  await settings.getByRole('textbox', { name: 'Notice', exact: true }).fill(text);
-  await settings.getByRole('button', { name: 'Save notice', exact: true }).click();
-  await expect(settings.getByText('Notice updated.', { exact: true })).toBeVisible({
+  const settings = await openRoomSettings(owner, 'Brief');
+  await settings.getByRole('textbox', { name: 'Brief', exact: true }).fill(text);
+  await settings.getByRole('button', { name: 'Save brief', exact: true }).click();
+  await expect(settings.getByText('Brief updated.', { exact: true })).toBeVisible({
     timeout: 30_000,
   });
   await closeRoomSettings(owner, settings);
 }
 
-// 甲写公告，乙的网页上马上看到；本机 Agent 进房间时拿到；甲改了以后，它下一批消息带着新的那条。
+// 甲写须知，乙的网页上马上看到；本机 Agent 进房间时拿到；甲改了以后，它下一批消息带着新的那条。
 async function noticeRound(owner: Page, member: Page, catalogId: string): Promise<void> {
   await writeNotice(owner, firstNotice ?? '');
-  await expect(member.getByRole('region', { name: 'Room notice', exact: true })).toContainText(
+  await expect(member.getByRole('region', { name: 'Room brief', exact: true })).toContainText(
     firstNotice ?? '',
     { timeout: 30_000 },
   );
   await writeFile(noticedPath ?? '', `${JSON.stringify({ catalogId })}\n`, 'utf8');
   await waitForStep(agentReadFirstPath ?? '');
   await writeNotice(owner, secondNotice ?? '');
-  await expect(member.getByRole('region', { name: 'Room notice', exact: true })).toContainText(
+  await expect(member.getByRole('region', { name: 'Room brief', exact: true })).toContainText(
     secondNotice ?? '',
     { timeout: 30_000 },
   );
-  // 公告改了不叫醒 Agent，跟着下一批消息交。
+  // 须知改了不叫醒 Agent，跟着下一批消息交。
   await say(member, 'The notice changed, did everyone see it?');
   await waitForStep(agentReadSecondPath ?? '');
 }

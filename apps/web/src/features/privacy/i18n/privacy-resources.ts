@@ -20,7 +20,7 @@ export const privacyResources = {
     'privacy.keep.title': 'What we keep',
     'privacy.keep.account.label': 'Your account',
     'privacy.keep.account.text':
-      'Your email address, a nickname and a password. The password is stored only as a hash. Other people see your nickname, never your email address. Your nickname is also shown next to your agents: to the people in the same private room, and to anyone signed in when your agent is in a public lobby.',
+      'Your email address, a nickname and a password. The password is stored only as a hash. Other people see your nickname, never your email address. Your nickname is also shown next to your agents: to the people in the same private room, and to anyone signed in when your agent is in a public lobby. Your reading settings, such as how far you’ve read in each room, which rooms you’ve muted and which version of a room’s brief you’ve already seen, are kept with your account on the chat server so they follow you to other devices; whoever runs the server can read them.',
     'privacy.keep.posts.label': 'What you post',
     'privacy.keep.posts.text':
       'The rooms you create or join, your messages and the files you attach, and any reports you send to moderators. Room invite links you make are kept too: that you made the link, what it grants and when it expires. Anyone signed in who has the link sees the room name and your nickname. A link is deleted when you turn it off, make a new one or the room is deleted, and it stops working once you leave the room. When you ask to join a public room, or a sub-room that needs approval, the note you leave is kept too, and that room’s owner and admins (for a sub-room, also whoever looks after it) can see it. For each sub-room we also note when someone last spoke there — only the time, not what was said. People in the room above it see that time for the sub-rooms they can enter or are in, and a sub-room nobody has spoken in for 30 days is archived automatically unless the room’s owner turned that off.',
@@ -55,9 +55,9 @@ export const privacyResources = {
     'privacy.readers.subRooms.label': 'Sub-rooms',
     'privacy.readers.subRooms.text':
       'A room can have sub-rooms, one per piece of work. Their messages are stored the same way as the room above them and kept for the same retention period. Anyone in the room above can go into a sub-room without a door and read it, as in that room. A sub-room that needs approval or an invitation is always encrypted and counts as a private room: the people and agents let in can read it, and so can whoever runs the server; the room’s owner and admins can always go in. For each sub-room we keep who made it, who looks after it, who archived it and when (or that it was archived after 30 days without anyone speaking), and its category and who made that category. Whoever can see a sub-room in the room’s list of sub-rooms sees who made and looks after it, and for an archived one, who archived it.',
-    'privacy.readers.notices.label': 'Room notices',
+    'privacy.readers.notices.label': 'Room briefs',
     'privacy.readers.notices.text':
-      'The notice an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
+      'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
     'privacy.readers.roleChanges.label': 'Role changes in a room',
     'privacy.readers.roleChanges.text':
       'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, a sub-room admin can read the sub-room’s, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
@@ -144,7 +144,7 @@ export const privacyResources = {
     'privacy.keep.title': '存了什么',
     'privacy.keep.account.label': '你的账户',
     'privacy.keep.account.text':
-      '邮箱、昵称和密码。密码只存不可还原的散列。别人只看得到你的昵称，看不到邮箱。你的 Agent 旁边也写着你的昵称：私人房间里同一个房间的人看得到，Agent 在公共大厅时登录了的人都看得到。',
+      '邮箱、昵称和密码。密码只存不可还原的散列。别人只看得到你的昵称，看不到邮箱。你的 Agent 旁边也写着你的昵称：私人房间里同一个房间的人看得到，Agent 在公共大厅时登录了的人都看得到。你在各个房间读到哪、哪些房间免打扰、看过哪一版房间须知这类设置，跟着你的账户存在聊天服务器上，换设备也在；运营服务器的人读得到。',
     'privacy.keep.posts.label': '你发的内容',
     'privacy.keep.posts.text':
       '你建的和加入的房间、你的消息和附件，以及你提交给管理员的举报。你生成的房间邀请链接也存着：是你生成的、给什么权限、什么时候过期；拿到链接的人登录后看得到房间名和你的昵称。停用、换一条新的或者房间删掉时链接一起删掉，你离开房间以后它就不管用了。申请加入公开房间、或者房间里要批准的子房间时留的那句话也存着，那间房的房主和管理员（子房间还有管这一间的人）看得到。每间子房间还记着最近一次有人说话的时间，只有时间、没有说了什么：上面那间房里的人，在进得去或者已经在里面的子房间上看得到；30 天没人说话的子房间自动归档，房主可以关掉。',
@@ -179,9 +179,9 @@ export const privacyResources = {
     'privacy.readers.subRooms.label': '子房间',
     'privacy.readers.subRooms.text':
       '一间房下面可以开子房间，一件事一间。子房间里的消息和它上面那间房一样存、一样按保留期删。没有门的子房间，上面那间房里的人都进得去、读得到，和那间房一样。要批准或者只能请进来的子房间一直是加密的，照私人房间算：放进来的人和 Agent 读得到，运营服务器的人也读得到；那间房的房主和管理员随时进得去。每间子房间记着谁建的、谁在管、谁什么时候归档的（或者是 30 天没人说话自动归档的），放在哪个分类里、分类是谁建的。在子房间名单里看得到这一间的人，看得到谁建的、谁在管，归档了的还看得到谁归档的。',
-    'privacy.readers.notices.label': '房间公告',
+    'privacy.readers.notices.label': '房间须知',
     'privacy.readers.notices.text':
-      '房主和管理员挂在房间顶上的公告，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
+      '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
     'privacy.readers.roleChanges.label': '房间里的身份变动',
     'privacy.readers.roleChanges.text':
       '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，子房间里的那一间的子房间管理员也读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',

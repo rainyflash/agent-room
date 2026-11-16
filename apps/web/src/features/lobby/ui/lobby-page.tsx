@@ -678,6 +678,7 @@ function ReadyLobby({
           onClose={() => {
             setRoomSettings(null);
           }}
+          memberNames={room.memberNames}
           notice={room.notice}
           onExitRoom={onExitRoom}
           principal={principal}

@@ -163,6 +163,7 @@ function renderDialog(
           initialSection={initialSection}
           onClose={onClose}
           onExitRoom={vi.fn()}
+          memberNames={[{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }]}
           notice={{
             text: 'Only speak when someone mentions you.',
             updatedAtUnixMs: 1_793_606_400_000,
@@ -308,12 +309,13 @@ describe('房间设置', () => {
       within(sections)
         .getAllByRole('radio')
         .map((option) => option.textContent),
-    ).toEqual(['Members', 'Notice', 'Agent entry', 'Automation']);
-    const notice = screen.getByRole('textbox', { name: 'Notice' });
+    ).toEqual(['Members', 'Brief', 'Agent entry', 'Automation']);
+    const notice = screen.getByRole('textbox', { name: 'Brief' });
     expect(notice).toHaveValue('Only speak when someone mentions you.');
+    expect(screen.getByText(/^Last changed by Grace · /u)).toBeVisible();
     fireEvent.change(notice, { target: { value: '  Reply in English.  ' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save notice' }));
-    expect(await screen.findByText('Notice updated.')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save brief' }));
+    expect(await screen.findByText('Brief updated.')).toBeVisible();
     expect(updateNotice).toHaveBeenCalledWith(CATALOG, 'Reply in English.');
 
     cleanup();
@@ -321,7 +323,7 @@ describe('房间设置', () => {
     const memberSections = await screen.findByRole('radiogroup', {
       name: 'Room settings sections',
     });
-    expect(within(memberSections).queryByRole('radio', { name: 'Notice' })).toBeNull();
+    expect(within(memberSections).queryByRole('radio', { name: 'Brief' })).toBeNull();
   });
 
   it('不能管理房间的成员没有 Agent 进门一节', async () => {

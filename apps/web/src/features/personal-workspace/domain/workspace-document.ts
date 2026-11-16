@@ -127,6 +127,8 @@ export function workspaceIndex(document: WorkspaceDocument) {
   const recent = new Map<string, number>();
   const read = new Map<string, ReadingCursor>();
   const acknowledged = new Set<string>();
+  // 收件箱只问有没有；房间须知要看看过的是哪一版（`brief:<房间>`），连值一起留。
+  const acknowledgedAt = new Map<string, number>();
   const muted = new Set<string>();
   const positions = new Map<string, ReadingPosition>();
   let doNotDisturbUntil: number | null = 0;
@@ -146,6 +148,7 @@ export function workspaceIndex(document: WorkspaceDocument) {
         break;
       case 'acknowledged':
         acknowledged.add(entry.id);
+        acknowledgedAt.set(entry.id, entry.value);
         break;
       case 'mute':
         if (entry.value) muted.add(entry.id);
@@ -158,7 +161,17 @@ export function workspaceIndex(document: WorkspaceDocument) {
         break;
     }
   }
-  return { favorites, tags, recent, read, acknowledged, muted, positions, doNotDisturbUntil };
+  return {
+    favorites,
+    tags,
+    recent,
+    read,
+    acknowledged,
+    acknowledgedAt,
+    muted,
+    positions,
+    doNotDisturbUntil,
+  };
 }
 
 export type WorkspaceIndex = ReturnType<typeof workspaceIndex>;

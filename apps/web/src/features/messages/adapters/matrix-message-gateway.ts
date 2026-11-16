@@ -635,6 +635,7 @@ function parseNoticeChange(
     kind: change.kind,
     matrixEventId,
     serverTimestamp,
+    text: change.text,
     updatedBy: change.updatedBy,
   });
 }

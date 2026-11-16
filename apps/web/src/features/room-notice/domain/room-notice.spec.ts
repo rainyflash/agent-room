@@ -6,9 +6,10 @@ import {
   parseRoomNotice,
   parseRoomNoticeChange,
   roomNoticeProblem,
+  briefSeenKey,
 } from '@/features/room-notice/domain/room-notice';
 
-describe('房间公告的规则', () => {
+describe('房间须知的规则', () => {
   it('按 Unicode 字符数算，和服务器一样：2000 个可以，多一个不行', () => {
     expect(characterCount('公告😀')).toBe(3);
     expect(roomNoticeProblem('公'.repeat(2_000))).toBeNull();
@@ -57,15 +58,23 @@ describe('房间公告的规则', () => {
     };
     expect(parseRoomNoticeChange(state)).toEqual({
       kind: 'updated',
+      text: '只在被点名时说话。',
       updatedBy: '@owner:matrix.test',
     });
     expect(parseRoomNoticeChange({ ...state, text: '  ' })).toEqual({
       kind: 'removed',
+      text: '',
       updatedBy: '@owner:matrix.test',
     });
     expect(parseRoomNoticeChange({ ...state, text: '公'.repeat(2_001) })).toBeUndefined();
     expect(parseRoomNoticeChange({ ...state, updatedBy: 'owner' })).toBeUndefined();
     // 撤回（redact）以后内容是空的。
     expect(parseRoomNoticeChange({})).toBeUndefined();
+  });
+
+  it('看过哪一版记在个人工作区的键：brief 加房间 ID，太长的放不下就不记', () => {
+    expect(briefSeenKey('!club:matrix.test')).toBe('brief:!club:matrix.test');
+    expect(briefSeenKey(`!${'a'.repeat(503)}:m`)).toBe(`brief:!${'a'.repeat(503)}:m`);
+    expect(briefSeenKey(`!${'a'.repeat(504)}:m`)).toBeNull();
   });
 });

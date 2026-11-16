@@ -819,7 +819,7 @@ describe('Agent 点名房间里的人', () => {
   });
 });
 
-describe('公告的改动、换了房主', () => {
+describe('须知的改动、换了房主', () => {
   const grace = '@grace:agent-room.test';
   const question = (id: string, at: number, text: string): RoomMessageSignal => ({
     actor: {
@@ -853,7 +853,13 @@ describe('公告的改动、换了房主', () => {
     at: number,
     updatedBy: string,
     kind: RoomNoticeChange['kind'] = 'updated',
-  ): RoomNoticeChange => ({ kind, matrixEventId: id, serverTimestamp: at, updatedBy });
+  ): RoomNoticeChange => ({
+    kind,
+    matrixEventId: id,
+    serverTimestamp: at,
+    text: kind === 'updated' ? `Version ${id}` : '',
+    updatedBy,
+  });
 
   it('按时间夹在消息中间各写一行：成员写名字，你自己写“你”，认不出的写房主或管理员；看话题时不显示', async () => {
     const root = question('root', 1_000, 'Root question');
@@ -877,14 +883,14 @@ describe('公告的改动、换了房主', () => {
 
     const log = screen.getByRole('log');
     await waitFor(() => {
-      expect(log).toHaveTextContent('You removed the notice');
+      expect(log).toHaveTextContent('You removed the brief');
     });
     const order = [
       'Root question',
-      'Grace updated the notice',
+      'Grace changed the brief',
       'An answer',
-      'You removed the notice',
-      'The owner or an admin updated the notice',
+      'You removed the brief',
+      'The owner or an admin changed the brief',
     ].map((text) => log.textContent.indexOf(text));
     expect(order.every((index) => index >= 0)).toBe(true);
     expect(order).toEqual(order.toSorted((left, right) => left - right));
@@ -892,8 +898,43 @@ describe('公告的改动、换了房主', () => {
     const [topic] = screen.getAllByRole('button', { name: 'View this reply topic' });
     if (topic === undefined) throw new Error('没有“查看回复话题”');
     fireEvent.click(topic);
-    expect(log).not.toHaveTextContent('updated the notice');
+    expect(log).not.toHaveTextContent('changed the brief');
     expect(log).toHaveTextContent('An answer');
+  });
+
+  it('改了须知的那一行点开看这一版写的什么，再点收起；撤掉的那一行没有可看的', async () => {
+    harness(
+      false,
+      [question('root', 1_000, 'Root question')],
+      null,
+      undefined,
+      'idle',
+      [{ matrixUserId: grace, displayName: 'Grace' }],
+      [
+        change('$first', 1_500, grace),
+        change('$second', 2_000, grace),
+        change('$gone', 2_500, grace, 'removed'),
+      ],
+    );
+
+    const log = screen.getByRole('log');
+    await waitFor(() => {
+      expect(log).toHaveTextContent('Grace removed the brief');
+    });
+    const shows = within(log).getAllByRole('button', { name: 'Show this version' });
+    expect(shows).toHaveLength(2);
+    expect(within(log).queryByText('Version $first')).not.toBeVisible();
+
+    const [first] = shows;
+    if (first === undefined) throw new Error('没有“看这一版”');
+    fireEvent.click(first);
+    expect(within(log).getByText('Version $first')).toBeVisible();
+    expect(within(log).queryByText('Version $second')).not.toBeVisible();
+    const hide = within(log).getByRole('button', { name: 'Hide' });
+    expect(hide).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(hide);
+    expect(within(log).queryByText('Version $first')).not.toBeVisible();
   });
 
   it('房主删除了账户：写交给了谁，交给你写“你”，认不出的写一位管理员', async () => {

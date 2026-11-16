@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import type { LobbyMemberName } from '@/features/lobby/domain/lobby';
 import {
   characterCount,
   normalizeRoomNotice,
@@ -12,22 +13,32 @@ import {
   type RoomNoticeGateway,
   type WrittenRoomNotice,
 } from '@/features/room-notice/domain/room-notice';
-import { formatNumber } from '@/shared/i18n/formatters';
+import { formatDateTime, formatNumber } from '@/shared/i18n/formatters';
 
+import { noticeAuthor } from './notice-author';
 import './room-notice-editor.css';
 
 export type RoomNoticeEditorProps = {
   readonly catalogId: string;
-  /** 房间状态里此刻的公告；没有就是还没写过或撤掉了。 */
+  /** 房间状态里此刻的须知；没有就是还没写过或撤掉了。 */
   readonly notice: RoomNotice | undefined;
   readonly gateway: RoomNoticeGateway;
+  /** 写上次谁改的：认得出的写昵称，自己写“你”。 */
+  readonly memberNames?: readonly LobbyMemberName[] | undefined;
+  readonly selfMatrixUserId?: string | null | undefined;
 };
 
 /**
- * 房间设置里的“公告”（房主和管理员）：写一段纯文本，保存就盖掉旧的，撤掉就是清空。写进去以后要等同步回来
- * 房间状态才变，这之间照刚写进去的那一版显示。
+ * 房间设置里的“须知”（房主和管理员）：写一段纯文本，保存就盖掉旧的，撤掉就是清空。写进去以后要等同步回来
+ * 房间状态才变，这之间照刚写进去的那一版显示。上面写着上次谁、什么时候改的；以前的版本在对话里那几行。
  */
-export function RoomNoticeEditor({ catalogId, notice, gateway }: RoomNoticeEditorProps) {
+export function RoomNoticeEditor({
+  catalogId,
+  notice,
+  gateway,
+  memberNames,
+  selfMatrixUserId = null,
+}: RoomNoticeEditorProps) {
   const { t, i18n } = useTranslation();
   // 改了才记下；没改时跟着房间状态。
   const [draft, setDraft] = useState<string | null>(null);
@@ -70,6 +81,14 @@ export function RoomNoticeEditor({ catalogId, notice, gateway }: RoomNoticeEdito
           value={shown}
         />
       </Field>
+      {notice === undefined ? null : (
+        <p className="room-notice-editor__last">
+          {t('roomNotice.editor.lastChange', {
+            name: noticeAuthor(t, notice.updatedBy, memberNames, selfMatrixUserId),
+            time: formatDateTime(notice.updatedAtUnixMs, i18n.language),
+          })}
+        </p>
+      )}
       <p className="room-notice-editor__meta">
         <span>{t('roomNotice.editor.readers')}</span>
         <span className="room-notice-editor__count">
