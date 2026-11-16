@@ -7,6 +7,7 @@ import type {
   RoomState,
 } from 'matrix-js-sdk';
 import { matrixAgentStatusEventType } from '@/features/lobby/adapters/matrix-lobby-source';
+import { roomPinsEventType } from '@/features/room-pins/domain/room-pins';
 import {
   DIRECTION_BACKWARD,
   DIRECTION_FORWARD,
@@ -27,12 +28,17 @@ export const matrixAgentRoomEventNamespace = 'io.github.rainyflash.agentroom';
 const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
 const matrixEncryptedEventType = 'm.room.encrypted';
 
+/**
+ * 我们命名空间里的事件都收；命名空间外只收这几种。置顶存在 Matrix 标准的 `m.room.pinned_events` 里，
+ * 不在我们的命名空间：不点名的话服务器和本地都把它筛掉，对话里“置顶了一句”那一行就出不来。
+ */
 const projectedTimelineEventTypes = new Set([
   matrixMessagePreviewEventType,
   matrixMessagePreviewEventTypeV2,
   matrixMessageRevisionEventType,
   matrixMessageRevisionEventTypeV2,
   matrixModerationNoticeEventType,
+  roomPinsEventType,
 ]);
 const historyPageSize = 200;
 const historyLimit = 5000;
@@ -348,6 +354,7 @@ function createHistoryFilter(filterClass: MatrixFilterClass): Filter {
           `${matrixAgentRoomEventNamespace}.*`,
           `${legacyMatrixAgentRoomEventNamespace}.*`,
           matrixEncryptedEventType,
+          roomPinsEventType,
         ],
         not_types: [matrixAgentStatusEventType],
       },
