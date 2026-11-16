@@ -7,6 +7,7 @@ import {
 } from '@/features/personal-workspace/domain/workspace-document';
 import { ok } from '@/shared/result';
 import {
+  latestReadingCursor,
   notificationAllowed,
   projectInbox,
   type InboxIndex,
@@ -281,5 +282,18 @@ describe('room unread counts', () => {
         workspaceIndex(emptyWorkspace),
       ).rooms.size,
     ).toBe(0);
+  });
+});
+
+describe('标为已读挪到哪儿', () => {
+  it('挪到本机见到的最新一条，谁说的都算；同一刻的按事件号排', () => {
+    const at = (id: string, serverTimestamp: number) =>
+      conversationFixture(id, { serverTimestamp });
+    expect(latestReadingCursor([])).toBeNull();
+    const messages = [at('b', 20), at('a', 10), at('d', 20), at('c', 5)];
+    expect(latestReadingCursor(messages)).toEqual({
+      eventId: messages[2]?.matrixEventId,
+      timestamp: 20,
+    });
   });
 });

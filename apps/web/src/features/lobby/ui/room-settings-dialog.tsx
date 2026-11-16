@@ -78,6 +78,11 @@ export type RoomSettingsDialogProps = {
    * Agent 进门这几节是整间房的（邀请链接、口令、公开），不出现。
    */
   readonly subRoom?: RoomSettingsSubRoom | null | undefined;
+  /**
+   * 从左栏那一行的“⋯”打开的别的子房间：只有“这间子房间”一节。公告、自动发言、治理要这一页的房间状态，
+   * 不是眼前这一间时拿不到。
+   */
+  readonly subRoomOnly?: boolean | undefined;
 };
 
 /**
@@ -94,6 +99,7 @@ export function RoomSettingsDialog({
   onClose,
   onExitRoom,
   subRoom = null,
+  subRoomOnly = false,
 }: RoomSettingsDialogProps) {
   const { t } = useTranslation();
   const { privateRoomListings, privateRooms, moderation, roomNotices, subRooms } = useAppServices();
@@ -124,16 +130,18 @@ export function RoomSettingsDialog({
     capabilities.data?.ok === true &&
     (capabilities.data.value.canModerateRoom || capabilities.data.value.canReadAudit);
   const wholeRoom = room !== null && subRoom === null;
-  const sections: readonly RoomSettingsSection[] = [
-    ...(subRoom !== null && managesSubRoom(subRoom.room) ? (['sub-room'] as const) : []),
-    ...(wholeRoom ? (['members'] as const) : []),
-    ...(wholeRoom && privateRoomListings !== undefined ? (['listing'] as const) : []),
-    ...(wholeRoom && canManageRoom && subRooms !== undefined ? (['sub-rooms'] as const) : []),
-    ...(canManageRoom && roomNotices !== undefined ? (['notice'] as const) : []),
-    ...(canManageRoom && subRoom === null ? (['agent-code'] as const) : []),
-    'automation',
-    ...(canModerate ? (['moderation'] as const) : []),
-  ];
+  const sections: readonly RoomSettingsSection[] = subRoomOnly
+    ? ['sub-room']
+    : [
+        ...(subRoom !== null && managesSubRoom(subRoom.room) ? (['sub-room'] as const) : []),
+        ...(wholeRoom ? (['members'] as const) : []),
+        ...(wholeRoom && privateRoomListings !== undefined ? (['listing'] as const) : []),
+        ...(wholeRoom && canManageRoom && subRooms !== undefined ? (['sub-rooms'] as const) : []),
+        ...(canManageRoom && roomNotices !== undefined ? (['notice'] as const) : []),
+        ...(canManageRoom && subRoom === null ? (['agent-code'] as const) : []),
+        'automation',
+        ...(canModerate ? (['moderation'] as const) : []),
+      ];
   const [chosen, setChosen] = useState<RoomSettingsSection | undefined>(initialSection);
   const current =
     chosen !== undefined && sections.includes(chosen) ? chosen : (sections[0] ?? 'automation');

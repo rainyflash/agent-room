@@ -22,6 +22,7 @@ type FixtureSubRoomActions = {
   readonly answers: readonly { readonly principalId: string; readonly decision: string }[];
   readonly managers: readonly { readonly kind: string; readonly principalId: string }[];
   readonly policies: readonly Record<string, unknown>[];
+  readonly left: readonly string[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -558,6 +559,133 @@ test('房间设置的“子房间”一节：房主改谁能建、自动归档�
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole('region', { name: /^Categories/u })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
+
+test('左栏那一行的“⋯”：标为已读、免打扰、移到分类、别的子房间的设置、归档；房主没有“退出”', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${parentRoom}&unread`);
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  const release = places.getByRole('link', { name: 'Release checklist', exact: true });
+  await expect(release).toHaveAccessibleDescription('Mentions you, 3 unread');
+
+  // 指过去才露出来。
+  const more = places.getByRole('button', { name: 'Options for Release checklist' });
+  await expect(more).toHaveCSS('opacity', '0');
+  await release.hover();
+  await expect(more).toHaveCSS('opacity', '1');
+  await more.click();
+  let menu = page.getByRole('dialog', { name: 'Options for Release checklist' });
+  // 你是房主：在每一间里，退不出去。
+  await expect(menu.getByRole('button')).toHaveText([
+    'Mark as read',
+    /^Mute/u,
+    'Move to category',
+    'Sub-room settings',
+    'Archive',
+  ]);
+  await expectAccessible(page);
+  await menu.getByRole('button', { name: 'Mark as read' }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(more).toBeFocused();
+  await expect(release).not.toHaveAccessibleDescription(/unread|Mentions you/u);
+
+  // 免打扰：没读的不数了。
+  const backups = places.getByRole('link', { name: 'Backups', exact: true });
+  await expect(backups).toHaveAccessibleDescription('Has a door 2 unread');
+  await places.getByRole('button', { name: 'Options for Backups' }).click();
+  await page
+    .getByRole('dialog', { name: 'Options for Backups' })
+    .getByRole('button', { name: /^Mute/u })
+    .click();
+  await expect(backups).toHaveAccessibleDescription('Has a door Muted');
+  await places.getByRole('button', { name: 'Options for Backups' }).click();
+  await page
+    .getByRole('dialog', { name: 'Options for Backups' })
+    .getByRole('button', { name: 'Unmute' })
+    .click();
+  await expect(backups).toHaveAccessibleDescription('Has a door 2 unread');
+
+  // 移到分类：菜单里换成分类的名单，Esc 关掉整个菜单。
+  await places.getByRole('button', { name: 'Options for Loose ends' }).click();
+  menu = page.getByRole('dialog', { name: 'Options for Loose ends' });
+  await menu.getByRole('button', { name: 'Move to category' }).click();
+  await expect(menu.getByRole('button', { name: 'Uncategorized' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await menu.getByRole('button', { name: 'Ops', exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  const ops = places.locator('section').filter({ has: page.getByRole('button', { name: 'Ops' }) });
+  await expect(ops.getByRole('link')).toHaveText([/Backups/u, /Loose ends/u]);
+  expect((await fixtureSubRoomActions(page)).revisions).toEqual([
+    {
+      subRoomId: '01990d9e-8400-7000-8000-000000000453',
+      categoryId: '01990d9e-8400-7000-8000-000000000461',
+    },
+  ]);
+  // 再移回“未分类”：回到最上面。
+  await places.getByRole('button', { name: 'Options for Loose ends' }).click();
+  menu = page.getByRole('dialog', { name: 'Options for Loose ends' });
+  await menu.getByRole('button', { name: 'Move to category' }).click();
+  await menu.getByRole('button', { name: 'Uncategorized' }).click();
+  await expect(places.getByRole('link')).toHaveText([
+    /Loose ends/u,
+    /Release checklist/u,
+    /Backups/u,
+  ]);
+
+  // 别的子房间的设置：只有“这间子房间”一节。
+  await places.getByRole('button', { name: 'Options for Backups' }).click();
+  await page
+    .getByRole('dialog', { name: 'Options for Backups' })
+    .getByRole('button', { name: 'Sub-room settings' })
+    .click();
+  const settings = page.getByRole('dialog', { name: 'Sub-room settings' });
+  await expect(settings).toHaveAccessibleDescription('Backups · Builders Exchange');
+  await expect(settings.getByRole('radiogroup', { name: 'Room settings sections' })).toHaveCount(0);
+  await expect(settings.getByRole('textbox', { name: 'Name' })).toHaveValue('Backups');
+  await settings.getByRole('button', { name: 'Close room settings' }).click();
+
+  // 归档：先问一句，归档了就不在左栏里了。
+  await places.getByRole('button', { name: 'Options for Release checklist' }).click();
+  menu = page.getByRole('dialog', { name: 'Options for Release checklist' });
+  await menu.getByRole('button', { name: 'Archive' }).click();
+  const confirm = menu.getByRole('group', { name: 'Archive “Release checklist”?' });
+  await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await confirm.getByRole('button', { name: 'Archive' }).click();
+  await expect(release).toHaveCount(0);
+  expect((await fixtureSubRoomActions(page)).archived).toEqual([
+    '01990d9e-8400-7000-8000-000000000451',
+  ]);
+  expect(failures).toEqual([]);
+});
+
+test('左栏那一行的“⋯”：不是房主的人能退出一间，退了就不在左栏里', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${parentRoom}&asAdmin`);
+  const places = page.getByRole('navigation', { name: 'Sub-rooms', exact: true });
+  await places.getByRole('button', { name: 'Options for Backups' }).click();
+  const menu = page.getByRole('dialog', { name: 'Options for Backups' });
+  await menu.getByRole('button', { name: 'Leave' }).click();
+  const confirm = menu.getByRole('group', { name: 'Leave “Backups”?' });
+  await expect(confirm).toContainText('To come back, you’ll have to ask again.');
+  // 取消回到菜单，焦点回到“退出”。
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(menu.getByRole('button', { name: 'Leave' })).toBeFocused();
+  await menu.getByRole('button', { name: 'Leave' }).click();
+  await confirm.getByRole('button', { name: 'Leave' }).click();
+  await expect(places.getByRole('link', { name: 'Backups', exact: true })).toHaveCount(0);
+  expect((await fixtureSubRoomActions(page)).left).toEqual([
+    '01990d9e-8400-7000-8000-000000000452',
+  ]);
+  // 手机宽度：“⋯”一直在，菜单从下面出来，不横向滚动。
+  await page.setViewportSize({ width: 390, height: 844 });
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
 });

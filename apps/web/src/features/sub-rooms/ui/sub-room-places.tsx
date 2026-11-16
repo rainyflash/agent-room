@@ -1,16 +1,18 @@
 import { RoomGlyph } from '@agent-room/ui-system';
 import type { TFunction } from 'i18next';
-import { ChevronDown, List, Plus } from 'lucide-react';
+import { BellOff, ChevronDown, List, Plus } from 'lucide-react';
 import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useCatalogUnread } from '@/features/inbox/ui/room-unread-mark';
+import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import type { SubRoom, SubRoomList } from '@/features/private-rooms/domain/sub-rooms';
 import {
   subRoomPlaceGroups,
   type SubRoomPlaceGroup,
 } from '@/features/sub-rooms/domain/sub-room-places';
 import { SubRoomLink } from './sub-room-link';
+import { SubRoomRowMenu, type SubRoomRowMenuContext } from './sub-room-row-menu';
 import './sub-room-places.css';
 
 export type SubRoomPlacesProps = {
@@ -28,6 +30,8 @@ export type SubRoomPlacesProps = {
   readonly browse: SubRoomBrowseRow | null;
   /** 最下面“新建子房间”那一行；你建不了时为空。 */
   readonly onCreate: (() => void) | null;
+  /** 每一行的“⋯”；没登录时为空，没有这个按钮。 */
+  readonly menu?: SubRoomRowMenuContext | null | undefined;
 };
 
 export type SubRoomBrowseRow = {
@@ -45,7 +49,8 @@ export type SubRoomBrowseRow = {
 
 /**
  * 左栏里的子房间（`specs/redesign/sub-rooms.md`“网页”）：你在的那几间按分类分组，分类能收起。
- * 能直接进的前面是 `#`，有门的是锁；提到你的是红底的数，没读的是灰色的数。
+ * 能直接进的前面是 `#`，有门的是锁；提到你的是红底的数，没读的是灰色的数。免打扰的只显示提到你的，
+ * 名字后面一个划掉的铃。每一行右边有“⋯”（`sub-room-row-menu.tsx`）。
  */
 export function SubRoomPlaces(props: SubRoomPlacesProps) {
   const { t } = useTranslation();
@@ -213,9 +218,7 @@ function PlaceList({
   return (
     <ul className="sub-room-places__rooms">
       {group.rooms.map((room) => (
-        <li key={room.catalogId}>
-          <SubRoomPlace props={props} room={room} />
-        </li>
+        <SubRoomPlace key={room.catalogId} props={props} room={room} />
       ))}
     </ul>
   );
@@ -231,18 +234,23 @@ function SubRoomPlace({
   const { t } = useTranslation();
   const badgeId = useId();
   const doorId = useId();
+  const mutedId = useId();
   const waitingId = useId();
   // 你管得了这一间、有人在等批准：名字后面一个墨色的点（红的留给找你的）。
   const waiting = room.pendingRequestCount ?? 0;
   const gated = room.access !== 'open';
   const found = useCatalogUnread(room.catalogId);
+  const personal = usePersonalWorkspace();
+  const muted = found !== undefined && personal?.snapshot.index.muted.has(found.roomId) === true;
   const current = room.catalogId === props.currentCatalogId;
-  // 眼前这一间：人在它的对话里时没有没读的；在私聊里时照这一页自己数的。
-  const count = current
-    ? props.currentSelected
-      ? 0
-      : props.currentUnread
-    : (found?.unread.count ?? 0);
+  // 眼前这一间：人在它的对话里时没有没读的；在私聊里时照这一页自己数的。免打扰的不数。
+  const count = muted
+    ? 0
+    : current
+      ? props.currentSelected
+        ? 0
+        : props.currentUnread
+      : (found?.unread.count ?? 0);
   const mentioned = !current && (found?.unread.mentioned ?? false);
   const badge = unreadBadge(count, mentioned, badgeId, t);
   const body = (
@@ -252,6 +260,12 @@ function SubRoomPlace({
       {gated ? (
         <span className="sr-only" id={doorId}>
           {t('subRooms.places.gated')}
+        </span>
+      ) : null}
+      {muted ? (
+        <span className="sub-room-places__muted" id={mutedId}>
+          <BellOff aria-hidden="true" />
+          <span className="sr-only">{t('subRooms.rowMenu.muted')}</span>
         </span>
       ) : null}
       {waiting > 0 ? (
@@ -265,6 +279,7 @@ function SubRoomPlace({
   // 名字就是房间名；有门、有人在等、没读的经 `aria-describedby` 读出来。
   const described = [
     gated ? doorId : null,
+    muted ? mutedId : null,
     waiting > 0 ? waitingId : null,
     badge === null ? null : badgeId,
   ].filter((id) => id !== null);
@@ -274,23 +289,20 @@ function SubRoomPlace({
     'data-unread': count > 0 || mentioned ? ('true' as const) : undefined,
     title: room.description === '' ? room.name : `${room.name}\n${room.description}`,
   };
-  if (current) {
-    return (
-      <button
-        {...shared}
-        aria-current={props.currentSelected ? 'page' : undefined}
-        aria-label={room.name}
-        onClick={() => {
-          props.onNavigate();
-          props.onSelectCurrent();
-        }}
-        type="button"
-      >
-        {body}
-      </button>
-    );
-  }
-  return (
+  const place = current ? (
+    <button
+      {...shared}
+      aria-current={props.currentSelected ? 'page' : undefined}
+      aria-label={room.name}
+      onClick={() => {
+        props.onNavigate();
+        props.onSelectCurrent();
+      }}
+      type="button"
+    >
+      {body}
+    </button>
+  ) : (
     <SubRoomLink
       {...shared}
       aria-label={room.name}
@@ -300,6 +312,22 @@ function SubRoomPlace({
     >
       {body}
     </SubRoomLink>
+  );
+  const menu = props.menu ?? null;
+  return (
+    <li className={menu === null ? undefined : 'sub-room-places__row'}>
+      {place}
+      {menu === null ? null : (
+        <SubRoomRowMenu
+          context={menu}
+          current={current}
+          found={found}
+          list={props.list}
+          onNavigate={props.onNavigate}
+          room={room}
+        />
+      )}
+    </li>
   );
 }
 
