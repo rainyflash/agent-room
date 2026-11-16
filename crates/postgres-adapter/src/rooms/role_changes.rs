@@ -8,6 +8,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
+    owner_handover::AdminTenure,
     private_rooms::{PrivateRoomMembershipStatus, PrivateRoomPermissions},
     room_role_changes::RoomStanding,
     time::UtcMillis,
@@ -110,6 +111,59 @@ impl RoomRoleChangeLog for PostgresRepositories {
                 .collect()
         })
     }
+
+    fn admin_tenure(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, RepositoryResult<Vec<AdminTenure>>> {
+        Box::pin(async move {
+            let operation = "private_room.role_changes.admin_tenure";
+            // “拿到管理”：之后在房间里、有“管理”，之前不在房间里或者没有“管理”。房主转让以后自己留着
+            // “管理”的不算拿到（他一直有），没有记录就算当得最久。
+            let rows = sqlx::query(
+                r"SELECT membership.principal_id,
+                         floor(extract(epoch FROM membership.created_at) * 1000)::bigint
+                             AS member_since_ms,
+                         (SELECT floor(extract(epoch FROM max(change.changed_at)) * 1000)::bigint
+                            FROM agent_room.private_room_role_change AS change
+                           WHERE change.catalog_entry_id = membership.catalog_entry_id
+                             AND change.target_principal_id = membership.principal_id
+                             AND change.next_status IN ('invited', 'joined')
+                             AND (change.next_permission_bits & 8) <> 0
+                             AND NOT COALESCE(
+                                     change.previous_status IN ('invited', 'joined')
+                                     AND (change.previous_permission_bits & 8) <> 0,
+                                     false
+                                 )
+                         ) AS admin_since_ms
+                    FROM agent_room.private_room_membership AS membership
+                   WHERE membership.catalog_entry_id = $1
+                     AND membership.membership_status = 'joined'
+                     AND (membership.permission_bits & 8) <> 0
+                   ORDER BY membership.principal_id",
+            )
+            .bind(catalog_id.as_uuid())
+            .fetch_all(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            rows.iter()
+                .map(|row| decode_tenure(row, operation))
+                .collect()
+        })
+    }
+}
+
+fn decode_tenure(row: &PgRow, operation: &'static str) -> RepositoryResult<AdminTenure> {
+    let principal: uuid::Uuid = decode_column(row, "principal_id", operation)?;
+    let member_since: i64 = decode_column(row, "member_since_ms", operation)?;
+    let admin_since: Option<i64> = decode_column(row, "admin_since_ms", operation)?;
+    let time =
+        |value: i64| UtcMillis::new(value).map_err(|error| map_domain_error(operation, &error));
+    Ok(AdminTenure {
+        principal_id: PrincipalId::from_uuid(principal),
+        admin_since: admin_since.map(time).transpose()?,
+        member_since: time(member_since)?,
+    })
 }
 
 fn decode_change(row: &PgRow, operation: &'static str) -> RepositoryResult<RoomRoleChangeRecord> {
