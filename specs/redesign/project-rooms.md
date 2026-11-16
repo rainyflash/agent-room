@@ -366,7 +366,11 @@
    - **3P-8a** 控制面：`resvg` 和字体，两个 `preview.png` 地址，分享页的 `og:image` 换过去。改了 `Cargo.lock`，同一个 PR 提交 `python tools/license_inventory.py generate` 的结果。
    - **3P-8b** 网页：“发出去长这样”换成真的图，分享对话框里的“README 徽章”一节。
 9. **3P-9** 无头验收，只在派发 `suite=all` 时跑：本机起一个假的 GitHub（读取器的主机只在测试配置里能换，生产上写死），走一遍认领、`/gh/` 页、徽章、实况、一段对话；私人房间、加密的公开房间、要申请的房间，这几条路都读不到。
+   - **3P-9a** 认领、`/gh/` 页、徽章、命令行和本机 MCP（3P-2 到 3P-5 都合了就能做）。
+   - **3P-9b** 实况、一段对话，和读不到的那几条路（等 3P-6、3P-7）。
 10. **3P-10** 官网、README、指南：“给你的项目建一间房”（这里可以点名 GitHub 和各家 Agent 应用），`llms.txt`，网站首页提一句。
+    - **3P-10a** 只写 3P-2 到 3P-5 已经有的：认领、`AGENTS.md` 那一行、徽章、`/gh/` 页、命令行、本机 MCP、网页上绑已有的房间。
+    - **3P-10b** 实况、一段对话、预览图做好以后补进指南和 README（跟 3P-6b、3P-7b、3P-8b 一起或者紧跟着）。
 
 先后：
 
@@ -520,6 +524,23 @@
   - 隐私说明页补上 3P-2b 留给 3P-3、3P-5 的两句：房间公开期间绑着哪个仓库谁都看得到（`/gh/` 地址和房间名旁边的勾）；README 徽章由 GitHub 的图片代理来取，我们看不到看 README 的人。
   - 3P-5 那一条里“勾只给房主看”“在等的认领记在这个浏览器里”两样从这一步起不再是这样。“仓库被别人要走时原来那间房里照实说”照旧没做：要服务器先记下“被要走过”。
   - 测试：`application` 的流程测试（列认领只有自己的、认上了就没了；谁都能问、只认公开着的主房间，改回私密、关掉、平台拿掉、没有分享码都是 `None`）；控制面 `features/project_rooms/tests/reading.rs`（两个接口的回答、`null`、不登录 401）；网页客户端的 schema（列表里每一个照认领严格校验、勾只认 github.com 的 https 地址、多字段无效）、设置里那一组（在等的认领从列表里找、别的房间的不算、问不到能重试）、浏览器验收 `e2e/project-rooms.e2e.ts` 加一条：不是房主（`&asAdmin`）也看得到勾，“GitHub 仓库”一组照旧只给房主。
+- 2026-11-16 3P-9a（无头验收的前一半：认领、`/gh/` 页、徽章、命令行和本机 MCP）：
+  - 3P-9 拆成两步：3P-9a 只走 3P-2 到 3P-5 已经有的；实况、一段对话和私人房间、加密的公开房间、要申请的房间读不到这几条，等 3P-6、3P-7 合了放在 3P-9b。
+  - 控制面加了一项配置 `AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS`：只认本机回环地址加端口（`127.0.0.1:18766`、`[::1]:18766`），别的地址、域名、带 `http://` 的、端口 0 一律启动失败。配了它读取器就连这个地址上的假 GitHub（明文 HTTP，不查地址：回环地址本来就过不了那一关），启动时记一条告警。没配就是写死的 `raw.githubusercontent.com`。原来只给单元测试的 `#[cfg(test)]` 构造换成了 `RawEndpoint::loopback`，不是回环地址就给不出来。生产的部署配置和 `tools/prodops` 里不许出现这个名字，`test_prodops` 卡着。
+  - 纵向验收的控制面（`vertical_control_plane_environment`）带上它，端口 `FAKE_GITHUB_PORT`。这一轮在 `tools/vertical_project_rooms.py`，排在“公开房间改成公开、读不到以前的话”那一轮之后，用验收账号的发送方 Bridge：
+    - 一个只有 `origin` 的 git 仓库里跑 `agent-room project`：等着的认领，那一行和徽章都指着同一个 `/r/<码>`，新建了 `AGENTS.md`；再跑一次是同一个认领，不再写（`already_linked`）。
+    - 假 GitHub 放上命令行写的 `AGENTS.md`，本机 MCP `agent_room_claim_repository` 带 `wait`：第一次核对就认上，分享链接还是那一个，`next` 叫它用 `agent_room_join`；按分享链接进去说一句。
+    - 库里认上以后建的房间叫 `owner/repo`、公开、不加密、绑着这个仓库；认上了的仓库再跑命令行直接回这间房、不碰 `AGENTS.md`。
+    - `/gh/owner/repo`（owner 换成大写也行）是这间房的分享页；徽章写着在线数，`?lang=zh-CN` 写“N 在线”。没人认领的仓库出“还没人认领”（404），徽章写“no room”“没有房间”；名字不合规矩的 404。
+    - 假 GitHub 只被读过这个仓库的 `AGENTS.md`、`README.md`；看 `/gh/` 页和徽章前后，它收到的请求一个没多。
+  - 没人认领的那几条用另一个仓库名：“没有房间”的徽章在内存里留 5 分钟，先看了要认的那个仓库的徽章，认上以后 5 分钟内还是“没有房间”。
+  - 测试：控制面配置只认回环地址、读取器 `loopback` 不给别的地址；假 GitHub 和认领那一行的检查有 Python 单元测试（`tools/tests/test_vertical_project_rooms.py`），整轮在 PR 分支上派发 `suite=all` 跑。
+- 2026-11-16 3P-10a（官网、README、指南的前一半）：
+  - 3P-10 拆成两步：这一步只写已经合了的（认领、那一行、徽章、`/gh/` 页、命令行、本机 MCP、网页上绑已有的房间），实况、一段对话、预览图等它们做好再补（3P-10b）。不然指南里写着的东西发版时还没有。
+  - 新指南 `apps/web/site/guides/project-room.<en|zh-CN>.md`（“Give your GitHub project a room”“给你的 GitHub 项目建一间房”），排在第 4 篇，“名字”那篇挪到第 5。照设计点名了 GitHub、Claude Code、Codex。三种做法：命令行、跟本机 Agent 说一声、网页上绑已有的房间；推上去以后怎么认上、认上以后的房间什么样、项目换了主人、谁读得到什么、遇到问题。指南里引的界面文字和报错照网页现在的中英文写。
+  - 首页“Agent 从哪扇门进来”三扇门下面加一句，链到这篇（`ways.project`，`<p class="band__note">`；这一种语言的这篇没生成时不写，链接不落空）；`llms.txt` 加一条 `/gh/owner/repo` 和 `agent-room project`。
+  - README 中英文：“能拿它做什么”加一条项目房间，“谁能读到什么”加一条项目房间（不加密；只在核对时读默认分支的 `AGENTS.md`、`README.md`；看 `/gh/` 页和徽章不读 GitHub；徽章经 GitHub 的图片代理）。
+  - 和设计不一样、设计里没写的：命令行认领的仓库（不带 `--room`）没有房间，网页上哪间房的设置里都看不到它，所以指南里“已经有 3 个在等”只说推上去或者等 7 天作废，给已有房间的认领才能在设置里“不绑了”。
 - 2026-11-16 3P-6a-1（#909，只有控制面和隐私说明页；分享页还不放，按房间开的快照、`/r/<码>/live`、页面、内容安全策略、`agents.txt` 那一句是 3P-6a-2）：
   - 迁移 `202611160006_room_live_view.sql` 建 `room_live_view`：一间房一行，谁、什么时候打开的。关就是删这一行，再开是新的一刻。
   - 开关：`GET`、`PUT /private-rooms/{c}/live-view`（`features/room_live_view.rs`，用例在 `application` 的 `room_live.rs`）。回答是新的：`{ enabled, enabledAtUnixMs, live, unmetConditions, canChange }`，房间里已加入的人都读得到，`canChange` 是问的人有没有“管理”。`unmetConditions` 按先后是 `sub_room`、`closed`、`not_listed`、`platform_hold`、`encrypted`、`join_mode`，`live` 是开着而且一样不差。开不了回 409 `room_live.not_eligible`，`details.condition` 是排在最前的那一样；别的错误码：`room_live.forbidden`、`not_found`、`conflict`、`dependency_unavailable`、`internal`、`invalid`、`invalid_origin`、`invalid_resource`。说法是中文，网页按错误码换（3P-6b）。

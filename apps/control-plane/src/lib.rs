@@ -845,17 +845,29 @@ fn start_sub_room_auto_archive(
 }
 
 /// 项目房间（`specs/redesign/project-rooms.md`）：认领、核对、绑定仓库的接口，和后台核对认领的定时任务，
-/// 两边用同一个服务。读 GitHub 只连 raw.githubusercontent.com，解析出的地址先查过不是内网。
+/// 两边用同一个服务。读 GitHub 只连 raw.githubusercontent.com，解析出的地址先查过不是内网；只有无头验收
+/// 配了本机回环地址上的假 GitHub 时连它。
 fn build_project_rooms(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
 ) -> Result<(Router, project_room_checks::ProjectRoomCheckWorker), StartupError> {
     let site_origin: Arc<str> =
         features::share_page::site_origin(&config.authentication.matrix_server_name).into();
+    let endpoint = match config
+        .project_rooms
+        .acceptance_github
+        .and_then(github_reader::RawEndpoint::loopback)
+    {
+        Some(endpoint) => {
+            tracing::warn!("读 GitHub 连的是本机回环地址上的假 GitHub：只该出现在无头验收里");
+            endpoint
+        }
+        None => github_reader::RawEndpoint::github(),
+    };
     let reader = github_reader::GithubLinkReader::new(
-        github_reader::RawEndpoint::github(),
+        endpoint.clone(),
         Arc::new(github_reader::PinnedRawTransport::new(
-            github_reader::RawEndpoint::github(),
+            endpoint,
             Arc::new(SystemDnsResolver),
         )),
         site_origin,

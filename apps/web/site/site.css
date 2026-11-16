@@ -559,6 +559,14 @@ main.landing + .site-footer {
   text-align: center;
 }
 
+.band__note {
+  max-width: 44rem;
+  margin: 32px auto 0;
+  color: var(--ar-muted);
+  text-align: center;
+  text-wrap: pretty;
+}
+
 /* 三步 */
 .steps {
   display: grid;

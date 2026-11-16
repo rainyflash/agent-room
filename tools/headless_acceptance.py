@@ -9,6 +9,7 @@ import json
 import sys
 
 import vertical as v
+import vertical_project_rooms
 
 
 def restart(
@@ -126,6 +127,8 @@ def accept() -> None:
             old_keys = v.verify_public_room_old_keys(
                 agent_bridge=sender, environment=environment, redactor=redactor,
             )
+            # 项目房间：在仓库目录里认领，假 GitHub 上放了那一行以后认上、Agent 进去说话；/gh/ 页和徽章。
+            project_rooms = vertical_project_rooms.verify_project_rooms(agent_bridge=sender, redactor=redactor)
             # 换账号：第三台电脑先归验收账号，移出以后交给第二个账号，它的 Agent 进大厅说话。
             switch = v.verify_computer_switch(
                 processes=processes, environment=environment, redactor=redactor,
@@ -199,6 +202,8 @@ def accept() -> None:
         "briefAndPinsVerified":True, "briefPinsPinnedEventId":brief_pins["briefPinsPinnedEventId"],
         "publicRoomCatalogId":public_rooms["publicRoomCatalogId"],
         "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],
+        "projectRoomCatalogId":project_rooms["projectRoomCatalogId"],
+        "projectRoomEventId":project_rooms["projectRoomEventId"],
         "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],
         "agentIdentityVerified":True, "agentIdentityAgentId":identity_rooms["agentIdentityAgentId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],

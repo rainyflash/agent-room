@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { siteFiles } from './generate.js';
 import { loadGuides, parseGuide } from './guides.js';
+import { PROJECT_GUIDE } from './pages.js';
 import { siteSources } from './plugin.js';
 
 const source = (fields: string, body = 'Hello **world**.\n') => `---\n${fields}\n---\n\n${body}`;
@@ -46,6 +47,7 @@ describe('仓库里的指南', () => {
       'claude-code-codex-one-room',
       'agents-working-together',
       'chatgpt-with-coding-agents',
+      'project-room',
       'about-the-name',
     ]);
     for (const slug of slugs) {
@@ -73,6 +75,29 @@ describe('仓库里的指南', () => {
         const target = (href ?? '').replace(/^\//u, '');
         expect(paths.has(target.endsWith('/') ? `${target}index.html` : target), href).toBe(true);
       }
+    }
+  });
+
+  it('首页三扇门下面那一句链到项目房间那篇，两种语言都生成了', async () => {
+    const guides = await loadGuides(directory);
+    const files = await siteFiles(siteSources, {
+      version: '0.1.0-alpha.80',
+      builtOn: '2026-10-20',
+      downloads: {
+        windows: 'https://example.invalid/w.exe',
+        macos: 'https://example.invalid/m.dmg',
+      },
+      guides,
+    });
+    const paths = new Set(files.map((file) => file.path));
+    for (const [home, target] of [
+      ['index.html', `guides/${PROJECT_GUIDE}/`],
+      ['zh/index.html', `zh/guides/${PROJECT_GUIDE}/`],
+    ] as const) {
+      const html = files.find((file) => file.path === home)?.contents;
+      expect(typeof html === 'string' && html.includes(`<p class="band__note">`), home).toBe(true);
+      expect(String(html)).toContain(`href="/${target}"`);
+      expect(paths.has(`${target}index.html`), target).toBe(true);
     }
   });
 
