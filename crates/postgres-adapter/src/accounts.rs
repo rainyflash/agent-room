@@ -389,6 +389,19 @@ async fn export_account(
                 FROM agent_room.room_live_view AS live
                 WHERE live.enabled_by = principal.id
             ), '[]'::jsonb),
+            -- 他分享的一段段对话（3P-7a）：段码、哪间房、几句、第一句的时间、什么时候分享的。
+            -- 服务器本来就不存话。
+            'roomExcerpts', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'code', excerpt.code,
+                    'roomId', excerpt.catalog_entry_id,
+                    'messageCount', cardinality(excerpt.event_ids),
+                    'firstMessageAt', excerpt.first_event_at,
+                    'sharedAt', excerpt.shared_at
+                ) ORDER BY excerpt.shared_at, excerpt.code)
+                FROM agent_room.room_excerpt AS excerpt
+                WHERE excerpt.shared_by = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
@@ -723,9 +736,10 @@ async fn finalize_local(
     // 申请进公开房间时留的话、交给 Agent 管房间时写的规则跟着账户删掉（隐私说明页）。Agent 照规则动手时
     // 写下的理由跟着授权删（`moderation_action_agent` 和 `moderation_action_agent_reversal` 的外键）。
     // 他在别人的子房间里已经记成移出，子房间管理员的记录跟着删（存房间时也是这样：管理员得是里面
-    // 已加入的人）。他在等的仓库认领一起删（`specs/redesign/project-rooms.md`）。
+    // 已加入的人）。他在等的仓库认领、他分享的一段段对话一起删（`specs/redesign/project-rooms.md`）。
     for statement in [
         r"DELETE FROM agent_room.repository_claim WHERE principal_id = $1",
+        r"DELETE FROM agent_room.room_excerpt WHERE shared_by = $1",
         r"DELETE FROM agent_room.private_room_join_request WHERE requester_principal_id = $1",
         r"DELETE FROM agent_room.room_moderation_grant WHERE granted_by = $1",
         r"DELETE FROM agent_room.private_room_sub_room_manager WHERE principal_id = $1",
@@ -869,17 +883,24 @@ async fn archive_private_rooms(
     .execute(&mut **transaction)
     .await
     .map_err(|error| map_sqlx_error(operation, &error))?;
-    // 分享页上的实况也关掉（specs/redesign/project-rooms.md“分享页放实况”），和房主自己归档一样。
-    sqlx::query(
+    // 分享页上的实况也关掉（specs/redesign/project-rooms.md“分享页放实况”），和房主自己归档一样；以前
+    // 分享的段跟着删，另起一句、放在后面（和 `rooms/live_views.rs` 的 `turn_off_live_view` 一样）。
+    for statement in [
         r"DELETE FROM agent_room.room_live_view AS live
           USING agent_room.room_catalog_entry AS room
           WHERE live.catalog_entry_id = room.id
             AND room.owner_principal_id = $1 AND room.kind = 'private_room'",
-    )
-    .bind(principal_id.as_uuid())
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| map_sqlx_error(operation, &error))?;
+        r"DELETE FROM agent_room.room_excerpt AS excerpt
+          USING agent_room.room_catalog_entry AS room
+          WHERE excerpt.catalog_entry_id = room.id
+            AND room.owner_principal_id = $1 AND room.kind = 'private_room'",
+    ] {
+        sqlx::query(statement)
+            .bind(principal_id.as_uuid())
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+    }
     Ok(())
 }
 

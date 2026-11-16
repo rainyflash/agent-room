@@ -107,7 +107,7 @@ impl RoomListingSettings {
 }
 
 /// 分享码的字符：大小写字母和数字。
-const SHARE_CODE_ALPHABET: &[u8; 62] =
+pub(crate) const SHARE_CODE_ALPHABET: &[u8; 62] =
     b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const SHARE_CODE_LENGTH: usize = 6;
 /// 贴进来的分享链接最长多少字节，再长的不看。

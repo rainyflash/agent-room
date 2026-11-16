@@ -56,7 +56,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 77] = [
+const EXPECTED_TABLES: [&str; 78] = [
     "account_deletion_job",
     "account_reminder",
     "adapter_binding",
@@ -128,6 +128,7 @@ const EXPECTED_TABLES: [&str; 77] = [
     "revoked_agent_departure",
     "room_capacity_reservation",
     "room_catalog_entry",
+    "room_excerpt",
     "room_instance",
     "room_live_view",
     "room_moderation_grant",
@@ -291,6 +292,7 @@ async fn assert_fresh_export(repositories: &PostgresRepositories, principal_id: 
     assert_eq!(exported.data["repositoryClaims"], serde_json::json!([]));
     assert_eq!(exported.data["repositoryBindings"], serde_json::json!([]));
     assert_eq!(exported.data["liveViews"], serde_json::json!([]));
+    assert_eq!(exported.data["roomExcerpts"], serde_json::json!([]));
 }
 
 #[tokio::test]
@@ -401,10 +403,73 @@ async fn 账户导出与删除状态机在真实事务中完成() {
     database.close().await;
 }
 
-/// 他名下一间绑着仓库的房间，外加一个在等的仓库认领（`specs/redesign/project-rooms.md`）。
+/// 他名下一间绑着仓库的房间，外加一个在等的仓库认领（`specs/redesign/project-rooms.md`）。房间里开着实况、
+/// 有他分享的一段；别人的房间里也有他分享的一段和房主自己分享的一段（3P-7a）。
 async fn seed_project_room(
     repositories: &PostgresRepositories,
     pool: &PgPool,
+    principal_id: PrincipalId,
+) -> RoomCatalogId {
+    let catalog_id = create_owned_room(repositories, principal_id).await;
+    sqlx::query(
+        r"INSERT INTO agent_room.room_repository_binding
+              (catalog_entry_id, host, repository_owner, repository_name, verified_by,
+               verified_at, verified_file)
+          VALUES ($1, 'github', 'deleting-owner', 'project-room', $2, now(), 'README.md')",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("绑定写入应成功");
+    sqlx::query(
+        r"INSERT INTO agent_room.repository_claim
+              (id, principal_id, host, repository_owner, repository_name, share_code, claimed_at)
+          VALUES ($1, $2, 'github', 'deleting-owner', 'next-project', 'Dlt001', now())",
+    )
+    .bind(Uuid::now_v7())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("认领写入应成功");
+    // 分享页上的实况开着（3P-6a）。
+    sqlx::query(
+        r"INSERT INTO agent_room.room_live_view (catalog_entry_id, enabled_by, enabled_at)
+          VALUES ($1, $2, now())",
+    )
+    .bind(catalog_id.as_uuid())
+    .bind(principal_id.as_uuid())
+    .execute(pool)
+    .await
+    .expect("实况写入应成功");
+    let other = PrincipalId::from_uuid(Uuid::now_v7());
+    PrincipalRepository::create(repositories, &principal_registration(other, "别的房主"))
+        .await
+        .expect("主体创建应成功");
+    let elsewhere = create_owned_room(repositories, other).await;
+    for (code, room, shared_by) in [
+        ("DltExc01", catalog_id, principal_id),
+        ("DltExc02", elsewhere, principal_id),
+        ("DltExc03", elsewhere, other),
+    ] {
+        sqlx::query(
+            r"INSERT INTO agent_room.room_excerpt
+                  (code, catalog_entry_id, event_ids, first_event_at, shared_by, shared_at)
+              VALUES ($1, $2, ARRAY['$event:matrix.test'], now(), $3, now())",
+        )
+        .bind(code)
+        .bind(room.as_uuid())
+        .bind(shared_by.as_uuid())
+        .execute(pool)
+        .await
+        .expect("分享的段写入应成功");
+    }
+    catalog_id
+}
+
+/// 他建的一间私人房间。
+async fn create_owned_room(
+    repositories: &PostgresRepositories,
     principal_id: PrincipalId,
 ) -> RoomCatalogId {
     let catalog_id = RoomCatalogId::from_uuid(Uuid::now_v7());
@@ -450,41 +515,11 @@ async fn seed_project_room(
     PrivateRoomStore::create(repositories, &snapshot, test_time())
         .await
         .expect("建房应成功");
-    sqlx::query(
-        r"INSERT INTO agent_room.room_repository_binding
-              (catalog_entry_id, host, repository_owner, repository_name, verified_by,
-               verified_at, verified_file)
-          VALUES ($1, 'github', 'deleting-owner', 'project-room', $2, now(), 'README.md')",
-    )
-    .bind(catalog_id.as_uuid())
-    .bind(principal_id.as_uuid())
-    .execute(pool)
-    .await
-    .expect("绑定写入应成功");
-    sqlx::query(
-        r"INSERT INTO agent_room.repository_claim
-              (id, principal_id, host, repository_owner, repository_name, share_code, claimed_at)
-          VALUES ($1, $2, 'github', 'deleting-owner', 'next-project', 'Dlt001', now())",
-    )
-    .bind(Uuid::now_v7())
-    .bind(principal_id.as_uuid())
-    .execute(pool)
-    .await
-    .expect("认领写入应成功");
-    // 分享页上的实况开着（3P-6a）。
-    sqlx::query(
-        r"INSERT INTO agent_room.room_live_view (catalog_entry_id, enabled_by, enabled_at)
-          VALUES ($1, $2, now())",
-    )
-    .bind(catalog_id.as_uuid())
-    .bind(principal_id.as_uuid())
-    .execute(pool)
-    .await
-    .expect("实况写入应成功");
     catalog_id
 }
 
-/// 删账户时他在等的认领、他名下房间绑着的仓库、开着的实况都清掉。
+/// 删账户时他在等的认领、他名下房间绑着的仓库、开着的实况、他房间里的段和他分享的段都清掉；别人在别人
+/// 房间里分享的段留着。
 async fn assert_project_room_released(
     pool: &PgPool,
     principal_id: PrincipalId,
@@ -506,6 +541,13 @@ async fn assert_project_room_released(
         (0, 0, 0),
         "删账户时认领、绑着的仓库和实况一起清掉"
     );
+    let excerpts: Vec<String> = sqlx::query_scalar(
+        "SELECT code FROM agent_room.room_excerpt WHERE code LIKE 'DltExc%' ORDER BY code",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("可读");
+    assert_eq!(excerpts, ["DltExc03"], "只留下别人在别人房间里分享的");
 }
 
 /// 服务器替账户保管的签名钥匙（ADR 0011）：存、覆盖、读回。

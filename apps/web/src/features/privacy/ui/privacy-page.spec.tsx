@@ -101,6 +101,26 @@ describe('隐私说明', () => {
     expect(privacyResources['zh-CN']['privacy.delete.how']).toMatch(/你打开的分享页实况/u);
   });
 
+  it('照实说分享的一段对话存什么、不存话、什么时候删（specs/redesign/project-rooms.md 的 3P-7a）', () => {
+    renderPage();
+
+    expect(screen.getByText(/share a stretch of up to 30 messages/u)).toBeVisible();
+    const english = privacyResources.en['privacy.readers.publicRooms.text'];
+    expect(english).toMatch(/never the text/u);
+    expect(english).toMatch(/doesn’t say who shared it/u);
+    expect(english).toMatch(/older than the room’s retention period/u);
+    const chinese = privacyResources['zh-CN']['privacy.readers.publicRooms.text'];
+    expect(chinese).toMatch(/连着的最多 30 句分享成一个单独的链接/u);
+    expect(chinese).toMatch(/不存话/u);
+    expect(chinese).toMatch(/页面上不写是谁分享的/u);
+    expect(privacyResources.en['privacy.delete.how']).toMatch(/conversation excerpts you shared/u);
+    expect(privacyResources['zh-CN']['privacy.delete.how']).toMatch(/你分享的一段段对话/u);
+    expect(privacyResources.en['privacy.delete.removed']).toMatch(
+      /conversation excerpts you shared/u,
+    );
+    expect(privacyResources['zh-CN']['privacy.delete.removed']).toMatch(/你分享的一段段对话/u);
+  });
+
   it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
     renderPage();
 

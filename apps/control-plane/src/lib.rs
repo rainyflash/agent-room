@@ -20,6 +20,7 @@ mod public_room_activity;
 mod public_watch;
 mod reminders;
 mod request_regions;
+mod room_excerpt_cleanup;
 mod runtime;
 mod shutdown;
 mod sub_room_auto_archive;
@@ -93,6 +94,7 @@ use agent_room_application::{
         ReminderDependencies, ReminderDryRun, ReminderPlanner, ReminderPlannerDependencies,
         ReminderService,
     },
+    room_excerpts::{RoomExcerptCleanupService, RoomExcerptDependencies, RoomExcerptService},
     room_live::{RoomLiveViewDependencies, RoomLiveViewService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
@@ -181,6 +183,8 @@ struct IdentityRuntime {
     project_room_checks: project_room_checks::ProjectRoomCheckWorker,
     /// 每小时算一轮该提醒什么；现在是演练，只记日志和指标。
     reminder_dry_run: reminders::ReminderDryRunWorker,
+    /// 分享的一段对话每天清一次：过了保留期的、房间没在放实况的。
+    room_excerpt_cleanup: room_excerpt_cleanup::RoomExcerptCleanupWorker,
     /// 只在网络 Agent 总开关打开时运行。
     network_agent_cleanup: Option<network_agent_cleanup::NetworkAgentCleanupWorker>,
 }
@@ -193,6 +197,7 @@ struct AgentFeatureHttpStates {
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
     room_live_views: features::room_live_view::RoomLiveViewHttpState,
+    room_excerpts: features::room_excerpts::RoomExcerptHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
     room_state: RoomStateHttpStates,
     room_moderation_grants: features::room_moderation_grants::RoomModerationGrantHttpState,
@@ -328,6 +333,7 @@ pub async fn run() -> Result<(), StartupError> {
         sub_room_auto_archive,
         project_room_checks,
         reminder_dry_run,
+        room_excerpt_cleanup,
         network_agent_cleanup,
     } = identity_runtime;
     let app = build_router(
@@ -362,6 +368,7 @@ pub async fn run() -> Result<(), StartupError> {
     sub_room_auto_archive.shutdown().await;
     project_room_checks.shutdown().await;
     reminder_dry_run.shutdown().await;
+    room_excerpt_cleanup.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
     }
@@ -534,14 +541,13 @@ async fn build_identity_router(
         moderation_expiry: start_moderation_expiry(config, &agent_dependencies)?,
         agent_room_departures: agent_room_departures::AgentRoomDepartureWorker::start(departures),
         matrix_device_retry: start_matrix_device_retry(&agent_dependencies),
-        join_request_cleanup: join_request_cleanup::JoinRequestCleanupWorker::start(
-            build_public_room_joins(config, &agent_dependencies)?,
-        ),
+        join_request_cleanup: start_join_request_cleanup(config, &agent_dependencies)?,
         public_room_activity: start_public_room_activity(&agent_dependencies),
         sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
         sub_room_auto_archive: start_sub_room_auto_archive(config, &agent_dependencies)?,
         project_room_checks,
         reminder_dry_run: start_reminder_dry_run(&agent_dependencies, metrics),
+        room_excerpt_cleanup: start_room_excerpt_cleanup(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
 }
@@ -784,6 +790,7 @@ fn compose_identity_routes(
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
         .merge(features::room_live_view::router(agents.room_live_views))
+        .merge(features::room_excerpts::router(agents.room_excerpts))
         .merge(features::private_room_description::router(
             agents.room_descriptions,
         ))
@@ -923,6 +930,26 @@ fn build_project_rooms(
         routes,
         project_room_checks::ProjectRoomCheckWorker::start(service),
     ))
+}
+
+/// 申请进公开房间的记录每小时清一次：不公开了的作废、处理完 30 天的删掉。
+fn start_join_request_cleanup(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<join_request_cleanup::JoinRequestCleanupWorker, StartupError> {
+    Ok(join_request_cleanup::JoinRequestCleanupWorker::start(
+        build_public_room_joins(config, dependencies)?,
+    ))
+}
+
+/// 分享的一段对话每天清一次（3P-7a）：第一句过了保留期的、房间没在放实况的。
+fn start_room_excerpt_cleanup(
+    dependencies: &AgentFeatureDependencies,
+) -> room_excerpt_cleanup::RoomExcerptCleanupWorker {
+    room_excerpt_cleanup::RoomExcerptCleanupWorker::start(Arc::new(RoomExcerptCleanupService::new(
+        dependencies.repositories.clone(),
+        dependencies.system_runtime.clone(),
+    )))
 }
 
 /// 提醒的每小时一轮：库里列候选和房间，以应用服务替本人读聊天服务器（4R-4c 是演练，不发信）。
@@ -1236,6 +1263,7 @@ fn build_agent_feature_states(
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
         room_live_views: build_room_live_view_http_state(config, dependencies),
+        room_excerpts: build_room_excerpt_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
         room_state: build_room_state_http_states(config, dependencies),
         room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
@@ -1539,6 +1567,36 @@ fn build_room_live_view_http_state(
     features::room_live_view::RoomLiveViewHttpState::new(
         live_views,
         dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
+}
+
+/// 分享一段对话（`specs/redesign/project-rooms.md`“分享一段对话”）：分享时以应用服务往回读房间，看那几句
+/// 在不在、连不连着，和分享页实况同一套解析和验签。
+fn build_room_excerpt_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_excerpts::RoomExcerptHttpState {
+    let timeline = Arc::new(public_watch::ExcerptTimelineReader::new(
+        public_watch::ExcerptTimelineDependencies {
+            reader: dependencies.matrix_identities.clone(),
+            verification: dependencies.repositories.clone(),
+            signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ));
+    let excerpts = Arc::new(RoomExcerptService::new(RoomExcerptDependencies {
+        rooms: dependencies.repositories.clone(),
+        excerpts: dependencies.repositories.clone(),
+        timeline,
+        secrets: dependencies.secrets.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    features::room_excerpts::RoomExcerptHttpState::new(
+        excerpts,
+        dependencies.authentication.clone(),
+        &config.authentication.matrix_server_name,
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     )

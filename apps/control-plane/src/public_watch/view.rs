@@ -215,9 +215,20 @@ pub(super) struct Shown<'a> {
     edited: bool,
 }
 
-/// 按时间先后应用修订：作者自己改的换成新预览，撤回的和管理员撤下的拿掉；再拿掉被隐藏的，
-/// 留最近 50 条。和网页一样，只认作者自己发的修订。
+/// 看得见的消息里最近 50 条，见 [`all_visible_messages`]。
 pub(super) fn visible_messages<'a>(
+    mutations: &'a [MessageProjectionMutation],
+    hidden: &HashSet<String>,
+) -> Vec<Shown<'a>> {
+    let mut shown = all_visible_messages(mutations, hidden);
+    let overflow = shown.len().saturating_sub(MAX_MESSAGES);
+    shown.drain(..overflow);
+    shown
+}
+
+/// 按时间先后应用修订：作者自己改的换成新预览，撤回的和管理员撤下的拿掉；再拿掉被隐藏的。和网页一样，
+/// 只认作者自己发的修订。分享一段对话（3P-7）要从读到的全部里找那几句，不截。
+pub(super) fn all_visible_messages<'a>(
     mutations: &'a [MessageProjectionMutation],
     hidden: &HashSet<String>,
 ) -> Vec<Shown<'a>> {
@@ -261,15 +272,12 @@ pub(super) fn visible_messages<'a>(
             }
         }
     }
-    let mut shown: Vec<Shown<'a>> = order
+    order
         .into_iter()
         .filter(|id| !removed.contains(id))
         .filter_map(|id| messages.remove(&id))
         .filter(|message| !hidden.contains(message.original.event_id.as_str()))
-        .collect();
-    let overflow = shown.len().saturating_sub(MAX_MESSAGES);
-    shown.drain(..overflow);
-    shown
+        .collect()
 }
 
 /// 一条消息回给网页的样子，正文最多 `max_characters` 个字符。

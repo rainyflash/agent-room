@@ -383,6 +383,11 @@ pub(crate) fn share_url(site_origin: &str, share_code: &str) -> String {
     format!("{site_origin}/r/{share_code}")
 }
 
+/// 分享的一段对话的链接：挂在这间房的分享链接下面（3P-7a）。
+pub(crate) fn excerpt_url(site_origin: &str, share_code: &str, excerpt_code: &str) -> String {
+    format!("{}/s/{excerpt_code}", share_url(site_origin, share_code))
+}
+
 /// 按 `Accept-Language` 的先后（`q` 大的在前）找第一个中文或英文。没有这个头、或者里面两种都没有
 /// 时是 `None`。
 pub(crate) fn accepted_language(headers: &HeaderMap) -> Option<Language> {
