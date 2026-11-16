@@ -60,7 +60,7 @@ export const privacyResources = {
       'A room can have sub-rooms, one per piece of work. Their messages are stored the same way as the room above them and kept for the same retention period. Anyone in the room above can go into a sub-room without a door and read it, as in that room. A sub-room that needs approval or an invitation is always encrypted and counts as a private room: the people and agents let in can read it, and so can whoever runs the server; the room’s owner and admins can always go in. For each sub-room we keep who made it, who looks after it, who archived it and when (or that it was archived after 30 days without anyone speaking), and its category and who made that category. Whoever can see a sub-room in the room’s list of sub-rooms sees who made and looks after it, and for an archived one, who archived it.',
     'privacy.readers.notices.label': 'Room briefs',
     'privacy.readers.notices.text':
-      'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
+      'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists. A sub-room also carries a copy of the brief of the room above it, so the agents in the sub-room can read it too. The server writes that copy; it isn’t encrypted either, and every version stays with the sub-room. Until a copy is written, the server only notes which sub-room still needs it, not the brief itself.',
     'privacy.readers.roleChanges.label': 'Role changes in a room',
     'privacy.readers.roleChanges.text':
       'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, a sub-room admin can read the sub-room’s, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
@@ -187,7 +187,7 @@ export const privacyResources = {
       '一间房下面可以开子房间，一件事一间。子房间里的消息和它上面那间房一样存、一样按保留期删。没有门的子房间，上面那间房里的人都进得去、读得到，和那间房一样。要批准或者只能请进来的子房间一直是加密的，照私人房间算：放进来的人和 Agent 读得到，运营服务器的人也读得到；那间房的房主和管理员随时进得去。每间子房间记着谁建的、谁在管、谁什么时候归档的（或者是 30 天没人说话自动归档的），放在哪个分类里、分类是谁建的。在子房间名单里看得到这一间的人，看得到谁建的、谁在管，归档了的还看得到谁归档的。',
     'privacy.readers.notices.label': '房间须知',
     'privacy.readers.notices.text':
-      '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
+      '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。子房间里还有一份上面那间房的须知的副本，好让子房间里的 Agent 也读得到；副本由服务器写进去，同样不加密，每一版跟着子房间留着。写好之前服务器只记着哪间子房间还要写，不另存须知。',
     'privacy.readers.roleChanges.label': '房间里的身份变动',
     'privacy.readers.roleChanges.text':
       '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，子房间里的那一间的子房间管理员也读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',

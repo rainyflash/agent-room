@@ -19,6 +19,7 @@ use super::{
 mod agent_departures;
 mod agent_placements;
 mod direct_sessions;
+mod parent_notices;
 mod people;
 mod private_room_agents;
 mod private_room_invites;
@@ -45,6 +46,9 @@ pub use direct_sessions::{
     DirectAgentBlock, DirectAgentProfile, DirectMatrixRoomCreation, DirectSessionAgentDirectory,
     DirectSessionMatrixProvisioner, DirectSessionMembershipGateway, DirectSessionRecord,
     DirectSessionStore,
+};
+pub use parent_notices::{
+    ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
 };
 pub use people::{RoomAgentKind, RoomAgentOwnerRecord, RoomPeopleDirectory, RoomPersonName};
 pub use private_room_agents::{

@@ -8,6 +8,7 @@ mod invite_links;
 mod join_requests;
 mod listing;
 mod moderation_grants;
+mod parent_notice_sync;
 mod people;
 mod placements;
 mod platform_holds;

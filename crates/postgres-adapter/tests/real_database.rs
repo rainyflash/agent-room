@@ -50,7 +50,7 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 73] = [
+const EXPECTED_TABLES: [&str; 74] = [
     "account_deletion_job",
     "account_reminder",
     "adapter_binding",
@@ -109,6 +109,7 @@ const EXPECTED_TABLES: [&str; 73] = [
     "private_room_listing",
     "private_room_membership",
     "private_room_parent",
+    "private_room_parent_notice_sync",
     "private_room_role_change",
     "private_room_state",
     "private_room_sub_room_category",

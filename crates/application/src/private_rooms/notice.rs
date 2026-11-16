@@ -3,6 +3,10 @@
 //!
 //! 每写一次就是一条新的状态事件，聊天服务器不删，应用服务又不受它的限速，所以每个人一小时最多写
 //! [`NOTICES_PER_HOUR`] 次。
+//!
+//! 改的是父房间时，下面每间子房间里的副本跟着写（`parent_copies`）。
+
+mod parent_copies;
 
 use std::sync::Arc;
 
@@ -16,10 +20,13 @@ use crate::{
     hourly_limit::HourlyLimit,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, PortFuture,
-        PrivateRoomNoticeGateway, PrivateRoomStore, RoomNoticeWrite,
+        Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, ParentNoticeGateway,
+        ParentNoticeSyncStore, PortFuture, PrivateRoomNoticeGateway, PrivateRoomStore,
+        RoomNoticeWrite,
     },
 };
+
+pub use parent_copies::{ParentNoticeSyncOutcome, ParentNoticeSyncRetry, ParentNoticeSyncUseCases};
 
 /// 每个人一小时里最多改几次公告。日常改几个字够用，又挡住拿它刷状态事件。
 pub const NOTICES_PER_HOUR: usize = 30;
@@ -86,12 +93,18 @@ pub trait PrivateRoomNoticeUseCases: Send + Sync {
 pub struct PrivateRoomNoticeDependencies {
     pub rooms: Arc<dyn PrivateRoomStore>,
     pub matrix: Arc<dyn PrivateRoomNoticeGateway>,
+    /// 子房间里的副本还要写的那几间。
+    pub copy_queue: Arc<dyn ParentNoticeSyncStore>,
+    /// 读父房间的须知、读写子房间里的副本。
+    pub copies: Arc<dyn ParentNoticeGateway>,
     pub clock: Arc<dyn Clock>,
 }
 
 pub struct PrivateRoomNoticeService {
     rooms: Arc<dyn PrivateRoomStore>,
     matrix: Arc<dyn PrivateRoomNoticeGateway>,
+    copy_queue: Arc<dyn ParentNoticeSyncStore>,
+    copies: Arc<dyn ParentNoticeGateway>,
     clock: Arc<dyn Clock>,
     written: HourlyLimit,
 }
@@ -101,6 +114,8 @@ impl PrivateRoomNoticeService {
         Self {
             rooms: dependencies.rooms,
             matrix: dependencies.matrix,
+            copy_queue: dependencies.copy_queue,
+            copies: dependencies.copies,
             clock: dependencies.clock,
             written: HourlyLimit::new(NOTICES_PER_HOUR),
         }
@@ -154,6 +169,10 @@ impl PrivateRoomNoticeService {
             .set_notice(&matrix_room, &notice)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
+        // 子房间没有子房间。
+        if snapshot.parent_catalog_id().is_none() {
+            self.copy_to_sub_rooms(request.catalog_id, now).await;
+        }
         Ok(RoomNotice {
             text: notice.text.as_str().to_owned(),
             updated_at: now,

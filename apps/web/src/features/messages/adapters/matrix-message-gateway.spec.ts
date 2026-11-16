@@ -259,6 +259,7 @@ describe('MatrixMessageGateway', () => {
       noticeState('$other-key', 360, '不是这一条', { stateKey: 'other' }),
       roomState('$listing', 310, 'io.github.rainyflash.agentroom.room.listing.v1'),
       roomState('$roster', 320, 'io.github.rainyflash.agentroom.roster.policy.v1'),
+      roomState('$parent-notice', 325, 'io.github.rainyflash.agentroom.room.parent_notice.v1'),
       roomState('$future-state', 380, 'io.github.rainyflash.agentroom.room.future.v9'),
       noticeState('$removed', 400, ''),
     ]);

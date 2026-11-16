@@ -189,6 +189,9 @@ pub use rooms::{
     SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
 };
 pub use rooms::{
+    ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
+};
+pub use rooms::{
     QuietSubRoom, SubRoomActivityStore, SubRoomArchival, SubRoomArchiveOutcome,
     SubRoomArchiveRecord, SubRoomArchiveStore, SubRoomRestoration,
 };

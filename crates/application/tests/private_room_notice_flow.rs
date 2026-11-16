@@ -1,16 +1,23 @@
 //! 房主和管理员改房间的常驻公告（`specs/public-rooms/design.md`“常驻公告”）：查“管理”这一位、
 //! 房间在使用中，以应用服务写进 Matrix，写的是改的人和改的时间；空的是撤掉；太长的不收；
-//! Matrix 写不进就报错；每个人一小时有上限。
+//! Matrix 写不进就报错；每个人一小时有上限。子房间里父房间须知的副本在 `parent_copies.rs`。
 
-use std::sync::{Arc, Mutex};
+#[path = "private_room_notice_flow/parent_copies.rs"]
+mod parent_copies;
+
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
+};
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     persistence::RepositoryResult,
     ports::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+        ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
         PortFuture, PrivateRoomNoticeGateway, PrivateRoomSnapshot, PrivateRoomStore,
-        RoomNoticeWrite,
+        RoomNoticeWrite, SubRoomSyncScope,
     },
     private_rooms::{
         NOTICES_PER_HOUR, NoticeFailureKind, PrivateRoomNoticeDependencies,
@@ -154,24 +161,35 @@ struct Fixture {
     service: PrivateRoomNoticeService,
     writes: Arc<Mutex<Vec<String>>>,
     matrix_fails: Arc<Mutex<bool>>,
+    homeserver: Arc<Recorder>,
+    queue: Arc<MemoryQueue>,
+    clock: Arc<TestClock>,
 }
 
 impl Fixture {
     fn new(room: PrivateRoom) -> Self {
-        let writes = Arc::new(Mutex::new(Vec::new()));
-        let matrix_fails = Arc::new(Mutex::new(false));
+        Self::with_rooms(vec![snapshot(room)])
+    }
+
+    /// 几间房：子房间的快照上记着挂在哪间房下面，排副本时照它找。
+    fn with_rooms(rooms: Vec<PrivateRoomSnapshot>) -> Self {
+        let homeserver = Arc::new(Recorder::default());
+        let queue = Arc::new(MemoryQueue::new(&rooms));
+        let clock = Arc::new(TestClock(Mutex::new(NOW)));
         let service = PrivateRoomNoticeService::new(PrivateRoomNoticeDependencies {
-            rooms: Arc::new(MemoryRooms(room)),
-            matrix: Arc::new(Recorder {
-                writes: writes.clone(),
-                matrix_fails: matrix_fails.clone(),
-            }),
-            clock: Arc::new(TestClock),
+            rooms: Arc::new(MemoryRooms(rooms)),
+            matrix: homeserver.clone(),
+            copy_queue: queue.clone(),
+            copies: homeserver.clone(),
+            clock: clock.clone(),
         });
         Self {
             service,
-            writes,
-            matrix_fails,
+            writes: homeserver.writes.clone(),
+            matrix_fails: homeserver.matrix_fails.clone(),
+            homeserver,
+            queue,
+            clock,
         }
     }
 }
@@ -197,9 +215,15 @@ fn room() -> PrivateRoom {
 }
 
 fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
+    snapshot_in(room, "!club:matrix.test")
+}
+
+/// 一间房的快照，`matrix_room` 是它在 Matrix 上的房间号。
+fn snapshot_in(room: PrivateRoom, matrix_room: &str) -> PrivateRoomSnapshot {
     let archived = room.status().as_str() == "archived";
+    let catalog_id = room.catalog_id();
     let catalog = RoomCatalog::new(
-        catalog_id(),
+        catalog_id,
         RoomCatalogFields {
             kind: RoomCatalogKind::PrivateRoom,
             slug: None,
@@ -219,10 +243,10 @@ fn snapshot(room: PrivateRoom) -> PrivateRoomSnapshot {
     )
     .unwrap();
     let instance = RoomInstance::restore(
-        RoomInstanceId::from_uuid(Uuid::from_u128(20)),
+        RoomInstanceId::from_uuid(Uuid::from_u128(catalog_id.as_uuid().as_u128() + 100)),
         RoomInstanceFields {
-            catalog_id: catalog_id(),
-            matrix_room_id: MatrixRoomReference::new("!club:matrix.test".to_owned()).unwrap(),
+            catalog_id,
+            matrix_room_id: MatrixRoomReference::new(matrix_room.to_owned()).unwrap(),
             region: None,
             capacity: RoomCapacity::standard(),
             allocated_slots: 0,
@@ -277,18 +301,246 @@ fn time(value: i64) -> UtcMillis {
     UtcMillis::new(value).unwrap()
 }
 
-struct TestClock;
+/// 从 `NOW` 起，测试能往后拨。
+struct TestClock(Mutex<i64>);
 
-impl Clock for TestClock {
-    fn now(&self) -> UtcMillis {
-        time(NOW)
+impl TestClock {
+    fn advance(&self, millis: i64) {
+        *self.0.lock().unwrap() += millis;
     }
 }
 
-/// 记下写进 Matrix 的每一版：房间、正文、改的人、时间。
+impl Clock for TestClock {
+    fn now(&self) -> UtcMillis {
+        time(*self.0.lock().unwrap())
+    }
+}
+
+/// 假的聊天服务器。记下写进 Matrix 的每一版须知（房间、正文、改的人、时间），各房间此刻的须知和子房间
+/// 里的副本；`copy_failures` 里的房间读写副本时照那一种失败。
+#[derive(Default)]
 struct Recorder {
     writes: Arc<Mutex<Vec<String>>>,
     matrix_fails: Arc<Mutex<bool>>,
+    notices: Mutex<HashMap<String, RoomNoticeWrite>>,
+    copies: Mutex<HashMap<String, ParentNoticeCopy>>,
+    copy_failures: Mutex<HashMap<String, MatrixFailureKind>>,
+    /// 读写副本那几样一共被叫了几次。
+    copy_calls: Mutex<usize>,
+}
+
+impl Recorder {
+    fn copy_of(&self, room: &str) -> Option<ParentNoticeCopy> {
+        self.copies.lock().unwrap().get(room).cloned()
+    }
+
+    fn fail_copies_in(&self, room: &str, kind: MatrixFailureKind) {
+        self.copy_failures
+            .lock()
+            .unwrap()
+            .insert(room.to_owned(), kind);
+    }
+
+    /// 记一次调用；这间房设了失败就照它失败。
+    fn copy_call(&self, room: &MatrixRoomId, operation: MatrixOperation) -> MatrixResult<()> {
+        *self.copy_calls.lock().unwrap() += 1;
+        match self.copy_failures.lock().unwrap().get(room.as_str()) {
+            Some(kind) => Err(MatrixFailure::new(operation, *kind)),
+            None => Ok(()),
+        }
+    }
+}
+
+impl ParentNoticeGateway for Recorder {
+    fn room_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<RoomNoticeWrite>>> {
+        let result = self
+            .copy_call(room_id, MatrixOperation::ReadRoomState)
+            .map(|()| self.notices.lock().unwrap().get(room_id.as_str()).cloned());
+        Box::pin(async move { result })
+    }
+
+    fn parent_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<ParentNoticeCopy>>> {
+        let result = self
+            .copy_call(room_id, MatrixOperation::ReadRoomState)
+            .map(|()| self.copy_of(room_id.as_str()));
+        Box::pin(async move { result })
+    }
+
+    fn set_parent_notice<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        copy: &'a ParentNoticeCopy,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        let result = self
+            .copy_call(room_id, MatrixOperation::SendStateEvent)
+            .map(|()| {
+                self.copies
+                    .lock()
+                    .unwrap()
+                    .insert(room_id.as_str().to_owned(), copy.clone());
+            });
+        Box::pin(async move { result })
+    }
+}
+
+/// 排着的一间：和 `private_room_parent_notice_sync` 的一行一样。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QueuedCopy {
+    generation: i64,
+    attempts: u32,
+    next_attempt_at: Option<i64>,
+    failure_code: Option<&'static str>,
+}
+
+/// 内存里的副本待办，照存储的规矩领、做完、往后排。
+struct MemoryQueue {
+    /// 每间子房间挂在哪间房下面。
+    parents: HashMap<RoomCatalogId, RoomCatalogId>,
+    rows: Mutex<BTreeMap<Uuid, QueuedCopy>>,
+    /// 为哪几间父房间排过。
+    queued_under: Mutex<Vec<RoomCatalogId>>,
+}
+
+impl MemoryQueue {
+    fn new(rooms: &[PrivateRoomSnapshot]) -> Self {
+        Self {
+            parents: rooms
+                .iter()
+                .filter_map(|room| Some((room.catalog().id(), room.parent_catalog_id()?)))
+                .collect(),
+            rows: Mutex::new(BTreeMap::new()),
+            queued_under: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 排一间（已经排着的重排）；新建子房间时存储在建房的事务里就是这样排的。
+    fn queue(&self, sub_room: RoomCatalogId) {
+        let mut rows = self.rows.lock().unwrap();
+        let generation = rows
+            .get(&sub_room.as_uuid())
+            .map_or(1, |row| row.generation + 1);
+        rows.insert(
+            sub_room.as_uuid(),
+            QueuedCopy {
+                generation,
+                attempts: 0,
+                next_attempt_at: None,
+                failure_code: None,
+            },
+        );
+    }
+
+    fn row(&self, sub_room: RoomCatalogId) -> Option<QueuedCopy> {
+        self.rows.lock().unwrap().get(&sub_room.as_uuid()).cloned()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.rows.lock().unwrap().is_empty()
+    }
+
+    /// 领到的那一版已经不在了：子房间还在就再排一次。
+    fn queue_again(&self, task: ParentNoticeSyncTask) {
+        if self.parents.contains_key(&task.catalog_id) {
+            self.queue(task.catalog_id);
+        }
+    }
+}
+
+impl ParentNoticeSyncStore for MemoryQueue {
+    fn queue_parent_notice_sync(
+        &self,
+        parent: RoomCatalogId,
+        _queued_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        self.queued_under.lock().unwrap().push(parent);
+        let under: Vec<_> = self
+            .parents
+            .iter()
+            .filter(|(_, above)| **above == parent)
+            .map(|(sub_room, _)| *sub_room)
+            .collect();
+        for sub_room in &under {
+            self.queue(*sub_room);
+        }
+        let queued = u64::try_from(under.len()).unwrap();
+        Box::pin(async move { Ok(queued) })
+    }
+
+    fn claim_parent_notice_sync(
+        &self,
+        scope: SubRoomSyncScope,
+        limit: u16,
+        now: UtcMillis,
+        lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ParentNoticeSyncTask>>> {
+        let mut rows = self.rows.lock().unwrap();
+        let mut claimed = Vec::new();
+        for (id, row) in rows.iter_mut() {
+            let catalog_id = RoomCatalogId::from_uuid(*id);
+            let in_scope = match scope {
+                SubRoomSyncScope::Everywhere => true,
+                SubRoomSyncScope::Under(parent) => self.parents.get(&catalog_id) == Some(&parent),
+            };
+            let due = row.next_attempt_at.is_none_or(|at| at <= now.value());
+            if !in_scope || !due || claimed.len() >= usize::from(limit) {
+                continue;
+            }
+            row.attempts += 1;
+            row.next_attempt_at = Some(lease_until.value());
+            claimed.push(ParentNoticeSyncTask {
+                catalog_id,
+                generation: row.generation,
+                attempt: row.attempts,
+            });
+        }
+        Box::pin(async move { Ok(claimed) })
+    }
+
+    fn complete_parent_notice_sync(
+        &self,
+        task: ParentNoticeSyncTask,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let removed = {
+            let mut rows = self.rows.lock().unwrap();
+            let current = rows
+                .get(&task.catalog_id.as_uuid())
+                .is_some_and(|row| row.generation == task.generation);
+            current && rows.remove(&task.catalog_id.as_uuid()).is_some()
+        };
+        if !removed {
+            self.queue_again(task);
+        }
+        Box::pin(async { Ok(()) })
+    }
+
+    fn retry_parent_notice_sync(
+        &self,
+        task: ParentNoticeSyncTask,
+        retry_at: UtcMillis,
+        failure_code: &'static str,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        let postponed = {
+            let mut rows = self.rows.lock().unwrap();
+            match rows.get_mut(&task.catalog_id.as_uuid()) {
+                Some(row) if row.generation == task.generation => {
+                    row.next_attempt_at = Some(retry_at.value());
+                    row.failure_code = Some(failure_code);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !postponed {
+            self.queue_again(task);
+        }
+        Box::pin(async { Ok(()) })
+    }
 }
 
 impl PrivateRoomNoticeGateway for Recorder {
@@ -310,13 +562,17 @@ impl PrivateRoomNoticeGateway for Recorder {
                 notice.updated_by.as_str(),
                 notice.updated_at.value()
             ));
+            self.notices
+                .lock()
+                .unwrap()
+                .insert(room_id.as_str().to_owned(), notice.clone());
             Ok(())
         };
         Box::pin(async move { result })
     }
 }
 
-struct MemoryRooms(PrivateRoom);
+struct MemoryRooms(Vec<PrivateRoomSnapshot>);
 
 impl PrivateRoomStore for MemoryRooms {
     fn create<'a>(
@@ -331,7 +587,11 @@ impl PrivateRoomStore for MemoryRooms {
         &self,
         catalog_id: RoomCatalogId,
     ) -> PortFuture<'_, RepositoryResult<Option<PrivateRoomSnapshot>>> {
-        let found = (catalog_id == self.0.catalog_id()).then(|| snapshot(self.0.clone()));
+        let found = self
+            .0
+            .iter()
+            .find(|room| room.catalog().id() == catalog_id)
+            .cloned();
         Box::pin(async move { Ok(found) })
     }
 
