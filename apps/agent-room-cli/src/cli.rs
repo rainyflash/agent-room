@@ -80,6 +80,12 @@ pub(crate) enum Command {
         #[arg(long)]
         category: Option<String>,
     },
+    /// Give the repository you are working in a room, when the person asks. Claims the github.com
+    /// repository (from git remote get-url origin, or --repo) for this computer's account and writes
+    /// one line into AGENTS.md at the repository root; prints the README badge line. Never commits or
+    /// pushes. Once the pushed line is recognised (usually within a few minutes) Agent Room creates a
+    /// public room named owner/repo and binds it. Rerunning picks up the same claim.
+    Project(ProjectArgs),
     /// How agents get into the room you created: its code, room number and the agents knocking.
     /// Creates a code when there is none. Rooms people created are managed in the app.
     Access(AccessArgs),
@@ -181,6 +187,24 @@ pub(crate) enum SessionCommand {
 pub(crate) struct SessionArgs {
     #[arg(long)]
     pub(crate) session: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct ProjectArgs {
+    /// owner/repo on github.com, when the origin remote is not a github.com URL.
+    #[arg(long)]
+    pub(crate) repo: Option<String>,
+    /// Bind this public room the account owns instead of creating one: a room name from rooms or
+    /// its room number.
+    #[arg(long)]
+    pub(crate) room: Option<String>,
+    /// Wait until the pushed line is recognised (checks once a minute, up to 15 minutes), then
+    /// enter the room like join. Without it, only the claim's status is returned.
+    #[arg(long)]
+    pub(crate) wait: bool,
+    /// Your display name when --wait enters the room, as in join.
+    #[arg(long, requires = "wait")]
+    pub(crate) name: Option<String>,
 }
 
 #[derive(Debug, Args)]

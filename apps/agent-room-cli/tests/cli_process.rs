@@ -68,6 +68,31 @@ fn 真实命令进程提供帮助和结构化参数错误() {
 }
 
 #[test]
+fn 认领仓库的参数在碰_bridge_之前就核对() {
+    let help = String::from_utf8(run(&["--help"]).stdout).unwrap();
+    assert!(help.contains("project"));
+    let guide: Value = serde_json::from_slice(&run(&["guide"]).stdout).unwrap();
+    assert!(
+        guide["data"]["project"]
+            .as_str()
+            .unwrap()
+            .starts_with("To give the repository you are working in a room, run agent-room project when the person asks.")
+    );
+    for (args, code) in [
+        (vec!["project", "--name", "Scout"], "cli.arguments_invalid"),
+        (
+            vec!["project", "--repo", "not a repository"],
+            "cli.project.repository_invalid",
+        ),
+    ] {
+        let output = run(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["error"]["code"], code, "{args:?}");
+    }
+}
+
+#[test]
 fn 建房和管房间的参数在碰_bridge_之前就核对() {
     let help = String::from_utf8(run(&["--help"]).stdout).unwrap();
     for command in [
