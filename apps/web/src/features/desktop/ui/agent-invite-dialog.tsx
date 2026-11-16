@@ -1,6 +1,6 @@
 import { Banner, Dialog, Field, Segmented } from '@agent-room/ui-system';
 import { Globe, Plug, SquareTerminal } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
@@ -16,14 +16,17 @@ import {
   type HostBaseline,
   type PresentAgent,
 } from '../domain/agent-arrivals';
+import { RECEPTION_AUTHORIZATION_DAYS } from '../application/enable-reception';
 import { cleanAgentName, MAX_AGENT_NAME_CHARACTERS } from '../domain/agent-naming';
 import { localConnectionReady } from '../domain/desktop-connection';
 import type { HostSessionDiagnostics, InvitationOffer } from '../domain/desktop-runtime';
+import { readInviteBackground, saveInviteBackground } from '../domain/invite-background';
 import type { ConnectedInvitation } from '../domain/invite-reply';
 import { AgentArrivalsPanel } from './agent-arrivals-panel';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalAgentInvite } from './local-agent-invite';
 import { NetworkAgentInvite } from './network-agent-invite';
+import { useInviteBackground } from './use-invite-background';
 import './agent-invite-dialog.css';
 
 export type InviteRoom = {
@@ -155,8 +158,9 @@ function InviteBody({
       ? null
       : { principalId: principal.principalId, displayName: principal.displayName });
   const [storage] = useState(localStorageOrNull);
-  const { available } = useDesktopRuntimeController();
+  const { available, receptionAvailable } = useDesktopRuntimeController();
   const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage, available));
+  const [background, setBackground] = useState(() => readInviteBackground(storage));
   const [openedAt] = useState(() => Date.now());
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
   const [nameInput, setNameInput] = useState('');
@@ -179,6 +183,17 @@ function InviteBody({
     (arrival) => arrival.existing && arrival.state === 'ready' && !arrival.elsewhere,
   );
   useParkedInvitation(local && localReady, room, sessions, existingArrived, agentName);
+  // 后台回复只有桌面端开得了，网络接入没有；私人房间里你没有“自动发言”时授权建不起来。
+  const backgroundOffered =
+    local && desktop && receptionAvailable && agentsCanSpeak && services !== null && owner !== null;
+  const backgroundOn = backgroundOffered && background;
+  const backgroundStates = useInviteBackground({
+    active: backgroundOn,
+    sessions,
+    arrivals,
+    room,
+    principalId: owner?.principalId ?? null,
+  });
   useConnectedCallback(arrivals, room, copiedAt ?? openedAt, onConnected);
   useOnboardingReports(arrivals, method);
 
@@ -223,11 +238,22 @@ function InviteBody({
           value={nameInput}
         />
       </Field>
+      {/* 勾着时话里多一句请它登记；放在那段话上面，看得出改的是它。 */}
+      {backgroundOffered ? (
+        <InviteBackgroundOption
+          checked={background}
+          onChange={(next) => {
+            setBackground(next);
+            saveInviteBackground(storage, next);
+          }}
+        />
+      ) : null}
       {method === 'network' ? (
         <NetworkAgentInvite agentName={agentName} onCopied={copied} room={room} />
       ) : (
         <LocalAgentInvite
           agentName={agentName}
+          background={backgroundOn}
           downloadUrl={downloadUrl}
           method={method}
           onCopied={copied}
@@ -238,6 +264,7 @@ function InviteBody({
       <p className="agent-invite__note">{t(reuseNoteKey(method, agentName))}</p>
       <AgentArrivalsPanel
         arrivals={arrivals}
+        background={backgroundOn ? backgroundStates : null}
         copiedAt={copiedAt}
         observable={room !== null || local}
         onDone={onStartConversation ?? onClose}
@@ -254,10 +281,38 @@ function InviteBody({
         }
         unavailable={local && sessionsFailure !== null}
       />
-      {local && desktop ? (
-        <p className="agent-invite__note">{t('agentInvite.backgroundHint')}</p>
-      ) : null}
     </>
+  );
+}
+
+/** “你不在时也让它回话”：默认勾上，说清它会做什么、谁看得到、多久到期。 */
+function InviteBackgroundOption({
+  checked,
+  onChange,
+}: {
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const id = useId();
+  return (
+    <div className="agent-invite__background">
+      <input
+        aria-describedby={`${id}-hint`}
+        checked={checked}
+        id={id}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
+        type="checkbox"
+      />
+      <div>
+        <label htmlFor={id}>{t('agentInvite.background.label')}</label>
+        <p className="agent-invite__note" id={`${id}-hint`}>
+          {t('agentInvite.background.hint', { days: RECEPTION_AUTHORIZATION_DAYS })}
+        </p>
+      </div>
+    </div>
   );
 }
 

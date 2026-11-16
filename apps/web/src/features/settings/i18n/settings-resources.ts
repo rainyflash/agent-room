@@ -21,10 +21,17 @@ export const settingsResources = {
       'This browser won’t let the site send notifications. To turn them on, open the site information at the left of the address bar, allow notifications, then come back here.',
     'settings.general.webNotificationsUnsupported':
       'This browser can’t show notifications from web pages. On an iPhone, add Agent Room to the Home Screen first.',
+    'settings.general.emailReminders': 'Email reminders',
+    'settings.general.emailRemindersHint':
+      'If someone says something and you haven’t looked within an hour, you get an email listing the rooms with new messages. At most one a day, never the messages themselves.',
     'settings.general.quiet': 'Pause notifications',
     'settings.general.quietHint':
       'New messages still arrive in your inbox; they just don’t pop up.',
+    'settings.general.quietHintEmail':
+      'New messages still arrive in your inbox; they just don’t pop up, and no reminder emails go out.',
     'settings.general.quietOn': 'Paused until {{time}}',
+    'settings.general.quietOnEmail':
+      'Paused until {{time}}. No pop-ups and no reminder emails until then; afterwards, emails only mention what came in after the pause.',
     'settings.general.quietHour': 'Pause for an hour',
     'settings.general.quietResume': 'Resume now',
     'settings.general.quietFailed': 'Couldn’t save this setting. Try again.',
@@ -58,9 +65,15 @@ export const settingsResources = {
       '这个浏览器不让本站发通知。要打开，点地址栏左边的网站信息，把“通知”改成允许，再回来打开这里。',
     'settings.general.webNotificationsUnsupported':
       '这个浏览器不支持网页通知。iPhone 上要先把 Agent Room 加到主屏幕。',
+    'settings.general.emailReminders': '邮件提醒',
+    'settings.general.emailRemindersHint':
+      '有人说了话、你一小时还没看时，发一封邮件写哪几间房有新消息。每天最多一封，不写消息内容。',
     'settings.general.quiet': '暂停提醒',
     'settings.general.quietHint': '新消息照样进收件箱，只是不弹出来。',
+    'settings.general.quietHintEmail': '新消息照样进收件箱，只是不弹出来，也不发提醒邮件。',
     'settings.general.quietOn': '暂停到 {{time}}',
+    'settings.general.quietOnEmail':
+      '暂停到 {{time}}。这段时间不弹通知，也不发提醒邮件；恢复以后，邮件只说恢复以后来的。',
     'settings.general.quietHour': '暂停一小时',
     'settings.general.quietResume': '现在恢复',
     'settings.general.quietFailed': '没能保存这项设置，请再试一次。',

@@ -117,6 +117,57 @@ for (const width of [1440, 390]) {
   });
 }
 
+test('接入时默认开后台回复：话里请它登记，它登记了对话框就替人打开', async ({
+  page,
+  context,
+}, testInfo) => {
+  const failures = collectPageFailures(page);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/e2e/fixtures/my-agents.html?reception=1');
+  await page.getByRole('main').getByRole('button', invite).click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+  const option = dialog.getByRole('checkbox', { name: 'Let it reply when you’re away' });
+  await expect(option).toBeChecked();
+  await expect(dialog.getByText(/Everyone in the room sees its replies/u)).toBeVisible();
+
+  const copied = async () => {
+    await dialog.getByRole('button', { name: /^Cop/u }).click();
+    return await page.evaluate(() => navigator.clipboard.readText());
+  };
+  const cli = await copied();
+  expect(cli).toContain('also run register as the join result says');
+  expect(cli).not.toMatch(appNames);
+  await dialog.getByRole('radio', { name: /^MCP/u }).click();
+  await expect.poll(copied).toContain('agent_room_register_reception');
+
+  // 它进来以后登记了这间房的后台回复：对话框接着替人打开，不用再去“我的 Agent”。
+  await page.evaluate(() => {
+    (window as MyAgentsFixtureWindow).__agentRoomFixtureControls.arriveAgent({ registers: true });
+  });
+  await expect(dialog.getByText('“Scout” joined')).toBeVisible();
+  await expect(dialog.getByText('Background replies are on for 30 days.')).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await dialog.screenshot({ path: testInfo.outputPath('agent-invite-background.png') });
+  await dialog
+    .locator('.agent-invite__arrivals')
+    .screenshot({ path: testInfo.outputPath('agent-invite-background-arrived.png') });
+  const scan = await new AxeBuilder({ page })
+    .include('.ar-dialog')
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(scan.violations.map(({ id }) => id)).toEqual([]);
+  await dialog.getByRole('button', { name: 'Done' }).click();
+
+  // “我的 Agent”的后台回复里就是它，正在替它听着。
+  const panel = page.getByRole('region', { name: 'Background replies' });
+  await expect(panel.getByRole('article').getByText('Waiting for messages for it')).toBeVisible({
+    timeout: 10_000,
+  });
+  expect(failures).toEqual([]);
+});
+
 test('读不到本机会话时如实说，不伪造空清单', async ({ page }) => {
   await page.goto('/e2e/fixtures/my-agents.html?host=failed');
   const sessions = page.getByRole('region', { name: 'Agents on this computer' });

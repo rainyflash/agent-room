@@ -4,7 +4,8 @@ export type MyAgentsFixtureControls = {
    * 这台电脑上来了一个新的 Agent 会话。接入对话框挂着人物时它把这个人物接走（像说了一句
    * “接入 Agent Room” 的 MCP Agent），没挂着时就是它自己运行了复制过去的命令。
    */
-  arriveAgent(): void;
+  /** `registers`：它进来后也登记了后台回复（页面要带 `?reception`），对话框就能替人打开。 */
+  arriveAgent(options?: { readonly registers?: boolean }): void;
   /** 接入对话框此刻挂在连接服务上的人物；没挂着时为 null。 */
   parkedInvitation(): string | null;
   /** 像在托盘菜单里点了“更新到 X…”。 */

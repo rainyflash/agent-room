@@ -22,6 +22,7 @@ export function LocalAgentInvite({
   method,
   room,
   agentName,
+  background = false,
   downloadUrl,
   onCopied,
 }: {
@@ -29,6 +30,8 @@ export function LocalAgentInvite({
   readonly room: InviteRoom;
   /** 人替它起的名字；空的时候话里请 Agent 自己起。 */
   readonly agentName: string;
+  /** 勾着“你不在时也让它回话”：话里多一句，请它登记后台回复。 */
+  readonly background?: boolean;
   readonly downloadUrl: string | null;
   readonly onCopied: () => void;
 }) {
@@ -44,12 +47,15 @@ export function LocalAgentInvite({
     agentName === ''
       ? t('agentInvite.naming.mcp.choose')
       : t('agentInvite.naming.mcp.given', { name: agentName });
-  const message =
+  const invitation =
     method === 'mcp'
       ? room === null
         ? t('agentInvite.mcp.messageLobby', { naming: mcpNaming })
         : t('agentInvite.mcp.message', { naming: mcpNaming, room: room.roomName })
       : cliMessage(t, room, snapshot, desktop, agentName);
+  const message = background
+    ? `${invitation}\n${t(`agentInvite.background.${method}`)}`
+    : invitation;
 
   return (
     <>

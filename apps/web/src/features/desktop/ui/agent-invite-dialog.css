@@ -14,6 +14,29 @@
   line-height: 1.5;
 }
 
+.agent-invite__background {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+.agent-invite__background input {
+  flex: 0 0 auto;
+  margin-top: 4px;
+}
+
+.agent-invite__background > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-invite__background label {
+  font-weight: 600;
+}
+
 .agent-invite__private-code {
   display: grid;
   min-width: 0;
