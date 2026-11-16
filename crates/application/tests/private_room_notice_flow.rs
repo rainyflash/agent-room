@@ -14,7 +14,8 @@ use agent_room_application::{
     },
     private_rooms::{
         NOTICES_PER_HOUR, NoticeFailureKind, PrivateRoomNoticeDependencies,
-        PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice, UpdateRoomNotice,
+        PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice, RoomStateWriteLimit,
+        UpdateRoomNotice,
     },
 };
 use agent_room_domain::{
@@ -167,6 +168,7 @@ impl Fixture {
                 matrix_fails: matrix_fails.clone(),
             }),
             clock: Arc::new(TestClock),
+            writes: Arc::new(RoomStateWriteLimit::new()),
         });
         Self {
             service,
