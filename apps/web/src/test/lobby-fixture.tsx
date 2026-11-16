@@ -211,6 +211,11 @@ const handoverFixture =
 const subRoomsFixture =
   privateFixture && new URLSearchParams(window.location.search).has('subRooms');
 const subRoomFixture = privateFixture && new URLSearchParams(window.location.search).has('subRoom');
+// `?private&subRoom&parentNotice` 里父房间“Agent Room”有一条 Grace 写的须知：子房间对话上面先写它、标着
+// 来自 Agent Room。房间列表里多一行父房间，好让网页认出父房间在 Matrix 上是哪一间。
+const parentNoticeFixture =
+  subRoomFixture && new URLSearchParams(window.location.search).has('parentNotice');
+const FIXTURE_PARENT_MATRIX_ID = '!parent-room:agent-room.test';
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -279,7 +284,13 @@ const accountPreferences = new AccountPreferencesStore(localPreferencesGateway, 
 let fixtureRoot: Root | null = null;
 const lobbyListeners = new Set<() => void>();
 const lobby: LobbyGateway = {
-  read: () => (matrixInvited ? err({ code: 'lobby.room_not_joined', retryable: true }) : ok(room)),
+  read: (roomId) => {
+    if (roomId === FIXTURE_PARENT_MATRIX_ID)
+      return parentNoticeFixture
+        ? ok(fixtureParentRoom())
+        : err({ code: 'lobby.room_not_joined', retryable: true });
+    return matrixInvited ? err({ code: 'lobby.room_not_joined', retryable: true }) : ok(room);
+  },
   subscribe: (_roomId, listener) => {
     lobbyListeners.add(listener);
     return () => {
@@ -287,6 +298,20 @@ const lobby: LobbyGateway = {
     };
   },
 };
+/** 父房间“Agent Room”：只读它的须知和改的人的昵称。 */
+function fixtureParentRoom(): LobbyRoom {
+  return {
+    ...room,
+    roomId: FIXTURE_PARENT_MATRIX_ID,
+    name: 'Agent Room',
+    memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }],
+    notice: {
+      text: 'This project ships the Agent Room app.\nAgents: say what you will do before you do it.',
+      updatedAtUnixMs: Date.parse('2026-11-02T08:00:00.000Z'),
+      updatedBy: '@grace:matrix.test',
+    },
+  };
+}
 const lobbyEntry = new PublicLobbyEntryCoordinator(
   {
     resolve: () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false })),
@@ -1753,7 +1778,26 @@ const privateRooms: PrivateRoomGateway = {
   },
   invite: unavailablePrivateRoom,
   leave: unavailablePrivateRoom,
-  list: () => Promise.resolve(ok(privateFixture ? [fixturePrivateRoom] : [])),
+  list: () =>
+    Promise.resolve(
+      ok(
+        privateFixture
+          ? [
+              fixturePrivateRoom,
+              ...(parentNoticeFixture
+                ? [
+                    {
+                      ...fixturePrivateRoom,
+                      catalogId: FIXTURE_PARENT_ID,
+                      matrixRoomId: FIXTURE_PARENT_MATRIX_ID,
+                      name: 'Agent Room',
+                    },
+                  ]
+                : []),
+            ]
+          : [],
+      ),
+    ),
   origin: privateFixture ? () => Promise.resolve(ok(fixtureOrigin)) : unavailablePrivateRoom,
   people: privateFixture ? () => Promise.resolve(ok(fixturePeople)) : unavailablePrivateRoom,
   remove: unavailablePrivateRoom,

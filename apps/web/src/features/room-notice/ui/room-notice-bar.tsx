@@ -20,6 +20,12 @@ export type RoomNoticeBarProps = {
   readonly selfMatrixUserId: string | null;
   /** 房主和管理员能改；不给就没有“编辑”。 */
   readonly onEdit?: (() => void) | undefined;
+  /**
+   * 子房间里这一条是哪一段：`parent` 是父房间的须知，标着来自哪间房；`own` 是这一间自己的，跟在父房间那条
+   * 后面时写“这一间的须知”。不给就是普通的一间房。
+   */
+  readonly part?:
+    { readonly kind: 'parent'; readonly name: string } | { readonly kind: 'own' } | undefined;
 };
 
 /**
@@ -32,6 +38,7 @@ export function RoomNoticeBar({
   memberNames,
   selfMatrixUserId,
   onEdit,
+  part,
 }: RoomNoticeBarProps) {
   const { t, i18n } = useTranslation();
   const textId = useId();
@@ -46,9 +53,15 @@ export function RoomNoticeBar({
     setExpanded(!expanded);
   };
   const author = noticeAuthor(t, notice.updatedBy, memberNames, selfMatrixUserId);
+  const label =
+    part?.kind === 'parent'
+      ? t('roomNotice.parentLabel', { name: part.name })
+      : part?.kind === 'own'
+        ? t('roomNotice.ownLabel')
+        : t('roomNotice.label');
 
   return (
-    <section aria-label={t('roomNotice.label')} className="room-notice">
+    <section aria-label={label} className="room-notice">
       <div className="room-notice__head">
         <button
           aria-controls={textId}
@@ -58,7 +71,10 @@ export function RoomNoticeBar({
           type="button"
         >
           <Pin aria-hidden="true" />
-          <strong>{t('roomNotice.title')}</strong>
+          <strong>{t(part?.kind === 'own' ? 'roomNotice.ownTitle' : 'roomNotice.title')}</strong>
+          {part?.kind === 'parent' ? (
+            <span className="room-notice__source">{t('roomNotice.from', { name: part.name })}</span>
+          ) : null}
           {unseen ? (
             <span className="room-notice__dot">
               <span className="sr-only">{t('roomNotice.unseen')}</span>

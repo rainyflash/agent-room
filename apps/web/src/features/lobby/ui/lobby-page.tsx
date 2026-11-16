@@ -74,7 +74,7 @@ import { AgentOwnersScope } from '@/features/lobby/ui/agent-owners';
 import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-labels';
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
-import { RoomNoticeBar } from '@/features/room-notice/ui/room-notice-bar';
+import { RoomBriefs } from '@/features/room-notice/ui/room-briefs';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { RoomDesk, roomDeskSideQuery } from '@/features/lobby/ui/room-desk';
@@ -778,11 +778,8 @@ function ReadyLobby({
           </button>
         </div>
       ) : null}
-      {publicConversationVisible && room.notice !== undefined ? (
-        <RoomNoticeBar
-          key={room.roomId}
-          memberNames={room.memberNames}
-          notice={room.notice}
+      {publicConversationVisible ? (
+        <RoomBriefs
           onEdit={
             noticeEditable && principal !== null
               ? () => {
@@ -790,7 +787,8 @@ function ReadyLobby({
                 }
               : undefined
           }
-          roomId={room.roomId}
+          parent={subRoomParent}
+          room={room}
           selfMatrixUserId={principal?.matrixUserId ?? null}
         />
       ) : null}

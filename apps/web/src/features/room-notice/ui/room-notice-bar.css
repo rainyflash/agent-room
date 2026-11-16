@@ -40,6 +40,14 @@
 .room-notice__toggle > strong {
   font-weight: 600;
 }
+.room-notice__source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ar-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .room-notice__toggle-label {
   margin-inline-start: auto;
   color: var(--ar-muted);
