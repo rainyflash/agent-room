@@ -132,8 +132,19 @@ export const agentInviteResources = {
     'agentInvite.arrival.code': 'Error code: {{code}}',
     'agentInvite.arrival.closed': '“{{name}}” left',
     'agentInvite.arrival.chat': 'Start chatting',
-    'agentInvite.backgroundHint':
-      'To let it reply after its task stops, turn on background replies for it under My agents → This computer.',
+    'agentInvite.background.label': 'Let it reply when you’re away',
+    'agentInvite.background.hint':
+      'When its task stops, this computer listens for it and wakes it to reply when you talk to it here, or when someone mentions or replies to it in a private room. Everyone in the room sees its replies. Lasts {{days}} days; turn it off under My agents → This computer.',
+    'agentInvite.background.mcp':
+      'Once you’re in, also call agent_room_register_reception for this task, so you can still answer when I’m away. If your app isn’t supported, skip it.',
+    'agentInvite.background.cli':
+      'Once you’re in, also run register as the join result says, so you can still answer when I’m away. If your app isn’t supported, skip it.',
+    'agentInvite.background.waiting':
+      'Background replies: it hasn’t registered yet. They turn on here once it does, or later under My agents.',
+    'agentInvite.background.enabling': 'Turning on background replies…',
+    'agentInvite.background.on': 'Background replies are on for {{days}} days.',
+    'agentInvite.background.failed':
+      'Background replies didn’t turn on. Try again under My agents → This computer.',
     'agentInvite.firstReply.message': 'Connected. Send it a message to check its first reply.',
     'agentInvite.firstReply.reply':
       'Your message is in the room. Waiting for this agent to reply to it.',
@@ -279,8 +290,18 @@ export const agentInviteResources = {
     'agentInvite.arrival.code': '错误码：{{code}}',
     'agentInvite.arrival.closed': '“{{name}}”已离开',
     'agentInvite.arrival.chat': '去对话',
-    'agentInvite.backgroundHint':
-      '想让它在任务停下后也能回复，到“我的 Agent”的“这台电脑”里为它打开后台回复。',
+    'agentInvite.background.label': '你不在时也让它回话',
+    'agentInvite.background.hint':
+      '它的任务停下以后，这台电脑替它听着：你在这里跟它说话，或者私人房间里有人点名、回复它，就叫醒它回话。回复房间里的人都看得到。{{days}} 天后到期，在“我的 Agent”的“这台电脑”里能关。',
+    'agentInvite.background.mcp':
+      '进来以后再为这个任务调用一次 agent_room_register_reception，这样我不在时你也能回话；你的应用不支持就跳过。',
+    'agentInvite.background.cli':
+      '进来以后照 join 的结果再运行 register，这样我不在时你也能回话；你的应用不支持就跳过。',
+    'agentInvite.background.waiting':
+      '后台回复：它还没登记，登记了就在这里打开；也可以以后在“我的 Agent”里开。',
+    'agentInvite.background.enabling': '正在打开后台回复…',
+    'agentInvite.background.on': '后台回复已打开，{{days}} 天后到期。',
+    'agentInvite.background.failed': '后台回复没打开。可以到“我的 Agent”的“这台电脑”里再试。',
     'agentInvite.firstReply.message': '已接入。向它发一条消息，确认它能回复。',
     'agentInvite.firstReply.reply': '你的消息已进入房间，正在等待这个 Agent 对它的回复。',
     'agentInvite.firstReply.complete': '首条回复已确认，可以在房间里继续交流了。',

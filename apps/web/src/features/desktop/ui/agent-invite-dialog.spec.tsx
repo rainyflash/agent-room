@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import { AgentInviteDialog } from './agent-invite-dialog';
 import { DesktopRuntimeProvider } from './desktop-runtime-provider';
 import type {
@@ -72,6 +73,8 @@ function gateway(
     readonly available?: boolean;
     readonly phase?: BridgePhase;
     readonly sessions?: () => SessionsResult;
+    /** 这台电脑能开后台回复（桌面端带着接收器那一套）。 */
+    readonly receivers?: boolean;
   } = {},
 ) {
   const unavailable = () => Promise.resolve(err({ code: 'test.unavailable', retryable: false }));
@@ -119,6 +122,13 @@ function gateway(
     readHostSessions: () => Promise.resolve(options.sessions?.() ?? ok([])),
     offerInvitation,
     withdrawInvitation,
+    ...(options.receivers === true
+      ? {
+          listReceivers: () => Promise.resolve(ok([])),
+          configureReceiver: unavailable,
+          receiverAction: unavailable,
+        }
+      : {}),
   };
   return { value, offerInvitation, withdrawInvitation };
 }
@@ -148,10 +158,11 @@ function session(
 function renderDialog(
   runtime: DesktopRuntimeGateway,
   props: Partial<Parameters<typeof AgentInviteDialog>[0]> = {},
+  services: AppServices | null = null,
 ) {
   const onClose = vi.fn();
-  const element = (next: Partial<Parameters<typeof AgentInviteDialog>[0]>) => (
-    <I18nextProvider i18n={i18n}>
+  const element = (next: Partial<Parameters<typeof AgentInviteDialog>[0]>) => {
+    const dialog = (
       <DesktopRuntimeProvider gateway={runtime}>
         <AgentInviteDialog
           downloadUrl="https://download.test/agent-room.exe"
@@ -161,8 +172,17 @@ function renderDialog(
           {...next}
         />
       </DesktopRuntimeProvider>
-    </I18nextProvider>
-  );
+    );
+    return (
+      <I18nextProvider i18n={i18n}>
+        {services === null ? (
+          dialog
+        ) : (
+          <AppServicesProvider services={services}>{dialog}</AppServicesProvider>
+        )}
+      </I18nextProvider>
+    );
+  };
   const view = render(element(props));
   return {
     ...view,
@@ -171,6 +191,17 @@ function renderDialog(
       view.rerender(element({ ...props, ...next }));
     },
   };
+}
+
+const awayOption = /reply when you’re away/u;
+
+/** 对话框替人打开后台回复要用到的服务；这几个用例里没有 Agent 进来，不会真的调用。 */
+function backgroundServices(): AppServices {
+  return {
+    automation: { list: vi.fn(), create: vi.fn() },
+    localRuntime: {},
+    messages: {},
+  } as unknown as AppServices;
 }
 
 function chooseMethod(name: 'Network' | 'MCP' | 'Command line') {
@@ -267,7 +298,49 @@ describe('接入 Agent 对话框', () => {
       room: { catalogId: CATALOG, roomId: room.roomId },
     });
     expect(runtime.offerInvitation.mock.calls[0]?.[0]).not.toHaveProperty('displayName');
-    expect(screen.getByText(/turn on background replies/u)).toBeVisible();
+    // 这台电脑开不了后台回复时（没有接收器），不给“你不在时也让它回话”。
+    expect(screen.queryByRole('checkbox', { name: awayOption })).toBeNull();
+    expect(message).not.toContain('register');
+  });
+
+  it('勾着“你不在时也让它回话”：话里请它登记，取消勾选就去掉，下次打开还记得', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    const view = renderDialog(gateway({ receivers: true }).value, {}, backgroundServices());
+
+    const option = await screen.findByRole('checkbox', { name: awayOption });
+    expect(option).toBeChecked();
+    expect(option).toHaveAccessibleDescription(/Everyone in the room sees its replies/u);
+    expect(option).toHaveAccessibleDescription(/Lasts 30 days/u);
+    const cli = await copyMessage(writeText);
+    expect(cli).toContain('also run register as the join result says');
+    expect(cli).toContain('If your app isn’t supported, skip it.');
+    expect(cli).not.toMatch(appNames);
+
+    chooseMethod('MCP');
+    expect(await copyMessage(writeText)).toContain('agent_room_register_reception');
+
+    fireEvent.click(option);
+    expect(await copyMessage(writeText)).not.toContain('agent_room_register_reception');
+    expect(window.localStorage.getItem('agent-room.invite-background')).toBe('off');
+
+    view.unmount();
+    renderDialog(gateway({ receivers: true }).value, {}, backgroundServices());
+    expect(await screen.findByRole('checkbox', { name: awayOption })).not.toBeChecked();
+  });
+
+  it('房间里 Agent 不能自动发言：不给“你不在时也让它回话”，话里也不请它登记', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    renderDialog(
+      gateway({ receivers: true }).value,
+      { agentsCanSpeak: false },
+      backgroundServices(),
+    );
+    expect(await copyMessage(writeText)).not.toContain('register');
+    expect(screen.queryByRole('checkbox', { name: awayOption })).toBeNull();
   });
 
   function nameIt(name: string) {
