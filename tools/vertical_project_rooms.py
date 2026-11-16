@@ -1,16 +1,19 @@
-"""项目房间的无头验收（`specs/redesign/project-rooms.md` 的 3P-9a）。
+"""项目房间的无头验收（`specs/redesign/project-rooms.md` 的 3P-9a、3P-9b-1）。
 
 本机回环地址上起一个假的 GitHub（控制面只在 `AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS` 配了回环地址时连它，
 见 `vertical.vertical_control_plane_environment`），走一遍：命令行在仓库目录里认领、写 `AGENTS.md`；
 假 GitHub 放上那一行以后，本机 MCP 等到认上、进这间房说话；`/gh/` 页和徽章；访客看页面、看徽章都不读
-GitHub。实况、一段对话和读不到的几条路是 3P-9b。
+GitHub（3P-9a）。接着是分享页的实况和读不到的几条路（3P-9b-1）：不登录看 `/r/<码>/live`，房主在网页上
+关掉、再打开，改成要申请；私密的房间、加密的公开房间开不了（project-room-live.e2e.ts）。一段对话是 3P-9b-2。
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -29,10 +32,27 @@ else:
 CONTROL_PLANE = "http://127.0.0.1:8090"
 OWNER = "vertical-octo"
 AGENT_NAME = "Project helper"
+# 名牌上的名字带四位编号；验收账号的显示名就是实况里写的主人。
+LIVE_AGENT_NAME = re.compile(rf"{re.escape(AGENT_NAME)} #\d{{4}}")
+AGENT_OWNER_NAME = "Local Developer"
 RAW_PATH = re.compile(r"/vertical-octo/[A-Za-z0-9._-]+/HEAD/(?:AGENTS|README)\.md")
 SHARE_URL = re.compile(r"https?://[^/\s]+/r/([A-Za-z0-9]{6})")
 ONLINE = re.compile(r">\d+\+? online<")
 ONLINE_ZH = re.compile(r">\d+\+? 在线<")
+LIVE_SPEC = "project-room-live.e2e.ts"
+# 实况那一轮和网页用例靠这几个文件对步子：网页关掉了实况、Agent 在关着时说过了、网页再打开了、
+# 这边看到再打开以后的那句了、网页把房间改成要申请了。
+LIVE_STEPS: tuple[tuple[str, Path], ...] = (
+    ("OFF", v.VERTICAL_ROOT / "project-live-off.json"),
+    ("SAID_OFF", v.VERTICAL_ROOT / "project-live-said-off.json"),
+    ("ON", v.VERTICAL_ROOT / "project-live-on.json"),
+    ("SEEN_ON", v.VERTICAL_ROOT / "project-live-seen-on.json"),
+    ("REQUEST", v.VERTICAL_ROOT / "project-live-request.json"),
+)
+LIVE_STEP = dict(LIVE_STEPS)
+# 不放实况以后，`/live` 最多 5 秒还按上次查到的回答（`RoomLiveWatch` 的 `ELIGIBILITY_TTL_MS`）。
+LIVE_GONE_SECONDS = 30
+LIVE_SHOWN_SECONDS = 90
 
 
 class FakeGithub:
@@ -243,31 +263,230 @@ def verify_pages(repository: str, code: str, nonce: str) -> None:
         raise v.VerticalFailure("名字不合 GitHub 规矩的 /gh/ 地址应该 404。")
 
 
+@dataclass(frozen=True)
+class LiveLine:
+    """实况里的一句和说这句的人。"""
+
+    name: str
+    kind: str
+    owner: str | None
+    text: str
+
+
+@dataclass(frozen=True)
+class ProjectRoom:
+    """认上以后建的那间房：目录 ID、分享码、绑的仓库和 Agent 在里面说话的 Matrix 房间。"""
+
+    catalog_id: str
+    code: str
+    repository: str
+    room_id: str
+
+
+def live_lines(snapshot: Mapping[str, object]) -> list[LiveLine]:
+    """`/r/<码>/live` 的回答里的每一句，配上名单里按编号找到的说话人。不公开的那几句正文是空的。"""
+    if snapshot.get("schemaVersion") != 1:
+        raise v.VerticalFailure("实况的回答不是第 1 版。")
+    people: dict[str, dict[str, object]] = {}
+    for item in v.require_list(snapshot.get("participants")):
+        person = v.require_object(item, "实况里说话的人")
+        people[v.require_text(person.get("key"), "说话的人的编号")] = person
+    lines = []
+    for item in v.require_list(snapshot.get("messages")):
+        message = v.require_object(item, "实况里的一句")
+        author = people.get(v.require_text(message.get("author"), "这一句是谁说的"))
+        if author is None:
+            raise v.VerticalFailure("实况里有一句的说话人不在名单里。")
+        owner, text = author.get("owner"), message.get("text")
+        lines.append(
+            LiveLine(
+                name=v.require_text(author.get("name"), "说话的人的名字"),
+                kind=v.require_text(author.get("kind"), "说话的人是人还是 Agent"),
+                owner=owner if isinstance(owner, str) else None,
+                text=text if isinstance(text, str) else "",
+            )
+        )
+    return lines
+
+
+def require_said_by_agent(lines: list[LiveLine], text: str) -> None:
+    """那一句在实况里，是验收账号的本机 Agent 说的：名字带编号、是本机 Agent、写着主人。"""
+    said = [line for line in lines if line.text == text]
+    if len(said) != 1:
+        raise v.VerticalFailure(f"实况里该有一句“{text}”，有 {len(said)} 句。")
+    line = said[0]
+    if LIVE_AGENT_NAME.fullmatch(line.name) is None or line.kind != "agent":
+        raise v.VerticalFailure(f"实况里那一句该是本机 Agent“{AGENT_NAME} #编号”说的，写的是 {line.kind}。")
+    if line.owner != AGENT_OWNER_NAME:
+        raise v.VerticalFailure("实况里那一句该写着 Agent 的主人是验收账号。")
+
+
+def has_live_panel(html: str, code: str) -> bool:
+    """分享页（`/r/<码>`、`/gh/owner/repo`）上有没有实况那一块（`render.rs` 的 `live_panel`）。"""
+    return f'data-live="/r/{code}/live"' in html
+
+
+def read_live(code: str) -> tuple[int, list[LiveLine]]:
+    """不登录读一次实况：状态码和里面的话（不是 200 时没有话）。"""
+    status, body, content_type = get(f"/r/{code}/live")
+    if status != 200:
+        return status, []
+    if not content_type.startswith("application/json"):
+        raise v.VerticalFailure(f"实况的回答不是 JSON：{content_type}。")
+    return status, live_lines(v.require_object(json.loads(body), "实况的回答"))
+
+
+def wait_for_live(code: str, text: str) -> list[LiveLine]:
+    """等到实况里出现这一句：快照有人看才每 3 秒重读，刚打开时还要等 5 秒的“不放”过期。"""
+    deadline = time.monotonic() + LIVE_SHOWN_SECONDS
+    while True:
+        status, lines = read_live(code)
+        if any(line.text == text for line in lines):
+            return lines
+        if time.monotonic() >= deadline:
+            raise v.VerticalFailure(f"{LIVE_SHOWN_SECONDS} 秒内实况里没有“{text}”（最后一次 {status}）。")
+        time.sleep(2)
+
+
+def wait_until_not_live(code: str) -> None:
+    """等到 `/r/<码>/live` 回 404 `room_live.unavailable`：查到的“放”最多再用 5 秒。"""
+    deadline = time.monotonic() + LIVE_GONE_SECONDS
+    while True:
+        status, body, _ = get(f"/r/{code}/live")
+        if status == 404:
+            if v.require_object(json.loads(body), "实况的 404").get("code") != "room_live.unavailable":
+                raise v.VerticalFailure("不放实况时 /live 该回 room_live.unavailable。")
+            return
+        if time.monotonic() >= deadline:
+            raise v.VerticalFailure(f"{LIVE_GONE_SECONDS} 秒内 /r/<码>/live 还没回 404（最后一次 {status}）。")
+        time.sleep(1)
+
+
+def require_repository_page(project_room: ProjectRoom, *, live: bool) -> None:
+    """`/gh/owner/repo` 还是这间房的分享页；放着实况时有那一块，不放时没有。"""
+    status, body, _ = get(f"/gh/{project_room.repository}")
+    if status != 200 or f"/r/{project_room.code}" not in body:
+        raise v.VerticalFailure(f"/gh/ 页该是这间房的分享页（{status}）。")
+    if has_live_panel(body, project_room.code) != live:
+        state = "该有" if live else "不该有"
+        raise v.VerticalFailure(f"/gh/ 页上{state}实况那一块。")
+
+
+def live_browser_environment(
+    environment: Mapping[str, str], *, project_catalog: str, former_public_room: str
+) -> dict[str, str]:
+    """网页用例的环境：验收账号（项目房间的房主）、两间房和对步子的文件。"""
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": v.required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_PROJECT_LIVE_ROOM": project_catalog,
+            "AGENT_ROOM_VERTICAL_PROJECT_LIVE_FORMER_PUBLIC_ROOM": former_public_room,
+            **{f"AGENT_ROOM_VERTICAL_PROJECT_LIVE_{name}": str(path) for name, path in LIVE_STEPS},
+        }
+    )
+    return playwright_environment
+
+
+def verify_live_view(
+    project_room: ProjectRoom,
+    agent: v.McpAgentSession,
+    *,
+    first_line: str,
+    nonce: str,
+    environment: Mapping[str, str],
+    former_public_room: str,
+) -> str:
+    """分享页放实况（3P-9b-1）：项目房间建好就开着，不登录在 `/r/<码>/live` 看得到 Agent 刚才那句（名字、
+    主人），`/gh/` 页上有那一块。房主在网页上关掉：5 秒多一点就 404、那一块没了；关着时 Agent 说一句。再打开：
+    之后说的那句在，打开之前的两句都不在。房主改成要申请：实况自己关了、开不了（网页那边查），这边又是 404。
+    网页那边接着看私密的房间、加密的公开房间开不了。回再打开以后那一句的事件 ID。"""
+    for _, path in LIVE_STEPS:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    require_said_by_agent(wait_for_live(project_room.code, first_line), first_line)
+    require_repository_page(project_room, live=True)
+    browser = v.BrowserRun(
+        LIVE_SPEC,
+        live_browser_environment(
+            environment, project_catalog=project_room.catalog_id, former_public_room=former_public_room
+        ),
+    )
+    v.wait_for_browser_step(
+        LIVE_STEP["OFF"], browser, timeout_seconds=600, failure="网页 10 分钟内没在房间设置里关掉实况。"
+    )
+    wait_until_not_live(project_room.code)
+    require_repository_page(project_room, live=False)
+    said_off = f"Said while the live view was off ({nonce})."
+    v.say_in_room(agent, project_room.room_id, said_off)
+    LIVE_STEP["SAID_OFF"].write_text("{}\n", encoding="utf-8")
+
+    v.wait_for_browser_step(
+        LIVE_STEP["ON"], browser, timeout_seconds=300, failure="网页 5 分钟内没把实况再打开。"
+    )
+    said_on = f"Said after the live view was turned back on ({nonce})."
+    event_id = v.say_in_room(agent, project_room.room_id, said_on)
+    lines = wait_for_live(project_room.code, said_on)
+    require_said_by_agent(lines, said_on)
+    if {first_line, said_off} & {line.text for line in lines}:
+        raise v.VerticalFailure("再打开实况以后，打开之前说的话（关之前的、关着时的）不该在实况里。")
+    require_repository_page(project_room, live=True)
+    LIVE_STEP["SEEN_ON"].write_text("{}\n", encoding="utf-8")
+
+    v.wait_for_browser_step(
+        LIVE_STEP["REQUEST"], browser, timeout_seconds=300, failure="网页 5 分钟内没把项目房间改成要申请。"
+    )
+    # 网页接着把房间改回直接进：实况不会自己回来，下面两样改回以后也一样。
+    wait_until_not_live(project_room.code)
+    require_repository_page(project_room, live=False)
+    browser.finish(timeout_seconds=600)
+    return event_id
+
+
 def verify_project_rooms(
     *,
     agent_bridge: v.AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    former_public_room: str,
     redactor: v.LogRedactor,
 ) -> dict[str, str]:
     """项目房间（3P-9a）：验收账号在仓库目录里用命令行认领，仓库（假 GitHub）里放上那一行以后，他的本机 Agent
-    经 MCP 等到认上、进这间房说一句；`/gh/` 页和徽章对得上；只有核对时读了 GitHub，读的只有那两个文件。"""
+    经 MCP 等到认上、进这间房说一句；`/gh/` 页和徽章对得上；只有核对时读了 GitHub，读的只有那两个文件。
+    接着是分享页的实况和读不到的几条路（3P-9b-1，`verify_live_view`）：`former_public_room` 是公开房间那一轮
+    验收账号建的、最后改回私密的房间。"""
     nonce = v.new_uuid_v7()[-8:]
     repository = f"{OWNER}/hello-{nonce}"
+    first_line = f"Hello from the project room ({nonce})."
     with FakeGithub(v.FAKE_GITHUB_PORT) as github, tempfile.TemporaryDirectory() as directory:
         root = checkout(Path(directory), repository)
         share_url, code, agents = claim_in_checkout(agent_bridge, root, repository)
         github.serve(repository, "AGENTS.md", agents)
+        # 会话一直开到实况那一段做完：Agent 要在关着时、再打开以后各说一句。
         with mcp_client(agent_bridge, redactor) as transport:
             catalog_id, agent, room = bind_and_enter(transport, repository, share_url)
-            event_id = v.say_in_room(agent, room, f"Hello from the project room ({nonce}).")
-        room_is_public_and_unencrypted(catalog_id, repository)
-        # 认上了的仓库再跑一次命令行：直接回这间房，不再写文件。
-        again = project(agent_bridge, root)
-        if again.get("status") != "bound" or again.get("catalogId") != catalog_id or "agentsFile" in again:
-            raise v.VerticalFailure("认上了的仓库再跑 agent-room project，应该直接回那间房、不碰 AGENTS.md。")
-        reads = github.paths()
-        if f"/{repository}/HEAD/AGENTS.md" not in reads or not all(RAW_PATH.fullmatch(path) for path in reads):
-            raise v.VerticalFailure("核对认领时只该读这个仓库的 AGENTS.md、README.md。")
-        verify_pages(repository, code, nonce)
+            event_id = v.say_in_room(agent, room, first_line)
+            room_is_public_and_unencrypted(catalog_id, repository)
+            # 认上了的仓库再跑一次命令行：直接回这间房，不再写文件。
+            again = project(agent_bridge, root)
+            if again.get("status") != "bound" or again.get("catalogId") != catalog_id or "agentsFile" in again:
+                raise v.VerticalFailure("认上了的仓库再跑 agent-room project，应该直接回那间房、不碰 AGENTS.md。")
+            reads = github.paths()
+            if f"/{repository}/HEAD/AGENTS.md" not in reads or not all(RAW_PATH.fullmatch(path) for path in reads):
+                raise v.VerticalFailure("核对认领时只该读这个仓库的 AGENTS.md、README.md。")
+            verify_pages(repository, code, nonce)
+            live_event_id = verify_live_view(
+                ProjectRoom(catalog_id=catalog_id, code=code, repository=repository, room_id=room),
+                agent,
+                first_line=first_line,
+                nonce=nonce,
+                environment=environment,
+                former_public_room=former_public_room,
+            )
         if github.paths() != reads:
-            raise v.VerticalFailure("访客看 /gh/ 页和徽章不该去读 GitHub。")
-    return {"projectRoomCatalogId": catalog_id, "projectRoomEventId": event_id}
+            raise v.VerticalFailure("访客看 /gh/ 页、徽章和实况不该去读 GitHub。")
+    return {
+        "projectRoomCatalogId": catalog_id,
+        "projectRoomEventId": event_id,
+        "projectRoomLiveEventId": live_event_id,
+    }
