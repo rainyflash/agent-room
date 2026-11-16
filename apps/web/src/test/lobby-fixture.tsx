@@ -222,8 +222,8 @@ const ownersFixture = new URLSearchParams(window.location.search).has('owners');
 const wakesFixture = new URLSearchParams(window.location.search).has('wakes');
 let room: LobbyRoom = {
   ...testRoom(fixtureAgentCount),
-  // 公开着的夹具房间是新建时就公开的那种：不加密。
-  ...(privateFixture ? { encrypted: !listedFixture } : {}),
+  // 公开着的夹具房间是新建时就公开的那种：不加密。不带 `?private` 的是公共大厅。
+  ...(privateFixture ? { encrypted: !listedFixture } : { publicLobby: true }),
   ...(archivedFixture || mutedFixture ? { canSpeak: false } : {}),
   ...(noticeFixture
     ? {
@@ -1390,6 +1390,8 @@ const fixtureSubRoomActions: {
   readonly managers: { readonly kind: 'grant' | 'revoke'; readonly principalId: string }[];
   readonly policies: Omit<SubRoomPolicy, 'canChange'>[];
   readonly left: string[];
+  /** 单独问过哪几间房（`GET /private-rooms/{c}`）。 */
+  readonly inspected: string[];
 } = {
   creations: [],
   broughtAgents: [],
@@ -1399,6 +1401,7 @@ const fixtureSubRoomActions: {
   managers: [],
   policies: [],
   left: [],
+  inspected: [],
 };
 Object.defineProperty(window, '__agentRoomFixtureSubRoomActions', {
   configurable: true,
@@ -1699,6 +1702,7 @@ const privateRooms: PrivateRoomGateway = {
       }
     : unavailablePrivateRoom,
   inspect: (catalogId) => {
+    fixtureSubRoomActions.inspected.push(catalogId);
     const entry =
       subRoomsFixture || subRoomFixture
         ? fixtureSubRoomList().subRooms.find(

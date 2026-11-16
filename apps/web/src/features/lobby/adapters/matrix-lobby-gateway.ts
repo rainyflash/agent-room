@@ -252,6 +252,7 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
     name: room.name,
     ...(notice === undefined ? {} : { notice }),
     observedAtUnixMs,
+    ...(room.publicLobby === true ? { publicLobby: true } : {}),
     roomId: room.roomId,
     ...(room.topic === undefined ? {} : { topic: room.topic }),
   });
