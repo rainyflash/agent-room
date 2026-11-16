@@ -1,13 +1,15 @@
 //! 分享页放实况（`specs/redesign/project-rooms.md`“分享页放实况”，3P-6a）：公开、直接进、不加密、在用、
 //! 没被平台拿掉的房间才记得下；已经开着的再开不换那一刻；改成要申请、改回私密、归档时在同一个事务里
 //! 关掉，再开是新的一刻；平台拿掉时不删；导出里有。删账户时关掉在 `real_database.rs` 的删除那一条里查，
-//! 项目房间建好就开着在 `repository_claims.rs` 里查。
+//! 项目房间建好就开着在 `repository_claims.rs` 里查。分享页按分享码找放着实况的房间（3P-6a-2）：
+//! 只认开着、没被拿掉的主房间。
 
 use agent_room_application::ports::{
-    AccountDeletionRepository, EnableRoomLiveViewOutcome, PrivateRoomListingRecord,
-    PrivateRoomListingStore, RoomLiveViewFacts, RoomLiveViewRecord, RoomLiveViewStore,
+    AccountDeletionRepository, EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord,
+    PrivateRoomListingRecord, PrivateRoomListingStore, RoomLiveViewFacts, RoomLiveViewRecord,
+    RoomLiveViewStore,
 };
-use agent_room_domain::room_listing::{RoomJoinMode, RoomListingSettings};
+use agent_room_domain::room_listing::{RoomJoinMode, RoomListingSettings, RoomShareCode};
 
 use super::{
     listing::{Saved, archive, create_listed, create_room, record, save, settings, version},
@@ -247,6 +249,61 @@ async fn 导出里是开的人那一份() {
     assert!(manager_export.data["liveViews"][0]["enabledAt"].is_string());
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 分享码只认此刻放着实况的主房间() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "live-lookup").await;
+    let (room, _) = listed_room(&repositories, owner, "Liv008").await;
+
+    assert_eq!(lookup(&repositories, "Liv008").await, None, "还没开");
+    enable(&repositories, room, owner, 2_000).await;
+    let found = lookup(&repositories, "Liv008").await.expect("开着就认得出");
+    assert_eq!(found.catalog_id, room);
+    assert_eq!(found.enabled_at, time(2_000));
+    assert!(found.matrix_room_id.as_str().starts_with("!private"));
+    assert_eq!(lookup(&repositories, "Liv00X").await, None, "没有这个码");
+
+    // 挂到别的房间下面成了子房间：子房间一概不放。
+    let parent = create_room(&repositories, owner).await;
+    sqlx::query(
+        r"INSERT INTO agent_room.private_room_parent (
+               catalog_entry_id, parent_catalog_entry_id, name_key, access, hidden,
+               created_by_principal_id, parent_version_applied, created_at
+           ) VALUES ($1, $2, 'live', 'open', false, $3, 0, statement_timestamp())",
+    )
+    .bind(room.as_uuid())
+    .bind(parent.as_uuid())
+    .bind(owner.as_uuid())
+    .execute(&database.migration)
+    .await
+    .expect("挂到别的房间下面");
+    assert_eq!(lookup(&repositories, "Liv008").await, None, "子房间不放");
+    sqlx::query("DELETE FROM agent_room.private_room_parent WHERE catalog_entry_id = $1")
+        .bind(room.as_uuid())
+        .execute(&database.migration)
+        .await
+        .expect("摘下来");
+    assert!(lookup(&repositories, "Liv008").await.is_some());
+
+    hold(&database.migration, room, owner).await;
+    assert_eq!(
+        lookup(&repositories, "Liv008").await,
+        None,
+        "平台拿掉的不放，开着的那一行还在"
+    );
+    assert!(facts(&repositories, room).await.live_view.is_some());
+
+    database.close().await;
+}
+
+async fn lookup(repositories: &PostgresRepositories, share_code: &str) -> Option<LiveRoomRecord> {
+    LiveRoomLookup::live_room(repositories, &RoomShareCode::parse(share_code).unwrap())
+        .await
+        .expect("可读")
 }
 
 /// 新建时就公开、直接进、不加密的房间。

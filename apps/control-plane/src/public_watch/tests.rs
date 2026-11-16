@@ -94,6 +94,7 @@ struct FakeReader {
     lobby: Mutex<Lobby>,
     failing: Mutex<bool>,
     reads: AtomicUsize,
+    state_reads: AtomicUsize,
     /// 读过哪些分片，按先后。
     rooms: Mutex<Vec<String>>,
     /// 各人的 Matrix 在线状态；没有的问了回 403。
@@ -149,6 +150,7 @@ impl PublicLobbyMatrixReader for FakeReader {
         room_id: &'a MatrixRoomId,
     ) -> PortFuture<'a, MatrixResult<Vec<MatrixTimelineEvent>>> {
         assert!([ROOM, SECOND_ROOM].contains(&room_id.as_str()));
+        self.state_reads.fetch_add(1, Ordering::SeqCst);
         let state = self.answer(|lobby| lobby.state.clone());
         Box::pin(async move { state })
     }
@@ -1426,3 +1428,6 @@ async fn 接口按_shard_看指定的分片_写得不对或没有的说没有这
     assert_eq!(shards.headers()[header::CACHE_CONTROL], "public, max-age=3");
     assert_eq!(json_body(shards).await["busiest"], 2);
 }
+
+/// 分享页的实况（3P-6a-2），共用上面的假读取器和消息。
+mod live_rooms;

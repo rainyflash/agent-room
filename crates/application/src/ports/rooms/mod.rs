@@ -99,8 +99,8 @@ pub use role_changes::{
     RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
 };
 pub use room_live::{
-    EnableRoomLiveViewOutcome, RoomEncryptionState, RoomLiveViewFacts, RoomLiveViewRecord,
-    RoomLiveViewStore,
+    EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord, RoomEncryptionState,
+    RoomLiveViewFacts, RoomLiveViewRecord, RoomLiveViewStore,
 };
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,

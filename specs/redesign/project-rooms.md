@@ -556,3 +556,18 @@
     - “下载我的数据”加了 `liveViews`（他打开、还开着的：哪间房、什么时候）。
     - 隐私说明页在这一步就照两步都做完的样子改了：存开关的表在这一步，按规矩说明页跟着同一个 PR 改。3P-6a-2 要是没赶上同一版，页面上说的实况就还没真放出来，只多说、不少说。
   - 测试：应用层流程（`application/tests/room_live_flow.rs`）、接口（`features/room_live_view/tests.rs`）、问聊天服务器加没加密（`matrix-provisioning-adapter` 的 `room_listing.rs`）、隐私说明页的说法（`privacy-page.spec.tsx`）。真实数据库的（`postgres-adapter` 的 `private_rooms/live_views.rs`，`repository_claims.rs` 建项目房间那一条，`real_database.rs` 删账户那一条和表的名单）只在派发 `suite=all` 时跑。
+- 2026-11-16 3P-6a-2（#912，分享页真放出来，控制面和 Caddy；网页的开关、建房时的勾、顶栏那一行小字是 3P-6b）：
+  - `GET /r/{分享码}/live` 在 `features/share_page.rs`；快照是 `public_watch/rooms.rs` 的 `RoomLiveWatch`，拼成什么样在 `public_watch/live_view.rs`。按分享码找房间是新的 `LiveRoomLookup`（`postgres-adapter` 的 `rooms/live_views.rs`），一句 SQL 查齐：公开着、直接进、私人房间、在用、目录上不加密、实例在用、平台没拿掉、不是子房间、开着实况，回房间、Matrix 房间号和开的那一刻。
+  - 和围观公开大厅共用：解析和验签（`reading::verified_messages`）、隐藏的消息（`reading::hidden_events`，只认建房间的应用服务账号写的）、编号（`view::Keys`，两边各一份盐）、哪些是网络 Agent（拆成 `public_watch/agent_kinds.rs`，两边各记一份）。消息 3 秒一读、旧快照最多再给 1 分钟、一次最多等 8 秒，和围观一样。
+  - 按房间：库里查到的放不放在内存里留 5 秒（最多记 4096 个码，满了先清过期的）；不放了、换了一刻，原来那份快照扔掉。快照按“房间、开的那一刻”存，最多 200 间，久没人看的先扔；同时重读的最多 4 间，排不上的先给旧的。房间状态 30 秒读一次：隐藏了哪些、在线数（目录 `detail` 那一份，和卡片上同一个数；目录说没有这间房了就当不放）、说话的本机 Agent 是谁的（`RoomPeopleDirectory::agent_owners`，只问还不知道的，读房间状态时清掉重问）。状态里有 `m.room.encryption`（`state_key` 为空）就封住这一份：以后都回 404、不再读，直到换了一刻。
+  - 回答：`{ schemaVersion: 1, online: { count, atLeast } | null, participants: [{ key, name, kind, owner }], messages: [...], updatedAtUnixMs }`。消息和围观的一样（`key`、`author`、`text`、`truncated`、`withheld`、`attachment`、`edited`、`replyTo`、`sentAtUnixMs`），只给开的那一刻以后最近 20 句，每句 280 个字。名单只有这 20 句里说过话的，新说话的在前：人写昵称（有 @ 的只留前面那段），本机 Agent 带主人，网络 Agent 不带；不列在场的。`Cache-Control: public, max-age=3`、`noindex`。不放、没有这个码、码写得不对一律 404 `room_live.unavailable`；读不到又没有不太旧的回 503 `room_live.dependency_unavailable` 带 `Retry-After: 5`；来源名额用完回 429 `room_live.rate_limited`。
+  - 限流和分享页同一份（每个来源每分钟 120 次），只在 5 秒内没人问过这个码时才算：开着页面的人每 5 秒问一次，别让他把自己的名额用完；挨个猜码的每次都是没问过的码。
+  - 页面：开着实况的房间（`/r/<码>` 和绑了仓库的 `/gh/owner/repo` 一样）在房间卡片下面多一块“房间里正在说的话”，先藏着，`share.js` 头一次问到 `/live` 才露出来；回 404 就藏起来、不再问；页面在后台时不问。没有脚本时只有卡片。消息一律当纯文本放（`textContent`），要用的字在那一块的 `data-` 属性里。只有直接进、不加密的房间才去问放不放。页面照旧缓存 60 秒，开了以后最多一分钟页面上才多出那一块；关了以后最多 5 秒 `/live` 就回 404，那一块跟着藏起来。
+  - 内容安全策略：分享页、仓库地址和它们的样式、脚本、徽章由控制面自己带一份（`share_page.rs` 的 `PAGE_POLICY`，比网站那一份多一句 `connect-src 'self'`），Caddy 裸域那一份不再给 `/r/*`、`/gh/*`（`@site_csp not path /r/* /gh/*`），不然浏览器两份都照着办，脚本问不了 `/live`。改了 `render.py`，发版实机验收要设备码。
+  - `/gh/` 没人认领那一页第 3 条改回“房间建好就公开、不加密，谁点开都先看到里面正在说的话”。
+  - `agents.md`（`agents.txt` 是同一份）的英文摘要和“进公开房间”各加一句：仓库的 `AGENTS.md` 或 README 里写着 Agent Room 链接的，就是这个项目的房间；公开房间可能开着实况，开着时在里面说的话，不登录的人在分享页上也看得到。
+  - 和设计不一样、设计里没写的：
+    - 那一块的标题写“房间里正在说的话”（英文 “What’s being said”）；时间按看的人的浏览器写几点几分；回复的是哪一句没写出来（快照里有 `replyTo`）。
+    - 目录标记和聊天服务器对不上（目录说不加密、聊天服务器上有 `m.room.encryption`）时，最多 30 秒认出来，记一条告警。经我们自己加密的路（`mark_room_encrypted`）在改标记的事务里就删了开关，5 秒内停。
+    - 隐私说明页 3P-6a-1 就照两步做完的样子改好了，这一步不再改页面，只在说明页的设计文档里补上依据。
+  - 测试：快照（`public_watch/tests/live_rooms.rs`：只给开的那一刻以后最近 20 句、每句 280 个字，名字和主人，隐藏和撤回，不放的码 5 秒内不再查，关了 5 秒内停、再开是新的一刻，聊天服务器上加了密就封住，目录说不公开了就不放，3 秒、30 秒的读法，旧快照最多 1 分钟，最多 200 间），页面和接口（`features/share_page/live_tests.rs`：那一块在哪、什么时候不去问，`/live` 的回答、404、503、429 和缓存，这几页都只带一份控制面的内容安全策略），Caddy（`tools/tests/test_prodops.py`）。真实数据库的（`private_rooms/live_views.rs` 的“分享码只认此刻放着实况的主房间”）只在派发 `suite=all` 时跑。

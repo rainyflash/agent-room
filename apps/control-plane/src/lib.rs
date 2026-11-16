@@ -574,6 +574,32 @@ fn public_watch_state(
     })
 }
 
+/// 分享页放的实况（`specs/redesign/project-rooms.md` 的 3P-6a）。和围观公开大厅一样以应用服务读房间，
+/// 在线数用分享页卡片上那一份目录。
+fn room_live_watch(
+    dependencies: &AgentFeatureDependencies,
+    directory: Arc<PublicRoomDirectoryService>,
+) -> Result<Arc<public_watch::RoomLiveWatch>, StartupError> {
+    public_watch::RoomLiveWatch::new(public_watch::RoomLiveWatchDependencies {
+        rooms: dependencies.repositories.clone(),
+        directory,
+        people: dependencies.repositories.clone(),
+        reader: dependencies.matrix_identities.clone(),
+        verification: dependencies.repositories.clone(),
+        signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+        network_agents: dependencies.repositories.clone(),
+        secrets: dependencies.secrets.clone(),
+        clock: dependencies.system_runtime.clone(),
+    })
+    .map(Arc::new)
+    .map_err(|_| {
+        StartupError::new(
+            "startup.entropy_unavailable",
+            "无法生成分享页实况用的随机盐".to_owned(),
+        )
+    })
+}
+
 /// 个人的那几样接口，合到 `base` 上。
 fn personal_routes(
     config: &ControlPlaneConfig,
@@ -1229,8 +1255,9 @@ fn build_agent_feature_states(
             directory.clone(),
             Arc::new(RepositoryRoomPageService::new(
                 dependencies.repositories.clone(),
-                directory,
+                directory.clone(),
             )),
+            room_live_watch(dependencies, directory)?,
             dependencies.system_runtime.clone(),
             anonymous_limits,
             &config.authentication.matrix_server_name,

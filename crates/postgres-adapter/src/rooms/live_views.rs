@@ -8,17 +8,19 @@
 //!   关掉他的房间，都在改房间的那个事务里、改完那几行以后删（[`turn_off_live_view`]，`accounts.rs` 的
 //!   `archive_private_rooms` 另有一句按房主删）。平台冻结、拿掉时不删。
 //! - 项目房间建好就开着（[`enable_for_project_room`]，建房的那个事务里）。
+//! - 分享页按分享码找放着实况的房间（[`LiveRoomLookup`]，3P-6a-2）：和打开时查的是同几样，再加上
+//!   房间实例在用、开着实况。
 
 use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
-        EnableRoomLiveViewOutcome, PortFuture, RoomLiveViewFacts, RoomLiveViewRecord,
-        RoomLiveViewStore,
+        EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord, MatrixRoomId, PortFuture,
+        RoomLiveViewFacts, RoomLiveViewRecord, RoomLiveViewStore,
     },
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    room_listing::RoomJoinMode,
+    room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
 };
 use sqlx::{Postgres, Transaction, postgres::PgRow};
@@ -141,6 +143,57 @@ impl RoomLiveViewStore for PostgresRepositories {
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(())
+        })
+    }
+}
+
+impl LiveRoomLookup for PostgresRepositories {
+    fn live_room<'a>(
+        &'a self,
+        share_code: &'a RoomShareCode,
+    ) -> PortFuture<'a, RepositoryResult<Option<LiveRoomRecord>>> {
+        Box::pin(async move {
+            let operation = "room_live.lookup";
+            let row: Option<(uuid::Uuid, String, i64)> = sqlx::query_as(
+                r"SELECT catalog.id,
+                         instance.matrix_room_id,
+                         floor(extract(epoch FROM live.enabled_at) * 1000)::bigint
+                    FROM agent_room.private_room_listing AS listing
+                    JOIN agent_room.room_catalog_entry AS catalog
+                      ON catalog.id = listing.catalog_entry_id
+                    JOIN agent_room.room_live_view AS live
+                      ON live.catalog_entry_id = catalog.id
+                    JOIN agent_room.room_instance AS instance
+                      ON instance.catalog_entry_id = catalog.id
+                   WHERE listing.share_code = $1
+                     AND listing.listed
+                     AND listing.join_mode = 'open'
+                     AND catalog.kind = 'private_room'
+                     AND catalog.status = 'active'
+                     AND NOT catalog.end_to_end_encrypted
+                     AND instance.state = 'active'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM agent_room.public_room_platform_hold AS hold
+                          WHERE hold.catalog_entry_id = catalog.id
+                     )
+                     AND NOT EXISTS (
+                         SELECT 1 FROM agent_room.private_room_parent AS link
+                          WHERE link.catalog_entry_id = catalog.id
+                     )",
+            )
+            .bind(share_code.as_str())
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|error| map_sqlx_error(operation, &error))?;
+            row.map(|(catalog_id, matrix_room, enabled_at)| {
+                Ok(LiveRoomRecord {
+                    catalog_id: RoomCatalogId::from_uuid(catalog_id),
+                    matrix_room_id: MatrixRoomId::new(matrix_room)
+                        .map_err(|_| corrupt_data(operation))?,
+                    enabled_at: UtcMillis::new(enabled_at).map_err(|_| corrupt_data(operation))?,
+                })
+            })
+            .transpose()
         })
     }
 }

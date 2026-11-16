@@ -7,7 +7,10 @@
 //! 大厅不止一个分片在用时，可以指明看第几个（`specs/launch-capacity/design.md` 第 4 步）；不指明
 //! 看 Agent 最多的那个，和登录的人进大厅去的是同一个。
 
+mod agent_kinds;
+mod live_view;
 mod reading;
+mod rooms;
 mod view;
 
 #[cfg(test)]
@@ -15,8 +18,10 @@ mod real_dependency_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use rooms::{RoomLiveFailure, RoomLiveSource, RoomLiveWatch, RoomLiveWatchDependencies};
+
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, PoisonError},
     time::Duration,
 };
@@ -35,7 +40,7 @@ use agent_room_bridge_core::agent_verification::{
     AgentInstanceMessageAuthenticator, AgentInstanceMessageAuthenticatorDependencies,
 };
 use agent_room_domain::{
-    ids::{AgentId, RoomCatalogId, RoomInstanceId},
+    ids::{RoomCatalogId, RoomInstanceId},
     rooms::{MatrixRoomReference, RoomSlug},
     time::UtcMillis,
 };
@@ -54,10 +59,6 @@ const DIRECTORY_TTL_MS: i64 = 30_000;
 const READ_EVENTS: u16 = 60;
 /// `/watch/default` 是默认大厅，和网络 Agent 省略房间时进的是同一间。
 const DEFAULT_ALIAS: &str = "default";
-/// 记着哪些 Agent 是网络 Agent，最多这么多个，满了清空重来。
-const MAX_KNOWN_AGENT_KINDS: usize = 10_000;
-/// 一次最多问这么多个 Agent 是不是网络 Agent。
-const LOOKUP_BATCH: usize = 100;
 
 pub(crate) struct PublicWatchDependencies {
     /// 网络 Agent 的总开关：公开大厅本来就对不要账号的网络 Agent 开放，围观跟着它走。
@@ -88,7 +89,7 @@ pub(crate) struct PublicWatch {
     directory: Arc<dyn RoomDirectory>,
     shard_directory: Arc<dyn PublicLobbyShardDirectory>,
     reader: Arc<dyn PublicLobbyMatrixReader>,
-    network_agents: Arc<dyn NetworkAgentLookup>,
+    network_agents: agent_kinds::AgentKinds,
     clock: Arc<dyn Clock>,
     authenticator: Arc<AgentInstanceMessageAuthenticator>,
     /// 写名片的 Agent 的在线状态，问过的留 15 秒。
@@ -99,7 +100,6 @@ pub(crate) struct PublicWatch {
     shard_lists: tokio::sync::Mutex<HashMap<RoomCatalogId, ShardList>>,
     /// 每个分片一份快照；还没有分片的大厅是 `None`。
     slots: Mutex<HashMap<SlotKey, Arc<LobbySlot>>>,
-    agent_kinds: Mutex<HashMap<AgentId, bool>>,
 }
 
 impl PublicWatch {
@@ -128,14 +128,13 @@ impl PublicWatch {
                 dependencies.clock.clone(),
             ),
             reader: dependencies.reader,
-            network_agents: dependencies.network_agents,
+            network_agents: agent_kinds::AgentKinds::new(dependencies.network_agents),
             clock: dependencies.clock,
             authenticator,
             keys,
             lobbies: tokio::sync::Mutex::new(DirectoryCache::default()),
             shard_lists: tokio::sync::Mutex::new(HashMap::new()),
             slots: Mutex::new(HashMap::new()),
-            agent_kinds: Mutex::new(HashMap::new()),
         })
     }
 
@@ -373,6 +372,7 @@ impl PublicWatch {
         .await
         .map_err(RefreshFailure::Reading)?;
         let network_agents = self
+            .network_agents
             .network_agent_ids(&view::agent_ids(&mutations, &online))
             .await;
         Ok(view::RoomReading {
@@ -381,52 +381,6 @@ impl PublicWatch {
             hidden,
             network_agents,
         })
-    }
-
-    /// 其中哪些是网络 Agent。答案不会变，问过的记着；查不了的这次先当普通 Agent，下次再问。
-    async fn network_agent_ids(&self, candidates: &[AgentId]) -> HashSet<AgentId> {
-        let unknown: Vec<AgentId> = {
-            let kinds = self.kinds();
-            candidates
-                .iter()
-                .filter(|id| !kinds.contains_key(id))
-                .copied()
-                .collect()
-        };
-        for batch in unknown.chunks(LOOKUP_BATCH) {
-            match self.network_agents.network_agent_ids(batch).await {
-                Ok(found) => {
-                    let found: HashSet<AgentId> = found.into_iter().collect();
-                    let mut kinds = self.kinds();
-                    if kinds.len() + batch.len() > MAX_KNOWN_AGENT_KINDS {
-                        kinds.clear();
-                    }
-                    for id in batch {
-                        kinds.insert(*id, found.contains(id));
-                    }
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        operation = error.operation(),
-                        failure = ?error.kind(),
-                        "围观公开大厅：查不了哪些是网络 Agent"
-                    );
-                    break;
-                }
-            }
-        }
-        let kinds = self.kinds();
-        candidates
-            .iter()
-            .filter(|id| kinds.get(id) == Some(&true))
-            .copied()
-            .collect()
-    }
-
-    fn kinds(&self) -> MutexGuard<'_, HashMap<AgentId, bool>> {
-        self.agent_kinds
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 

@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
@@ -18,7 +21,7 @@ use agent_room_domain::{
 };
 use axum::{
     Router,
-    body::{Body, to_bytes},
+    body::{Body, Bytes, to_bytes},
     http::{Request, StatusCode, header},
 };
 use tower::ServiceExt;
@@ -26,7 +29,10 @@ use url::Url;
 use uuid::Uuid;
 
 use super::{SharePageHttpState, router};
-use crate::features::anonymous_limits::{AnonymousLimiter, PER_MINUTE};
+use crate::{
+    features::anonymous_limits::{AnonymousLimiter, PER_MINUTE},
+    public_watch::{RoomLiveFailure, RoomLiveSource},
+};
 
 pub(super) const NOW: i64 = 1_790_000_000_000;
 const DAY: i64 = 24 * 60 * 60 * 1_000;
@@ -77,7 +83,61 @@ impl PublicRoomDirectoryUseCases for FakeDirectory {
     }
 }
 
-struct TestClock;
+/// 分享页放的实况：`rooms` 里有的码照它回答（`Ok` 是放着、给这份快照），没有的不放。`known` 时每个码
+/// 都算刚查过（不占来源的名额）。
+#[derive(Default)]
+pub(super) struct FakeLive {
+    pub(super) rooms: Mutex<HashMap<String, Result<&'static str, RoomLiveFailure>>>,
+    pub(super) known: Mutex<bool>,
+    pub(super) asked: Mutex<Vec<String>>,
+}
+
+impl FakeLive {
+    pub(super) fn showing(
+        code: &str,
+        snapshot: Result<&'static str, RoomLiveFailure>,
+    ) -> Arc<Self> {
+        let live = Self::default();
+        live.rooms.lock().unwrap().insert(code.to_owned(), snapshot);
+        Arc::new(live)
+    }
+
+    fn answer(&self, share_code: &RoomShareCode) -> Result<&'static str, RoomLiveFailure> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(share_code.as_str().to_owned());
+        self.rooms
+            .lock()
+            .unwrap()
+            .get(share_code.as_str())
+            .copied()
+            .unwrap_or(Err(RoomLiveFailure::NotLive))
+    }
+}
+
+impl RoomLiveSource for FakeLive {
+    fn knows(&self, _share_code: &RoomShareCode) -> bool {
+        *self.known.lock().unwrap()
+    }
+
+    fn is_live<'a>(&'a self, share_code: &'a RoomShareCode) -> PortFuture<'a, bool> {
+        let live = self.answer(share_code).is_ok();
+        Box::pin(async move { live })
+    }
+
+    fn snapshot<'a>(
+        &'a self,
+        share_code: &'a RoomShareCode,
+    ) -> PortFuture<'a, Result<Bytes, RoomLiveFailure>> {
+        let answer = self
+            .answer(share_code)
+            .map(|body| Bytes::from_static(body.as_bytes()));
+        Box::pin(async move { answer })
+    }
+}
+
+pub(super) struct TestClock;
 
 impl Clock for TestClock {
     fn now(&self) -> UtcMillis {
@@ -351,6 +411,7 @@ fn test_router(directory: Arc<FakeDirectory>) -> Router {
     router(SharePageHttpState::new(
         directory,
         FakeRepositories::answering(Err(PublicDirectoryFailureKind::NotFound)),
+        Arc::new(FakeLive::default()),
         Arc::new(TestClock),
         Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(TestClock))),
         "agent-room.test",
