@@ -1,15 +1,18 @@
 import type { PrivateRoomFailure } from '@/features/private-rooms/domain/private-room';
 import {
+  publicRoomRepositoryResponseSchema,
+  repositoryClaimListSchema,
   repositoryClaimSchema,
   roomRepositoryBindingResponseSchema,
   roomRepositoryCheckSchema,
   type ClaimRepositoryInput,
   type ProjectRoomGateway,
+  type PublicRoomRepository,
   type RepositoryClaim,
   type RoomRepositoryBinding,
   type RoomRepositoryCheck,
 } from '@/features/private-rooms/domain/project-rooms';
-import type { Result } from '@/shared/result';
+import { ok, type Result } from '@/shared/result';
 
 import { PrivateRoomHttp, type PrivateRoomHttpOptions } from './private-room-http';
 
@@ -54,6 +57,23 @@ export class ControlPlaneProjectRoomClient implements ProjectRoomGateway {
 
   cancelClaim(claimId: string): Answer<void> {
     return this.#http.send(claimPath(claimId), { method: 'DELETE' });
+  }
+
+  async claims(): Answer<readonly RepositoryClaim[]> {
+    const result = await this.#http.request(
+      '/project-rooms/claims',
+      { method: 'GET' },
+      repositoryClaimListSchema,
+    );
+    return result.ok ? ok(result.value.claims) : result;
+  }
+
+  roomRepository(catalogId: string): Answer<PublicRoomRepository | null> {
+    return this.#http.request(
+      `/rooms/${encodeURIComponent(catalogId)}/repository`,
+      { method: 'GET' },
+      publicRoomRepositoryResponseSchema,
+    );
   }
 
   binding(catalogId: string): Answer<RoomRepositoryBinding | null> {

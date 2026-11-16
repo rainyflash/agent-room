@@ -1,9 +1,12 @@
 //! 房主看、解绑、再核对一次这间房绑着的仓库（`specs/redesign/project-rooms.md` 的“网页上绑已有的房间”）。
-//! 只有房主看得到；房间里别的人、管理员都不行。
+//! 谁什么时候在哪个文件里核对上的只有房主看得到；房间里别的人、管理员都不行。
+//!
+//! 绑着哪个仓库（只有 `owner/repo`）谁登录了都能问（[`ProjectRoomService::room_repository_internal`]）：
+//! 房间公开着时它本来就在 `/gh/<owner>/<repo>` 上，房间名旁边的勾要给房间里的每个人看。
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    project_rooms::ClaimCheckResult,
+    project_rooms::{ClaimCheckResult, GithubRepository},
     time::UtcMillis,
 };
 
@@ -38,6 +41,29 @@ impl ProjectRoomService {
         Ok(binding.map(|binding| BindingView {
             binding,
             share_code: candidate.share_code,
+        }))
+    }
+
+    /// 公开着、没关、平台没拿掉、有分享码的主房间绑着的仓库，和 `/gh/` 页认房间的规矩一样。别的一律
+    /// `None`：不说是没有这间房、没绑还是不公开了，免得拿它探私人房间在不在。
+    pub(super) async fn room_repository_internal(
+        &self,
+        request: InspectRoomRepository,
+    ) -> ProjectRoomResult<Option<GithubRepository>> {
+        const OPERATION: &str = "project_room.binding.public";
+        self.claimant(&request.actor, OPERATION)?;
+        let candidate = self
+            .store
+            .project_room_candidate(request.catalog_id)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))?;
+        Ok(candidate.and_then(|room| {
+            let public = room.active
+                && room.listed
+                && !room.held
+                && !room.sub_room
+                && room.share_code.is_some();
+            if public { room.bound } else { None }
         }))
     }
 

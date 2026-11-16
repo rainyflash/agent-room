@@ -8,7 +8,8 @@ import type { PrivateRoomFailure } from './private-room';
  * 默认分支的 `AGENTS.md` 或 `README.md` 里放一行带这间房分享码的链接，服务器读到了就算认上。
  *
  * 认领和绑定都是新接口（3P-2b），回答单独校验，不往公开设置、房间的回答里加字段：那两份网页上也是
- * `.strict()`，旧版桌面端多看到一个字段整页读不出来。绑定只有房主问得到，别人问回 403。
+ * `.strict()`，旧版桌面端多看到一个字段整页读不出来。绑定的细节（谁什么时候在哪个文件里核对上的）只有房主
+ * 问得到，别人问回 403；房间绑着哪个仓库谁登录了都问得到（房间名旁边的勾），它本来就在 `/gh/` 上公开着。
  */
 
 const unixMillisSchema = z.number().int().nonnegative();
@@ -88,11 +89,28 @@ export const repositoryClaimSchema = z
 
 export type RepositoryClaim = z.infer<typeof repositoryClaimSchema>;
 
+/** `GET /project-rooms/claims`：自己在等的认领，最早的在前。 */
+export const repositoryClaimListSchema = z
+  .object({ claims: z.array(repositoryClaimSchema) })
+  .strict();
+
+/** `https://github.com/owner/repo`，只认 github.com 上的 https 地址。 */
+const githubUrlSchema = z.url({ hostname: /^github\.com$/u, protocol: /^https$/u });
+
+/** 谁都能看的那一份：房间绑着的仓库和它在 GitHub 上的地址。 */
+export const publicRoomRepositorySchema = z
+  .object({ repository: githubRepositorySchema, repositoryUrl: githubUrlSchema })
+  .strict();
+
+export type PublicRoomRepository = z.infer<typeof publicRoomRepositorySchema>;
+
+/** `GET /rooms/{c}/repository`：没有这间房、没绑、不公开了都回 `null`。 */
+export const publicRoomRepositoryResponseSchema = publicRoomRepositorySchema.nullable();
+
 export const roomRepositoryBindingSchema = z
   .object({
     repository: githubRepositorySchema,
-    /** `https://github.com/owner/repo`，只认 github.com 上的 https 地址。 */
-    repositoryUrl: z.url({ hostname: /^github\.com$/u, protocol: /^https$/u }),
+    repositoryUrl: githubUrlSchema,
     verifiedByAccountId: z.uuid(),
     verifiedAtUnixMs: unixMillisSchema,
     verifiedFile: z.enum(repositoryFiles),
@@ -139,6 +157,13 @@ export type ProjectRoomGateway = {
   /** Checks now; once a minute per claim, `project_room.check_too_soon` (429) with `retryAfterSeconds`. */
   checkClaim(claimId: string): Answer<RepositoryClaim>;
   cancelClaim(claimId: string): Answer<void>;
+  /** The signed-in person's claims that are still waiting, oldest first. */
+  claims(): Answer<readonly RepositoryClaim[]>;
+  /**
+   * Anyone signed in: the repository a public room is linked to, for the mark next to its name. `null`
+   * when the room doesn't exist, isn't linked or isn't public.
+   */
+  roomRepository(catalogId: string): Answer<PublicRoomRepository | null>;
   /** Owner only. `null` when the room isn't bound. */
   binding(catalogId: string): Answer<RoomRepositoryBinding | null>;
   /**

@@ -93,7 +93,7 @@ import {
   usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
-import { useRoomRepository } from '@/features/private-rooms/data/project-room-queries';
+import { useRoomRepositoryMark } from '@/features/private-rooms/data/project-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
@@ -315,18 +315,12 @@ function ReadyLobby({
     privateRoomList.data.value.some(
       (entry) => entry.catalogId === catalogId && entry.status === 'archived',
     );
-  // 绑着 GitHub 仓库的公开房间，房间名旁边一个勾（specs/redesign/project-rooms.md）。绑定只有房主问得到，
-  // 别人问回 403：只给房主看。
-  const ownsRoom =
-    principal !== null &&
-    privateRoomList.data?.ok === true &&
-    privateRoomList.data.value.some(
-      (entry) => entry.catalogId === catalogId && entry.ownerPrincipalId === principal.principalId,
-    );
-  const repositoryQuery = useRoomRepository(
+  // 绑着 GitHub 仓库的公开房间，房间名旁边一个勾（specs/redesign/project-rooms.md）。房间里的人都看得到：
+  // 公开着的房间绑着哪个仓库本来就在 `/gh/` 上公开着，只在公开着的房间里问。
+  const repositoryQuery = useRoomRepositoryMark(
     projectRooms,
     catalogId,
-    ownsRoom && listing.data?.ok === true && listing.data.value.listed,
+    principal !== null && listing.data?.ok === true && listing.data.value.listed,
   );
   const repository =
     repositoryQuery.data?.ok === true && repositoryQuery.data.value !== null

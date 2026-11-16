@@ -131,7 +131,6 @@ import type {
   RepositoryClaim,
   RoomRepositoryBinding,
 } from '@/features/private-rooms/domain/project-rooms';
-import { forgetClaim, rememberClaim } from '@/features/private-rooms/data/project-room-queries';
 import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
 import { ROOM_PINS_MAX, type RoomPinsGateway } from '@/features/room-pins/domain/room-pins';
 import type {
@@ -2407,12 +2406,6 @@ let fixtureBinding: RoomRepositoryBinding | null =
         shareCode: fixtureListing.shareCode ?? 'aB3xYz',
       }
     : null;
-// 在等的认领只记在浏览器里：夹具替“以前点过绑上”的这个人记上，没在等的清掉。
-if (repositoryFixture === 'pending') {
-  rememberClaim(fixtureOwner, fixturePrivateRoom.catalogId, fixtureClaimId);
-} else if (repositoryFixture !== null) {
-  forgetClaim(fixtureOwner, fixturePrivateRoom.catalogId);
-}
 let fixtureLastRepositoryCheck = 0;
 /** 和服务器一样一分钟只核对一次：太快了回 429 带还要等几秒。 */
 function fixtureCheckTooSoon() {
@@ -2450,6 +2443,15 @@ const projectRooms: ProjectRoomGateway = {
     fixtureClaim = null;
     return Promise.resolve(ok(undefined));
   },
+  claims: () => Promise.resolve(ok(fixtureClaim === null ? [] : [fixtureClaim])),
+  roomRepository: () =>
+    Promise.resolve(
+      ok(
+        fixtureBinding === null
+          ? null
+          : { repository: fixtureBinding.repository, repositoryUrl: fixtureBinding.repositoryUrl },
+      ),
+    ),
   binding: () => Promise.resolve(ok(fixtureBinding)),
   unbind: () => {
     if (repositoryLimitFixture) {

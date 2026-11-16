@@ -8,6 +8,8 @@
 //! - 仓库已经绑着别的房间：那间房的链接还在仓库里（或者它被平台冻结、拿掉了）就一直等；不在了，地址
 //!   转给新认领的这间，原来那间照旧公开、不再绑仓库。
 //! - 房主能看绑着哪个仓库、再核对一次、解绑；解绑后名下有两间不绑仓库的公开房间就不让解。
+//! - 认领的人能列出自己在等的认领（网页的设置拿它找这间房在等的那一个）；谁登录了都能问一间公开房间
+//!   绑着哪个仓库（房间名旁边的勾），这本来就在 `/gh/` 地址上公开着。
 //!
 //! 开始核对之前先在库里记下这一刻（`start_check`），同一个认领别处就不再同时核对：多个控制面一起跑时
 //! 也只读一遍 GitHub、只建一间房。
@@ -235,6 +237,16 @@ pub trait ProjectRoomUseCases: Send + Sync {
     fn check_claim(&self, request: InspectClaim) -> PortFuture<'_, ProjectRoomResult<ClaimView>>;
 
     fn cancel_claim(&self, request: InspectClaim) -> PortFuture<'_, ProjectRoomResult<()>>;
+
+    /// 认领的人在等的认领，最早的在前。认上了、撤了、作废了的不在里面。
+    fn claims(&self, actor: PrivateRoomActor) -> PortFuture<'_, ProjectRoomResult<Vec<ClaimView>>>;
+
+    /// 这间房此刻绑着哪个仓库，谁登录了都能问（房间名旁边的勾）。只认公开着、没关、平台没拿掉的主房间；
+    /// 没有这间房、没绑、不公开了一律 `None`，不分是哪一种。
+    fn room_repository(
+        &self,
+        request: InspectRoomRepository,
+    ) -> PortFuture<'_, ProjectRoomResult<Option<GithubRepository>>>;
 
     /// 房主看这间房绑着哪个仓库；没绑是 `None`。
     fn binding(
@@ -465,6 +477,17 @@ impl ProjectRoomService {
         }
     }
 
+    async fn claims_internal(&self, actor: PrivateRoomActor) -> ProjectRoomResult<Vec<ClaimView>> {
+        const OPERATION: &str = "project_room.claim.list";
+        let principal_id = self.claimant(&actor, OPERATION)?;
+        let records = self
+            .store
+            .claims_of(principal_id)
+            .await
+            .map_err(|error| repository_failure(OPERATION, &error))?;
+        Ok(records.into_iter().map(ClaimView::pending).collect())
+    }
+
     async fn own_claim(
         &self,
         principal_id: PrincipalId,
@@ -518,6 +541,17 @@ impl ProjectRoomUseCases for ProjectRoomService {
 
     fn cancel_claim(&self, request: InspectClaim) -> PortFuture<'_, ProjectRoomResult<()>> {
         Box::pin(self.cancel_claim_internal(request))
+    }
+
+    fn claims(&self, actor: PrivateRoomActor) -> PortFuture<'_, ProjectRoomResult<Vec<ClaimView>>> {
+        Box::pin(self.claims_internal(actor))
+    }
+
+    fn room_repository(
+        &self,
+        request: InspectRoomRepository,
+    ) -> PortFuture<'_, ProjectRoomResult<Option<GithubRepository>>> {
+        Box::pin(self.room_repository_internal(request))
     }
 
     fn binding(

@@ -5,11 +5,11 @@ import { useCallback, useEffect, useId, useState, type SubmitEvent } from 'react
 import { useTranslation } from 'react-i18next';
 
 import {
-  forgetClaim,
-  rememberClaim,
-  rememberedClaim,
+  pendingClaimsQueryKey,
   repositoryClaimQueryKey,
+  roomRepositoryMarkQueryKey,
   roomRepositoryQueryKey,
+  usePendingClaims,
   useRepositoryClaim,
   useRoomRepository,
 } from '@/features/private-rooms/data/project-room-queries';
@@ -83,7 +83,7 @@ export function ProjectRoomRepository({
       </>
     );
   } else if (binding.data.value === null) {
-    content = <ClaimSection catalogId={catalogId} gateway={gateway} principalId={principalId} />;
+    content = <ClaimSection catalogId={catalogId} gateway={gateway} />;
   } else {
     content = (
       <BoundRepository
@@ -104,24 +104,68 @@ export function ProjectRoomRepository({
   );
 }
 
-/** 等着的认领记在这个浏览器里（`rememberedClaim`）；没有就给输入框。 */
-function ClaimSection({ catalogId, gateway, principalId }: ProjectRoomRepositoryProps) {
+type ClaimSectionProps = {
+  readonly catalogId: string;
+  readonly gateway: ProjectRoomGateway;
+};
+
+/**
+ * 这间房在等的认领问服务器（自己在等的认领里要绑这间房的那一个，一间房同时只能有一个）：换个浏览器、
+ * 换台电脑也接得上。没有就给输入框。
+ */
+function ClaimSection({ catalogId, gateway }: ClaimSectionProps) {
+  const { t } = useTranslation();
+  const claims = usePendingClaims(gateway);
+  if (claims.isPending) {
+    return <ClaimLoading />;
+  }
+  if (claims.isError || !claims.data.ok) {
+    return (
+      <>
+        {claims.data?.ok === false ? (
+          <ProjectRoomFailureNotice failure={claims.data.error} />
+        ) : null}
+        <Button
+          className="room-repository__retry"
+          icon={<RefreshCw aria-hidden="true" />}
+          onClick={() => void claims.refetch()}
+          size="compact"
+          tone="quiet"
+        >
+          {t('projectRooms.retry')}
+        </Button>
+      </>
+    );
+  }
+  const waiting = claims.data.value.find(
+    (claim) => claim.catalogId === catalogId && claim.claimId !== null,
+  );
+  return (
+    <RoomClaim catalogId={catalogId} gateway={gateway} initialClaimId={waiting?.claimId ?? null} />
+  );
+}
+
+function RoomClaim({
+  catalogId,
+  gateway,
+  initialClaimId,
+}: ClaimSectionProps & { readonly initialClaimId: string | null }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [claimId, setClaimId] = useState(() => rememberedClaim(principalId, catalogId));
+  const [claimId, setClaimId] = useState(initialClaimId);
   // 认领没了（认上了、作废了、房间不能绑了）时，回到输入框上面说一句为什么。
   const [gone, setGone] = useState<Failure | null>(null);
   const claim = useRepositoryClaim(gateway, claimId);
 
   const settle = useCallback(
     (reason: Failure | null) => {
-      forgetClaim(principalId, catalogId);
       setClaimId(null);
       setGone(reason);
-      // 可能已经绑上了：再问一次这间房绑着哪个。
+      void queryClient.invalidateQueries({ queryKey: pendingClaimsQueryKey });
+      // 可能已经绑上了：再问一次这间房绑着哪个（勾挂在它下面，一起重问）。
       void queryClient.invalidateQueries({ queryKey: roomRepositoryQueryKey(catalogId) });
     },
-    [catalogId, principalId, queryClient],
+    [catalogId, queryClient],
   );
 
   const data = claim.data;
@@ -141,7 +185,7 @@ function ClaimSection({ catalogId, gateway, principalId }: ProjectRoomRepository
         gateway={gateway}
         gone={gone}
         onClaimed={(next) => {
-          rememberClaim(principalId, catalogId, next);
+          void queryClient.invalidateQueries({ queryKey: pendingClaimsQueryKey });
           setGone(null);
           setClaimId(next);
         }}
@@ -394,6 +438,7 @@ function BoundRepository({
           roomRepositoryQueryKey(catalogId),
           ok(result.value.binding),
         );
+        void queryClient.invalidateQueries({ queryKey: roomRepositoryMarkQueryKey(catalogId) });
       } else if (result.error.code === CHECK_TOO_SOON) {
         waitFor(result.error.retryAfterSeconds ?? DEFAULT_RETRY_SECONDS);
       }
@@ -405,6 +450,8 @@ function BoundRepository({
       setConfirming(false);
       if (!result.ok) return;
       queryClient.setQueryData<BindingResult>(roomRepositoryQueryKey(catalogId), ok(null));
+      // 勾没了：房间名旁边那一份跟着重问。
+      void queryClient.invalidateQueries({ queryKey: roomRepositoryMarkQueryKey(catalogId) });
     },
   });
   const lastCheck = check.data?.ok === true ? check.data.value.lastCheck : null;
