@@ -1,7 +1,7 @@
 import { Banner, Button, CopyBlock, Spinner } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -20,17 +20,21 @@ import {
   type PrivateRoomListingSettings,
 } from '@/features/private-rooms/domain/private-room-listing';
 import type { ProjectRoomGateway } from '@/features/private-rooms/domain/project-rooms';
+import type { RoomLiveViewGateway } from '@/features/private-rooms/domain/room-live-view';
 import { useRoomRepository } from '@/features/private-rooms/data/project-room-queries';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
 import { ProjectRoomRepository } from '@/features/private-rooms/ui/project-room-repository';
 import { RoomListingChoices } from '@/features/private-rooms/ui/room-listing-choices';
+import { RoomLiveViewSettings } from '@/features/private-rooms/ui/room-live-view-settings';
 import type { Result } from '@/shared/result';
 
 import './private-room-public-settings.css';
 
 export type PrivateRoomPublicSettingsProps = {
   readonly listings: PrivateRoomListingGateway;
+  /** 分享页放实况（specs/redesign/project-rooms.md）；没有这项服务时不出“分享页放实况”一组。 */
+  readonly liveViews?: RoomLiveViewGateway | undefined;
   readonly principalId: string;
   /** 绑 GitHub 仓库（specs/redesign/project-rooms.md）；没有这项服务时不出“GitHub 仓库”一组。 */
   readonly projects?: ProjectRoomGateway | undefined;
@@ -41,12 +45,13 @@ type ListingResult = Result<PrivateRoomListing, PrivateRoomFailure>;
 
 /**
  * 房间设置的“公开”一节（`specs/public-rooms/design.md`“网页”）：公开还是私密、别人怎么进、新成员
- * 拿到什么、没有账号的网络 Agent 进不进得来，以及分享链接。公开着的房间，房主还看得到“GitHub 仓库”
- * 一组（`specs/redesign/project-rooms.md`）。房主能改，别的成员只看得到。公开和
- * 私密之间切换先在这一节里确认一次，说清楚加密怎么变、不登录的人看得到哪些。
+ * 拿到什么、没有账号的网络 Agent 进不进得来，以及分享链接。公开着的房间多“分享页放实况”一组（谁都看得到，
+ * 房主和管理员能开关），房主还看得到“GitHub 仓库”一组（`specs/redesign/project-rooms.md`）。公开设置房主能改，
+ * 别的成员只看得到。公开和私密之间切换先在这一节里确认一次，说清楚加密怎么变、不登录的人看得到哪些。
  */
 export function PrivateRoomPublicSettings({
   listings,
+  liveViews,
   principalId,
   projects,
   room,
@@ -79,6 +84,11 @@ export function PrivateRoomPublicSettings({
     );
   }
   const current = listing.data.value;
+  // 公开着的房间里谁都看得到实况开没开；房主和管理员能开关（服务器说的 `canChange`）。
+  const liveView =
+    current.listed && liveViews !== undefined ? (
+      <RoomLiveViewSettings catalogId={room.catalogId} gateway={liveViews} />
+    ) : null;
   return (
     <div className="room-listing">
       {current.platformHold === null ? null : (
@@ -90,12 +100,17 @@ export function PrivateRoomPublicSettings({
         <OwnerSettings
           current={current}
           listings={listings}
+          liveView={liveView}
+          liveViewAvailable={liveViews !== undefined}
           principalId={principalId}
           projects={projects}
           room={room}
         />
       ) : (
-        <ListingSummary current={current} />
+        <>
+          <ListingSummary current={current} />
+          {liveView}
+        </>
       )}
     </div>
   );
@@ -104,12 +119,18 @@ export function PrivateRoomPublicSettings({
 function OwnerSettings({
   current,
   listings,
+  liveView,
+  liveViewAvailable,
   principalId,
   projects,
   room,
 }: {
   readonly current: PrivateRoomListing;
   readonly listings: PrivateRoomListingGateway;
+  /** “分享页放实况”一组，排在分享链接后面；房间不公开时是 `null`。 */
+  readonly liveView: ReactNode;
+  /** 有没有实况这项服务：设成公开的确认框里才说实况能在这一节打开。 */
+  readonly liveViewAvailable: boolean;
   readonly principalId: string;
   readonly projects: ProjectRoomGateway | undefined;
   readonly room: PrivateRoom;
@@ -135,7 +156,8 @@ function OwnerSettings({
       if (!result.ok) return;
       queryClient.setQueryData<ListingResult>(privateRoomListingQueryKey(room.catalogId), result);
       setDraft(null);
-      // 改回私密会打开加密：房间列表和房间页跟着重读。
+      // 改回私密会打开加密：房间列表和房间页跟着重读。实况（`roomLiveViewQueryKey`）也挂在这个键下面：
+      // 改回私密、换了加入方式时服务器已经把它关了，设置里的开关和顶栏那一行一起重问。
       await queryClient.invalidateQueries({
         queryKey: privateRoomListQueryKey,
         refetchType: 'active',
@@ -193,6 +215,10 @@ function OwnerSettings({
         <SwitchConfirmation
           busy={update.isPending}
           current={current}
+          // 以前就有的房间设成公开时实况不会自己打开（新建时才默认开）：能开的才说一句在这一节里开。
+          liveViewLater={
+            liveViewAvailable && !current.endToEndEncrypted && shown.joinMode === 'open'
+          }
           listed={shown.listed}
           onCancel={() => {
             setConfirming(false);
@@ -246,6 +272,7 @@ function OwnerSettings({
           owner={{ catalogId: room.catalogId, listings, repositoryBound }}
         />
       ) : null}
+      {liveView}
       {saved.listed && projects !== undefined ? (
         <ProjectRoomRepository
           catalogId={room.catalogId}
@@ -281,12 +308,15 @@ function EncryptionNote({
 function SwitchConfirmation({
   busy,
   current,
+  liveViewLater,
   listed,
   onCancel,
   onConfirm,
 }: {
   readonly busy: boolean;
   readonly current: PrivateRoomListing;
+  /** 设成公开以后能在这一节里打开实况：确认框里说一句它不会自己打开。 */
+  readonly liveViewLater: boolean;
   readonly listed: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -321,6 +351,9 @@ function SwitchConfirmation({
                   : 'privateRooms.listing.confirm.public.plain',
               )}
             </span>
+            {liveViewLater ? (
+              <span>{t('privateRooms.listing.confirm.public.liveView')}</span>
+            ) : null}
           </>
         ) : (
           <>

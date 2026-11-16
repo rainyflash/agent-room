@@ -269,6 +269,7 @@ function RoomSettingsContent({
     privateRooms,
     projectRooms,
     publicRoomJoins,
+    roomLiveViews,
     roomNotices,
     roomRoleChanges,
   } = useAppServices();
@@ -332,6 +333,7 @@ function RoomSettingsContent({
       return room === null || privateRoomListings === undefined ? null : (
         <PrivateRoomPublicSettings
           listings={privateRoomListings}
+          liveViews={roomLiveViews}
           principalId={principal.principalId}
           projects={projectRooms}
           room={room}

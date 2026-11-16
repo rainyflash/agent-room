@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +15,10 @@ import type {
   ProjectRoomGateway,
   RoomRepositoryBinding,
 } from '@/features/private-rooms/domain/project-rooms';
+import type {
+  RoomLiveView,
+  RoomLiveViewGateway,
+} from '@/features/private-rooms/domain/room-live-view';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 
@@ -99,6 +103,7 @@ function renderSettings(
   listings: PrivateRoomListingGateway,
   principalId = OWNER,
   projects?: ProjectRoomGateway,
+  liveViews?: RoomLiveViewGateway,
 ) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -106,6 +111,7 @@ function renderSettings(
       <I18nextProvider i18n={i18n}>
         <PrivateRoomPublicSettings
           listings={listings}
+          liveViews={liveViews}
           principalId={principalId}
           projects={projects}
           room={room}
@@ -113,6 +119,22 @@ function renderSettings(
       </I18nextProvider>
     </QueryClientProvider>,
   );
+}
+
+const liveOff: RoomLiveView = {
+  canChange: true,
+  enabled: false,
+  enabledAtUnixMs: null,
+  live: false,
+  unmetConditions: [],
+};
+
+function liveViews(view: RoomLiveView = liveOff) {
+  const liveView = vi.fn<RoomLiveViewGateway['liveView']>(() => Promise.resolve(ok(view)));
+  const updateLiveView = vi.fn<RoomLiveViewGateway['updateLiveView']>(() =>
+    Promise.resolve(ok(view)),
+  );
+  return { liveView, updateLiveView };
 }
 
 const boundRepository: RoomRepositoryBinding = {
@@ -316,5 +338,104 @@ describe('PrivateRoomPublicSettings', () => {
     expect(await screen.findByText('Agent Room took this room off Explore')).toBeInTheDocument();
     expect(screen.getByText(/Reason: spam\./u)).toBeInTheDocument();
     expect(screen.queryByLabelText('Share link')).not.toBeInTheDocument();
+  });
+});
+
+describe('“公开”一节里的“分享页放实况”', () => {
+  const liveRegion = () => screen.queryByRole('region', { name: 'Live view on the share page' });
+
+  it('公开着的房间里房主和别的成员都看得到，房主那里排在分享链接后面、GitHub 仓库前面', async () => {
+    const live = liveViews();
+    const owner = renderSettings(gateway(publicListing).value, OWNER, projectRooms(null), live);
+    const region = await screen.findByRole('region', { name: 'Live view on the share page' });
+    const share = screen.getByRole('heading', { name: 'Share link' });
+    const repository = await screen.findByRole('heading', { name: 'GitHub repository' });
+    expect(share.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      region.compareDocumentPosition(repository) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    owner.unmount();
+
+    // 别的成员（服务器说他不能开关）：照样看得到开没开，开关只给房主和管理员。
+    renderSettings(
+      gateway(publicListing).value,
+      MEMBER,
+      undefined,
+      liveViews({ ...liveOff, canChange: false }),
+    );
+    const memberRegion = await screen.findByRole('region', {
+      name: 'Live view on the share page',
+    });
+    expect(await within(memberRegion).findByText('Off.')).toBeInTheDocument();
+    expect(within(memberRegion).queryByRole('switch')).toBeNull();
+    expect(memberRegion).toHaveTextContent('Only the owner and admins can turn it on or off.');
+  });
+
+  it('私密的房间、没有这项服务时都没有这一组，也不去问', async () => {
+    const live = liveViews();
+    const privateRoom = renderSettings(gateway(privateListing).value, OWNER, undefined, live);
+    await screen.findByRole('group', { name: 'Who can find this room' });
+    expect(liveRegion()).toBeNull();
+    expect(live.liveView).not.toHaveBeenCalled();
+    privateRoom.unmount();
+
+    renderSettings(gateway(publicListing).value);
+    await screen.findByLabelText('Share link');
+    expect(liveRegion()).toBeNull();
+  });
+
+  it('存好公开设置以后再问一次实况：换了加入方式，服务器可能已经把它关了', async () => {
+    const live = liveViews({
+      ...liveOff,
+      enabled: true,
+      enabledAtUnixMs: 1_790_000_000_000,
+      live: true,
+    });
+    renderSettings(gateway(publicListing).value, OWNER, undefined, live);
+    expect(
+      await screen.findByRole('switch', { name: 'Show what’s said here on the share page' }),
+    ).toBeChecked();
+    expect(live.liveView).toHaveBeenCalledTimes(1);
+
+    live.liveView.mockResolvedValue(ok({ ...liveOff, unmetConditions: ['join_mode'] }));
+    fireEvent.click(screen.getByRole('radio', { name: /Ask to join/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('switch', { name: 'Show what’s said here on the share page' }),
+      ).not.toBeChecked();
+    });
+    expect(live.liveView).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText(
+        'Only rooms people can join directly can show a live view. Set How people join to Join directly first.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('设成公开的确认框说实况不会自己打开：不加密、直接进时才说', async () => {
+    const plainPrivate: PrivateRoomListing = { ...privateListing, endToEndEncrypted: false };
+    const live = liveViews();
+    const plain = renderSettings(gateway(plainPrivate).value, OWNER, undefined, live);
+    fireEvent.click(await screen.findByRole('radio', { name: /Public/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const later =
+      'The live view on the share page doesn’t turn on by itself. Once the room is public, you can turn it on in this section.';
+    expect(screen.getByText(later)).toBeInTheDocument();
+    // 改成要申请：开不了，就不说。
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('radio', { name: /Ask to join/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.queryByText(later)).toBeNull();
+    plain.unmount();
+
+    // 加密的房间公开以后也加密，开不了实况。
+    renderSettings(gateway(privateListing).value, OWNER, undefined, live);
+    fireEvent.click(await screen.findByRole('radio', { name: /Public/u }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByText(/It stays encrypted/u)).toBeInTheDocument();
+    expect(screen.queryByText(later)).toBeNull();
   });
 });

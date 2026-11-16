@@ -73,6 +73,8 @@ export type AppServices = {
   readonly privateRoomListings?: import('@/features/private-rooms/domain/private-room-listing').PrivateRoomListingGateway;
   /** 公开房间绑 GitHub 仓库：认领、核对、解绑（specs/redesign/project-rooms.md）；测试和夹具里可以没有。 */
   readonly projectRooms?: import('@/features/private-rooms/domain/project-rooms').ProjectRoomGateway;
+  /** 公开房间的“分享页放实况”开关（specs/redesign/project-rooms.md，3P-6）；测试和夹具里可以没有。 */
+  readonly roomLiveViews?: import('@/features/private-rooms/domain/room-live-view').RoomLiveViewGateway;
   /** 从发现页进公开房间：直接进、申请、撤回；测试和夹具里可以没有。 */
   readonly publicRoomEntry?: import('@/features/private-rooms/domain/public-room-join').PublicRoomEntryGateway;
   /** 公开房间的申请：房主和管理员看在等的、批准或拒绝；测试和夹具里可以没有。 */

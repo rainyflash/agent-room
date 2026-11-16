@@ -28,6 +28,7 @@ export function RoomBeacon({
   privateRoom,
   listed = false,
   unencrypted = false,
+  live = false,
   serverReadable = false,
   archived = false,
   layoutSwitch,
@@ -58,6 +59,7 @@ export function RoomBeacon({
         <RoomKindLabel
           archived={archived}
           listed={listed}
+          live={live}
           privateRoom={privateRoom}
           serverReadable={serverReadable}
           unencrypted={unencrypted}

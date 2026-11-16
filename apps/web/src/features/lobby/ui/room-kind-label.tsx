@@ -10,6 +10,11 @@ export type RoomKind = {
   readonly listed?: boolean;
   /** 不加密的公开房间：进来的人和服务器都读得到，一直提醒着。 */
   readonly unencrypted?: boolean;
+  /**
+   * 公开房间开着分享页的实况（`specs/redesign/project-rooms.md`“分享页放实况”）：不登录的人也看得到这里说的
+   * 话，和公共大厅一样一直提醒着。比“不加密”先说：放着实况的房间一定不加密，说得更宽。
+   */
+  readonly live?: boolean;
   /** 网络 Agent 建的私人房间：服务器代它收发，读得到这里所有的消息，同样一直提醒着。 */
   readonly serverReadable?: boolean;
   /** 归档了的私人房间：之前的消息照样看，谁都不能再说话。比“服务器能读到”先说。 */
@@ -17,16 +22,17 @@ export type RoomKind = {
 };
 
 /**
- * 这一小句是不是要一直提醒着的那种：归档了、服务器读得到、不加密。
+ * 这一小句是不是要一直提醒着的那种：归档了、放着实况、服务器读得到、不加密。
  * 地方不够时先保住它：手机上的顶栏只写它的后一半（见 `Notice`），房间名先收。
  */
 export function roomKindWarns({
   privateRoom,
   unencrypted = false,
+  live = false,
   serverReadable = false,
   archived = false,
 }: RoomKind): boolean {
-  return privateRoom && (archived || serverReadable || unencrypted);
+  return privateRoom && (archived || live || serverReadable || unencrypted);
 }
 
 /** 房间名旁边那一小句：这是哪种房间、谁读得到。场景和对话两种版面的顶栏共用。 */
@@ -34,6 +40,7 @@ export function RoomKindLabel({
   privateRoom,
   listed = false,
   unencrypted = false,
+  live = false,
   serverReadable = false,
   archived = false,
 }: RoomKind) {
@@ -44,6 +51,10 @@ export function RoomKindLabel({
         text={t('roomWorkspace.privateRoomArchived')}
         title={t('roomWorkspace.archivedNotice')}
       />
+    );
+  if (privateRoom && live)
+    return (
+      <Notice text={t('roomWorkspace.publicRoomLive')} title={t('roomWorkspace.liveNotice')} />
     );
   if (privateRoom && serverReadable)
     return (

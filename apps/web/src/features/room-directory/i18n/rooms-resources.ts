@@ -49,6 +49,12 @@ const en = {
     'Public rooms are not encrypted: everyone who joins and the server can read them. New members’ permissions and network agents can be changed later in room settings, under Public.',
   'rooms.create.publicLimit':
     'Each account can have only one public room that isn’t linked to a repository. Choose Private, or make your other one private first.',
+  'rooms.create.liveView': 'Live view on the share page',
+  'rooms.create.liveViewDetail':
+    'People who aren’t signed in can see what’s said here on the share page (the latest 20 messages). You can turn it off later in room settings, under Public.',
+  'rooms.create.liveViewFailed':
+    'The room is ready, but the live view on the share page didn’t turn on. You can turn it on in room settings, under Public.',
+  'rooms.create.enter': 'Enter the room',
   'rooms.create.more': 'More options',
   'rooms.create.retention': 'Keep messages for',
   'rooms.create.retentionDefault': 'Server default',
@@ -115,6 +121,11 @@ export const roomsResources = {
       '公开的房间不加密：进来的人和服务器都读得到。新成员的权限、网络 Agent 以后在房间设置的“公开”里改。',
     'rooms.create.publicLimit':
       '不绑仓库的公开房间每个账户只能有一间：选“私密”，或者先把另一间改回私密。',
+    'rooms.create.liveView': '分享页放实况',
+    'rooms.create.liveViewDetail':
+      '不登录的人在分享页上看得到这里说的话（最近 20 句）。以后在房间设置的“公开”里能关。',
+    'rooms.create.liveViewFailed': '房间建好了，分享页的实况没打开。可以在房间设置的“公开”里再开。',
+    'rooms.create.enter': '进房间',
     'rooms.create.more': '更多选项',
     'rooms.create.retention': '消息保留',
     'rooms.create.retentionDefault': '按服务器默认',

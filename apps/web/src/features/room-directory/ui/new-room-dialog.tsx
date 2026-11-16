@@ -1,8 +1,11 @@
 import { Banner, Button, Details, Dialog, Field, Spinner } from '@agent-room/ui-system';
+import { useQueryClient } from '@tanstack/react-query';
 import { DoorOpen } from 'lucide-react';
 import { useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useAppServices } from '@/app/app-services';
+import { roomLiveViewQueryKey } from '@/features/private-rooms/data/room-live-view-queries';
 import {
   permissions,
   type CreatePrivateRoomInput,
@@ -43,27 +46,59 @@ export function NewRoomDialog({
   readonly onClose: () => void;
 }) {
   const commands = useRoomCommands();
+  const { roomLiveViews } = useAppServices();
+  const queryClient = useQueryClient();
   return (
-    <NewRoomForm initiallyListed={initiallyListed} onClose={onClose} onCreate={commands.create} />
+    <NewRoomForm
+      initiallyListed={initiallyListed}
+      onClose={onClose}
+      onCreate={commands.create}
+      onEnter={commands.show}
+      onTurnOnLiveView={
+        roomLiveViews === undefined
+          ? undefined
+          : async (catalogId) => {
+              const result = await roomLiveViews.updateLiveView(catalogId, true);
+              // 进去以后顶栏那一行就有了，不用再问一次。
+              if (result.ok) queryClient.setQueryData(roomLiveViewQueryKey(catalogId), result);
+              return result;
+            }
+      }
+    />
   );
 }
 
 export type NewRoomFormProps = {
   readonly initiallyListed?: boolean;
   readonly onClose: () => void;
-  /** 同一次填写的重试沿用同一个请求 ID，服务端不会再建一个房间。 */
+  /** 建好、加入，不跳过去。同一次填写的重试沿用同一个请求 ID，服务端不会再建一个房间。 */
   readonly onCreate: (
     requestId: string,
     input: CreatePrivateRoomInput,
   ) => Promise<Result<PrivateRoom, PrivateRoomFailure>>;
+  /** 跳进建好的房间。 */
+  readonly onEnter: (room: PrivateRoom) => Promise<void>;
+  /**
+   * 建好以后打开分享页的实况（`specs/redesign/project-rooms.md`“分享页放实况”）：建房的请求里不带它，建好再
+   * `PUT` 一次。没有这项服务时不出那个勾。
+   */
+  readonly onTurnOnLiveView?:
+    ((catalogId: string) => Promise<Result<unknown, PrivateRoomFailure>>) | undefined;
 };
 
 /**
  * 一屏建好房间：名字、用途、私密还是公开（`specs/public-rooms/design.md`“网页”）；保留多久、现在就
  * 邀请谁放在“更多选项”里，不填就用默认值。选公开就说清楚不加密，新成员的权限和网络 Agent 先用默认的，
- * 以后在房间设置的“公开”里改。
+ * 以后在房间设置的“公开”里改。公开、直接进的房间多一个“分享页放实况”的勾，默认勾上；建好以后再打开它，
+ * 没开成房间照样在，说一句、给“进房间”。
  */
-export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewRoomFormProps) {
+export function NewRoomForm({
+  initiallyListed = false,
+  onClose,
+  onCreate,
+  onEnter,
+  onTurnOnLiveView,
+}: NewRoomFormProps) {
   const { t } = useTranslation();
   const formId = useId();
   const identifiers = useMemo(() => new BrowserUuidV7Factory(), []);
@@ -73,6 +108,15 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
     joinMode: 'open',
     listed: initiallyListed,
   });
+  const [liveView, setLiveView] = useState(true);
+  // 房间建好了、实况没开成：不再建，按钮换成“进房间”。
+  const [liveViewMissed, setLiveViewMissed] = useState<{
+    readonly failure: PrivateRoomFailure;
+    readonly room: PrivateRoom;
+  } | null>(null);
+  // 只有公开、直接进的房间能放实况：要申请、只能邀请的不出这个勾。
+  const offersLiveView =
+    onTurnOnLiveView !== undefined && listing.listed && listing.joinMode === 'open';
   const [retention, setRetention] = useState('');
   const [inviteText, setInviteText] = useState('');
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
@@ -81,10 +125,12 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
-  // 第一次提交后请求就定下来了：结果不明或进房间失败时，重试必须是同一个请求。
-  const attempt = useRef<{ readonly id: string; readonly input: CreatePrivateRoomInput } | null>(
-    null,
-  );
+  // 第一次提交后请求就定下来了：结果不明或进房间失败时，重试必须是同一个请求。开不开实况也一起定下来。
+  const attempt = useRef<{
+    readonly id: string;
+    readonly input: CreatePrivateRoomInput;
+    readonly liveView: boolean;
+  } | null>(null);
   const locked = attempt.current !== null;
   const rejected = failure !== null && REJECTED_INPUT.has(failure);
   const invitations = parseInvitationList(inviteText);
@@ -97,10 +143,28 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
       );
   const ready = name.trim().length > 0 && invitations.ok;
 
+  const enter = async (room: PrivateRoom): Promise<void> => {
+    await onEnter(room);
+    onClose();
+  };
+
   const submit = async (): Promise<void> => {
-    if (pendingRef.current || (!locked && !ready)) return;
+    if (pendingRef.current) return;
+    if (liveViewMissed !== null) {
+      pendingRef.current = true;
+      setPending(true);
+      try {
+        await enter(liveViewMissed.room);
+      } finally {
+        pendingRef.current = false;
+        setPending(false);
+      }
+      return;
+    }
+    if (!locked && !ready) return;
     pendingRef.current = true;
     attempt.current ??= {
+      liveView: offersLiveView && liveView,
       id: identifiers.next(),
       input: {
         name: name.trim(),
@@ -129,7 +193,15 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
     try {
       const result = await onCreate(attempt.current.id, attempt.current.input);
       if (result.ok) {
-        onClose();
+        if (attempt.current.liveView && onTurnOnLiveView !== undefined) {
+          const turned = await onTurnOnLiveView(result.value.catalogId);
+          if (!turned.ok) {
+            // 房间已经建好了：不再建，说一句实况没开、在设置里能开，按钮换成“进房间”。
+            setLiveViewMissed({ failure: turned.error, room: result.value });
+            return;
+          }
+        }
+        await enter(result.value);
         return;
       }
       if (REJECTED_INPUT.has(result.error.code)) attempt.current = null;
@@ -155,11 +227,13 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
           type="submit"
         >
           {t(
-            pending
-              ? 'rooms.create.creating'
-              : failure === null || rejected
-                ? 'rooms.create.submit'
-                : 'rooms.retry',
+            liveViewMissed !== null
+              ? 'rooms.create.enter'
+              : pending
+                ? 'rooms.create.creating'
+                : failure === null || rejected
+                  ? 'rooms.create.submit'
+                  : 'rooms.retry',
           )}
         </Button>
       }
@@ -214,6 +288,22 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
             {t('rooms.create.publicNote')}
           </p>
         ) : null}
+        {offersLiveView ? (
+          <label className="room-listing__toggle">
+            <input
+              checked={liveView}
+              disabled={pending || locked}
+              onChange={(event) => {
+                setLiveView(event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <span>
+              <strong>{t('rooms.create.liveView')}</strong>
+              <small>{t('rooms.create.liveViewDetail')}</small>
+            </span>
+          </label>
+        ) : null}
         <Details className="new-room__more" summary={t('rooms.create.more')}>
           <Field label={t('rooms.create.retention')}>
             <select
@@ -256,6 +346,14 @@ export function NewRoomForm({ initiallyListed = false, onClose, onCreate }: NewR
           ) : null}
         </Details>
       </form>
+      {liveViewMissed === null ? null : (
+        <Banner tone="warning">
+          <p>{t('rooms.create.liveViewFailed')}</p>
+          <Details summary={t('rooms.details')}>
+            <code>{liveViewMissed.failure.code}</code>
+          </Details>
+        </Banner>
+      )}
       {failure === 'private_room.public_limit_reached' ? (
         <Banner tone="warning">{t('rooms.create.publicLimit')}</Banner>
       ) : failure === null ? null : (
