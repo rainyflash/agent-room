@@ -470,7 +470,7 @@
     - 15 分钟里最多核对 15 次（第一次马上）；到时间还没认上就回原来的认领，说再跑一次接着等。
     - `agents.md`、`agents.txt` 那一句照“分步”放在 3P-6a，这一步没改。
   - 测试：`agent-client` 认 `origin` 的写法、每分钟核对、太快等下一分钟、认领被后台认上后再认领、作废换了码、别的拒绝（暂停时间跑）；命令行认仓库、`AGENTS.md` 新建、加在末尾（换行、空行）、已经有链接、再跑一次接着等同一个认领而且只写一行、`--room` 换房间号、不在 git 仓库里、控制面拒绝和 Bridge 太旧；命令进程里 `--name` 不带 `--wait`、坏的 `--repo` 在碰 Bridge 之前就报错，`guide` 里有那一句。命令行的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。
-- 2026-11-16 3P-4c（本机 MCP `agent_room_claim_repository`）：
+- 2026-11-16 3P-4c（#907，本机 MCP `agent_room_claim_repository`）：
   - 参数 `repo`、`room`、`wait`，和命令行一样。工具不碰文件：认领（`wait` 时接着每分钟核对一次、最多 15 分钟），回 `repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`、`next`，在等的另带 `claimId`、`lastCheck`，认上了的带 `catalogId`。`next` 说下一步：没认上时叫 Agent 把那一行写进仓库根目录的 `AGENTS.md`（没有就建，里面已经有 Agent Room 的链接就别动、告诉人）、把徽章给人看、问人要不要提交推送，不许自己提交推送；认上了叫它用 `agent_room_join` 按 `shareUrl` 进房间。
   - 认领、核对和等待用 `agent-client` 的 `project_rooms.rs`，和命令行同一份；`room` 照 `agent_room_list_rooms` 的名单换成房间号（和建子房间找父房间一样）。不在会话里：认领是替这台电脑的账户做的。
   - 风险提示是“不只读、收得回来、重做不多出东西、碰外面”（`(False, False, True, True)`）：同一个人同一个仓库再认领，控制面回同一个认领。
