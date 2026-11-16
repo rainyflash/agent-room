@@ -11,20 +11,26 @@ use std::sync::{Arc, Mutex};
 use agent_room_application::{
     authentication::AuthenticatedPrincipal,
     ports::{
-        CreateProjectRoom, ProjectRoomCandidate, ProjectRoomCreation, RepositoryBindingRecord,
-        RepositoryReadFailure,
+        CreateProjectRoom, PortFuture, ProjectRoomCandidate, ProjectRoomCreation, PublicRoomRecord,
+        RepositoryBindingRecord, RepositoryReadFailure,
     },
     private_rooms::PrivateRoomActor,
     project_rooms::{
         BindingCheckResult, ClaimRepository, ClaimStatus, ClaimView, InspectClaim,
         InspectRoomRepository, ProjectRoomClaimChecks, ProjectRoomDependencies,
-        ProjectRoomFailureKind, ProjectRoomService, ProjectRoomUseCases,
+        ProjectRoomFailureKind, ProjectRoomService, ProjectRoomUseCases, RepositoryRoomPageService,
+        RepositoryRoomPages,
+    },
+    public_room_directory::{
+        BrowsePublicRooms, PublicDirectoryFailure, PublicDirectoryFailureKind,
+        PublicDirectoryResult, PublicRoomDetailView, PublicRoomDirectoryUseCases, PublicRoomOnline,
+        PublicRoomPage, PublicRoomView,
     },
 };
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
     project_rooms::{ClaimCheckResult, GithubRepository, RepositoryFile},
-    room_listing::RoomShareCode,
+    room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
 };
 use fakes::{
@@ -628,6 +634,134 @@ async fn 房主再核对一次_找到了记下这次_没找到照实说不解绑
         time(NOW),
         "没找到不改记录、不解绑"
     );
+}
+
+/// 发现页的目录：只认 `codes` 里的分享码，记下问过哪些。
+#[derive(Default)]
+struct CodeDirectory {
+    rooms: Mutex<Vec<(String, RoomCatalogId)>>,
+    asked: Mutex<Vec<String>>,
+}
+
+impl PublicRoomDirectoryUseCases for CodeDirectory {
+    fn browse(
+        &self,
+        _request: BrowsePublicRooms,
+    ) -> PortFuture<'_, PublicDirectoryResult<PublicRoomPage>> {
+        Box::pin(async { unreachable!("仓库地址不翻目录") })
+    }
+
+    fn detail(
+        &self,
+        viewer: Option<AuthenticatedPrincipal>,
+        share_code: String,
+    ) -> PortFuture<'_, PublicDirectoryResult<PublicRoomDetailView>> {
+        assert!(viewer.is_none(), "仓库地址不看登录");
+        self.asked.lock().unwrap().push(share_code.clone());
+        let found = self
+            .rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(code, _)| *code == share_code)
+            .map(|(code, catalog_id)| listed_detail(*catalog_id, code));
+        Box::pin(async move {
+            found.ok_or(PublicDirectoryFailure::new(
+                "test",
+                PublicDirectoryFailureKind::NotFound,
+            ))
+        })
+    }
+}
+
+#[tokio::test]
+async fn 仓库地址只认绑着它_此刻公开着的那间房_不分没有的是哪一种() {
+    let fixture = Fixture::new();
+    let directory = Arc::new(CodeDirectory::default());
+    let pages = RepositoryRoomPageService::new(fixture.store.clone(), directory.clone());
+    let lookup = |repository: &str| {
+        let repository = GithubRepository::parse(repository).unwrap();
+        let pages = &pages;
+        async move { pages.public_room(repository).await }
+    };
+
+    // 没绑：不去问目录。
+    let missing = lookup("octo/hello").await.unwrap_err();
+    assert_eq!(missing.kind(), PublicDirectoryFailureKind::NotFound);
+    assert!(directory.asked.lock().unwrap().is_empty());
+
+    // 绑着、公开着：大小写不论，出目录里的那一份。
+    fixture.public_room(room(1), owner(), "Proj01");
+    fixture.bind(room(1), "octo/hello", owner());
+    directory
+        .rooms
+        .lock()
+        .unwrap()
+        .push(("Proj01".to_owned(), room(1)));
+    let found = lookup("OCTO/Hello").await.unwrap();
+    assert_eq!(found.room.room.catalog_id, room(1));
+    assert_eq!(
+        found.online,
+        Some(PublicRoomOnline {
+            count: 4,
+            at_least: false
+        })
+    );
+
+    // 目录说不公开了（改回私密、关了）：和没绑一样。
+    directory.rooms.lock().unwrap().clear();
+    let private = lookup("octo/hello").await.unwrap_err();
+    assert_eq!(private.kind(), PublicDirectoryFailureKind::NotFound);
+
+    // 码换给了别的房间：只认绑着仓库的那一间。
+    directory
+        .rooms
+        .lock()
+        .unwrap()
+        .push(("Proj01".to_owned(), room(2)));
+    let moved = lookup("octo/hello").await.unwrap_err();
+    assert_eq!(moved.kind(), PublicDirectoryFailureKind::NotFound);
+
+    // 平台拿掉的照旧占着仓库，可不给人看，也不去问目录。
+    let mut held = public_room_candidate(room(3), stranger(), "Held01");
+    held.held = true;
+    fixture.store.add_room(held);
+    fixture.bind(room(3), "octo/held", stranger());
+    directory
+        .rooms
+        .lock()
+        .unwrap()
+        .push(("Held01".to_owned(), room(3)));
+    let asked_before = directory.asked.lock().unwrap().len();
+    let hidden = lookup("octo/held").await.unwrap_err();
+    assert_eq!(hidden.kind(), PublicDirectoryFailureKind::NotFound);
+    assert_eq!(directory.asked.lock().unwrap().len(), asked_before);
+}
+
+fn listed_detail(catalog_id: RoomCatalogId, code: &str) -> PublicRoomDetailView {
+    PublicRoomDetailView {
+        room: PublicRoomView {
+            room: PublicRoomRecord {
+                catalog_id,
+                name: "octo/hello".to_owned(),
+                description: String::new(),
+                owner_display_name: "Someone".to_owned(),
+                member_count: 2,
+                agent_count: 3,
+                join_mode: RoomJoinMode::Open,
+                end_to_end_encrypted: false,
+                share_code: share_code(code),
+                created_at: time(NOW - DAY),
+                last_message_at: None,
+            },
+            viewer: None,
+        },
+        admin_display_names: Vec::new(),
+        online: Some(PublicRoomOnline {
+            count: 4,
+            at_least: false,
+        }),
+    }
 }
 
 fn claim(who: PrincipalId, repository: &str, target: Option<RoomCatalogId>) -> ClaimRepository {
