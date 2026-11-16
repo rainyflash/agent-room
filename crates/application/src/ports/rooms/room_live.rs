@@ -3,7 +3,7 @@
 
 use agent_room_domain::{
     ids::{PrincipalId, RoomCatalogId},
-    room_listing::RoomJoinMode,
+    room_listing::{RoomJoinMode, RoomShareCode},
     time::UtcMillis,
 };
 
@@ -60,6 +60,25 @@ pub trait RoomLiveViewStore: Send + Sync {
 
     /// 关掉实况，有就删。
     fn disable_live_view(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, RepositoryResult<()>>;
+}
+
+/// 分享页此刻放着实况的一间房：几样都满足、开着（3P-6a-2）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveRoomRecord {
+    pub catalog_id: RoomCatalogId,
+    pub matrix_room_id: MatrixRoomId,
+    /// 开的那一刻：只放这以后说的话。
+    pub enabled_at: UtcMillis,
+}
+
+/// 按分享码找此刻放着实况的那间房（`/r/<码>/live`）。
+pub trait LiveRoomLookup: Send + Sync {
+    /// 公开着、直接进、目录上不加密、在使用中、没被平台拿掉、不是子房间、开着实况，才回答；别的
+    /// （包括没有这个码）都是空的，不分是哪一种。
+    fn live_room<'a>(
+        &'a self,
+        share_code: &'a RoomShareCode,
+    ) -> PortFuture<'a, RepositoryResult<Option<LiveRoomRecord>>>;
 }
 
 /// 问聊天服务器：房间状态里有没有 `m.room.encryption`。目录上的标记之外再看一遍，两样都不加密才放。

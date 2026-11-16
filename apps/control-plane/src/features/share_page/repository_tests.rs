@@ -19,7 +19,7 @@ use super::{
     SharePageHttpState,
     badge::{COUNT_TTL_MILLIS, NEW_PER_SECOND, NO_ROOM_TTL_MILLIS},
     router,
-    tests::{FakeDirectory, FakeRepositories, NOW, detail},
+    tests::{FakeDirectory, FakeLive, FakeRepositories, NOW, detail},
 };
 use crate::features::anonymous_limits::{AnonymousLimiter, PER_MINUTE};
 
@@ -53,6 +53,7 @@ impl Fixture {
         let app = router(SharePageHttpState::new(
             directory.clone(),
             repositories.clone(),
+            Arc::new(FakeLive::default()),
             clock.clone(),
             Arc::new(AnonymousLimiter::new(Vec::new(), clock.clone())),
             "agent-room.test",

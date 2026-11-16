@@ -1027,7 +1027,16 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("\thandle /agents.txt {\n\t\treverse_proxy control-plane:8090\n\t}", bare)
         self.assertIn("\thandle {\n\t\troot * /srv/site\n\t\tfile_server\n\t}", bare)
         self.assertIn("rewrite * /404.html", bare)
-        self.assertIn("Content-Security-Policy \"default-src 'none'; script-src 'self';", bare)
+        self.assertIn(
+            "\theader @site_csp Content-Security-Policy \"default-src 'none'; script-src 'self';",
+            bare,
+        )
+        # 分享页和仓库地址带控制面自己那一份（多一句 connect-src 'self'），网站这一份不给它们：
+        # 两份都在时浏览器两份都照着办，分享页的脚本就问不了 /r/<码>/live。
+        self.assertIn("\t@site_csp not path /r/* /gh/*\n", bare)
+        self.assertEqual(bare.count("Content-Security-Policy"), 1)
+        # 别的几个头照旧给整个裸域。
+        self.assertIn('\theader {\n\t\tPermissions-Policy "camera=()', bare)
         # 以前发出去的应用链接照旧跳过去；首页不跳。
         app_paths = " ".join(path for path in APP_PAGE_PATHS if path != "/")
         self.assertIn(f"\t@app path {app_paths}\n", bare)

@@ -79,7 +79,7 @@ struct ParticipantView {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum ParticipantKind {
+pub(super) enum ParticipantKind {
     Person,
     Agent,
     NetworkAgent,
@@ -89,7 +89,7 @@ enum ParticipantKind {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MessageView {
+pub(super) struct MessageView {
     key: String,
     /// 说话的人在 `participants` 里的编号。
     author: String,
@@ -119,11 +119,11 @@ impl Keys {
         Ok(Self { secrets, salt })
     }
 
-    fn participant(&self, matrix_user_id: &str) -> String {
+    pub(super) fn participant(&self, matrix_user_id: &str) -> String {
         self.key("p", matrix_user_id)
     }
 
-    fn message(&self, message_id: MessageId) -> String {
+    pub(super) fn message(&self, message_id: MessageId) -> String {
         self.key("m", &message_id.to_string())
     }
 
@@ -203,21 +203,21 @@ fn content(reading: &RoomReading, keys: &Keys) -> (Vec<ParticipantView>, Vec<Mes
     }
     let messages = shown
         .iter()
-        .map(|message| message_view(message, keys))
+        .map(|message| message_view(message, keys, MAX_TEXT_CHARACTERS))
         .collect();
     (participants.list, messages)
 }
 
 /// 一条要显示的消息：原来的那条（作者、编号、时间、回复对象不变），和改过以后的预览。
-struct Shown<'a> {
-    original: &'a ProjectedMessagePreview,
+pub(super) struct Shown<'a> {
+    pub(super) original: &'a ProjectedMessagePreview,
     current: &'a MessagePreview,
     edited: bool,
 }
 
 /// 按时间先后应用修订：作者自己改的换成新预览，撤回的和管理员撤下的拿掉；再拿掉被隐藏的，
 /// 留最近 50 条。和网页一样，只认作者自己发的修订。
-fn visible_messages<'a>(
+pub(super) fn visible_messages<'a>(
     mutations: &'a [MessageProjectionMutation],
     hidden: &HashSet<String>,
 ) -> Vec<Shown<'a>> {
@@ -272,14 +272,15 @@ fn visible_messages<'a>(
     shown
 }
 
-fn message_view(message: &Shown<'_>, keys: &Keys) -> MessageView {
+/// 一条消息回给网页的样子，正文最多 `max_characters` 个字符。
+pub(super) fn message_view(message: &Shown<'_>, keys: &Keys, max_characters: usize) -> MessageView {
     let withheld = message.current.sensitivity() != MessageSensitivity::Normal;
     let (text, attachment) = if withheld {
         (String::new(), false)
     } else {
         text_of(message.current)
     };
-    let (text, truncated) = truncate(text);
+    let (text, truncated) = truncate(text, max_characters);
     MessageView {
         key: keys.message(message.original.message_id),
         author: keys.participant(author_id(&message.original.actor)),
@@ -291,12 +292,17 @@ fn message_view(message: &Shown<'_>, keys: &Keys) -> MessageView {
         reply_to: message.original.relation.map(|relation| match relation {
             MessageRelation::ReplyTo(target) => keys.message(target),
         }),
-        sent_at_unix_ms: message
-            .original
-            .origin_server_timestamp
-            .and_then(|timestamp| i64::try_from(timestamp).ok())
-            .unwrap_or_else(|| message.original.created_at.value()),
+        sent_at_unix_ms: sent_at(message),
     }
+}
+
+/// 服务器收到这条的时刻；没有就用消息里写的时刻。
+pub(super) fn sent_at(message: &Shown<'_>) -> i64 {
+    message
+        .original
+        .origin_server_timestamp
+        .and_then(|timestamp| i64::try_from(timestamp).ok())
+        .unwrap_or_else(|| message.original.created_at.value())
 }
 
 /// 聊天消息给正文，带文件的只说带了；不是聊天的（比如交接的文件）给摘要，内容当文件。
@@ -313,14 +319,14 @@ fn text_of(preview: &MessagePreview) -> (String, bool) {
     (text.to_owned(), true)
 }
 
-fn truncate(text: String) -> (String, bool) {
-    match text.char_indices().nth(MAX_TEXT_CHARACTERS) {
+fn truncate(text: String, max_characters: usize) -> (String, bool) {
+    match text.char_indices().nth(max_characters) {
         Some((cut, _)) => (text[..cut].to_owned(), true),
         None => (text, false),
     }
 }
 
-fn author_id(actor: &ProjectedMessageActor) -> &str {
+pub(super) fn author_id(actor: &ProjectedMessageActor) -> &str {
     match actor {
         ProjectedMessageActor::Agent { identity, .. } => identity.matrix_user_id().as_str(),
         ProjectedMessageActor::Human { matrix_user_id, .. } => matrix_user_id.as_str(),

@@ -46,7 +46,7 @@ const CHINESE: Wording = Wording {
     steps: [
         "在仓库目录里跑这条命令。它在 AGENTS.md 里写一行，再给你一个 README 徽章。",
         "提交、推上去。几分钟内认上，这个地址就是这个仓库的房间。",
-        "房间建好就公开、不加密，谁打开这个地址都进得来。",
+        "房间建好就公开、不加密，谁点开都先看到里面正在说的话。",
     ],
     ask_heading: "或者跟正在这个仓库里干活的 Agent 说",
     ask: "给这个仓库建一间 Agent Room 房间。",
@@ -75,7 +75,8 @@ const ENGLISH: Wording = Wording {
          README badge.",
         "Commit and push. Within a few minutes it’s verified, and this address becomes the \
          repository’s room.",
-        "The room is public and not encrypted: anyone who opens this address can come in.",
+        "The room is public and not encrypted: anyone who opens this address first sees what’s \
+         being said in it.",
     ],
     ask_heading: "Or tell an agent that’s working in this repository",
     ask: "Set up an Agent Room for this repository.",

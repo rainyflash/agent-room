@@ -60,6 +60,7 @@ struct Wording {
     selected: &'static str,
     steps_heading: &'static str,
     steps: [&'static str; 3],
+    live: LiveWording,
     gone_title: &'static str,
     gone_text: &'static str,
     unavailable_title: &'static str,
@@ -67,6 +68,55 @@ struct Wording {
     busy_title: &'static str,
     busy_text: &'static str,
 }
+
+/// 实况那一块的字。页面上的由 `share.js` 照着填，`{count}`、`{owner}` 由它换成数和名字。
+struct LiveWording {
+    heading: &'static str,
+    read_only: &'static str,
+    online: &'static str,
+    online_at_least: &'static str,
+    empty: &'static str,
+    join: &'static str,
+    agent: &'static str,
+    network_agent: &'static str,
+    agent_of: &'static str,
+    withheld: &'static str,
+    file: &'static str,
+    truncated: &'static str,
+    edited: &'static str,
+}
+
+const CHINESE_LIVE: LiveWording = LiveWording {
+    heading: "房间里正在说的话",
+    read_only: "只读",
+    online: "现在 {count} 个在线 · 只读",
+    online_at_least: "现在至少 {count} 个在线 · 只读",
+    empty: "开了实况以后还没人说话。",
+    join: "加入房间就能说话。",
+    agent: "Agent",
+    network_agent: "网络 Agent",
+    agent_of: "{owner} 的 Agent",
+    withheld: "一条不公开的消息",
+    file: "发了一个文件",
+    truncated: "（太长了，只显示开头）",
+    edited: "（改过）",
+};
+
+const ENGLISH_LIVE: LiveWording = LiveWording {
+    heading: "What’s being said",
+    read_only: "Read-only",
+    online: "{count} online now · Read-only",
+    online_at_least: "At least {count} online now · Read-only",
+    empty: "No one has said anything since the live view was turned on.",
+    join: "Join the room to talk.",
+    agent: "Agent",
+    network_agent: "Network agent",
+    agent_of: "{owner}’s agent",
+    withheld: "A message that isn’t shown publicly",
+    file: "Shared a file",
+    truncated: " (only the beginning is shown)",
+    edited: " (edited)",
+};
 
 const CHINESE: Wording = Wording {
     language: Language::Chinese,
@@ -106,6 +156,7 @@ const CHINESE: Wording = Wording {
     selected: "已经选中，自己复制一下",
     steps_heading: "怎么开始",
     steps: ["登录或注册", "加入房间", "带上 Agent（可选）"],
+    live: CHINESE_LIVE,
     gone_title: "这个房间现在不公开了",
     gone_text: "可能改回了私密、关了，或者分享链接换了。",
     unavailable_title: "暂时打不开",
@@ -158,6 +209,7 @@ const ENGLISH: Wording = Wording {
         "Join the room",
         "Bring your agent (optional)",
     ],
+    live: ENGLISH_LIVE,
     gone_title: "This room isn’t public anymore",
     gone_text: "It may have been made private or closed, or its share link was changed.",
     unavailable_title: "Can’t open this right now",
@@ -173,9 +225,10 @@ const fn text(language: Language) -> &'static Wording {
     }
 }
 
-/// 一间公开房间的分享页。
+/// 一间公开房间的分享页。`live` 时卡片下面放实况那一块。
 pub(super) fn room_page(
     detail: &PublicRoomDetailView,
+    live: bool,
     language: Language,
     origins: &Origins<'_>,
     now: UtcMillis,
@@ -187,6 +240,9 @@ pub(super) fn room_page(
     let preview = preview(&room.description).unwrap_or_else(|| text.generic_description.to_owned());
     let mut body = String::new();
     body.push_str(&room_panel(detail, text, origins, now));
+    if live {
+        body.push_str(&live_panel(&text.live, code));
+    }
     body.push_str(&agents_panel(text, origins, code));
     body.push_str(&steps_panel(text, origins));
     page(text, &title, &preview, origins, &body)
@@ -385,6 +441,37 @@ fn actions(join_mode: RoomJoinMode, text: &Wording, origins: &Origins<'_>, code:
         sign_up = escape(&sign_up),
         no_account = escape(text.no_account),
         sign_up_label = escape(text.sign_up),
+    )
+}
+
+/// 实况那一块。先藏着，`share.js` 头一次问到 `/r/<码>/live` 才露出来，问到 404 再藏起来；没有脚本时
+/// 页面上只有卡片。消息由脚本照着这里的字填，一律当纯文本放进去。
+fn live_panel(text: &LiveWording, code: &str) -> String {
+    format!(
+        "<section class=\"share-panel share-live\" hidden data-live=\"/r/{code}/live\" \
+         data-read-only=\"{read_only}\" data-online=\"{online}\" \
+         data-online-at-least=\"{online_at_least}\" data-agent=\"{agent}\" \
+         data-network-agent=\"{network_agent}\" data-agent-of=\"{agent_of}\" \
+         data-withheld=\"{withheld}\" data-file=\"{file}\" data-truncated=\"{truncated}\" \
+         data-edited=\"{edited}\"><div class=\"share-live-head\"><h2>{heading}</h2>\
+         <p class=\"share-quiet\" data-live-status>{read_only}</p></div>\
+         <ol class=\"share-live-messages\" data-live-messages></ol>\
+         <p class=\"share-quiet\" data-live-empty hidden>{empty}</p>\
+         <p class=\"share-live-join\">{join}</p></section>",
+        code = escape(code),
+        heading = escape(text.heading),
+        read_only = escape(text.read_only),
+        online = escape(text.online),
+        online_at_least = escape(text.online_at_least),
+        agent = escape(text.agent),
+        network_agent = escape(text.network_agent),
+        agent_of = escape(text.agent_of),
+        withheld = escape(text.withheld),
+        file = escape(text.file),
+        truncated = escape(text.truncated),
+        edited = escape(text.edited),
+        empty = escape(text.empty),
+        join = escape(text.join),
     )
 }
 

@@ -186,8 +186,8 @@ pub use rooms::{
     RepositoryReadFailure, RepositoryScan, UnbindRepositoryOutcome,
 };
 pub use rooms::{
-    EnableRoomLiveViewOutcome, RoomEncryptionState, RoomLiveViewFacts, RoomLiveViewRecord,
-    RoomLiveViewStore,
+    EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord, RoomEncryptionState,
+    RoomLiveViewFacts, RoomLiveViewRecord, RoomLiveViewStore,
 };
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,

@@ -695,8 +695,11 @@ def _server_name_block(config: DeploymentConfig) -> str:
     )
     return common + f'''\t# 静态网站（specs/site-discovery/design.md）：网关镜像里的 /srv/site。
 \tencode zstd gzip
+\t# 分享页和仓库地址的内容安全策略由控制面自己带：比这一份多一句 connect-src 'self'，分享页的脚本要问
+\t# /r/<码>/live（specs/redesign/project-rooms.md 3P-6a）。两份都在时浏览器两份都照着办，所以这一份不给它们。
+\t@site_csp not path /r/* /gh/*
+\theader @site_csp Content-Security-Policy "{csp}"
 \theader {{
-\t\tContent-Security-Policy "{csp}"
 \t\tPermissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 \t\tReferrer-Policy "strict-origin-when-cross-origin"
 \t\tX-Content-Type-Options "nosniff"

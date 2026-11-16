@@ -15,19 +15,32 @@
 //!   的房间出它的分享页（和 `/r/<分享码>` 同一页）；别的一律出同一页“还没人认领”，回 404，不说是哪一种。
 //!   不读 GitHub。和分享页一样按来源限流、`noindex`、缓存 60 秒，语言照同一个规则。
 //! - `GET /gh/{owner}/{repo}/badge.svg`：README 徽章，见 [`badge`]。不按来源限流。
+//!
+//! 分享页放实况（`specs/redesign/project-rooms.md` 的 3P-6a）：开着实况的房间，页面在房间卡片下面多一块，
+//! 由 `share.js` 每 5 秒问一次 `GET /r/{分享码}/live`（[`crate::public_watch::RoomLiveWatch`]）。
+//! 这几页的内容安全策略由这里自己带（[`PAGE_POLICY`]），比裸域网站那一份多一句 `connect-src 'self'`；
+//! Caddy 不给 `/r/*`、`/gh/*` 再加一份（两份都在时浏览器两份都照着办）。
 
 use std::sync::Arc;
 
 use agent_room_application::{
     ports::Clock,
     project_rooms::RepositoryRoomPages,
-    public_room_directory::{PublicDirectoryFailureKind, PublicRoomDirectoryUseCases},
+    public_room_directory::{
+        PublicDirectoryFailureKind, PublicRoomDetailView, PublicRoomDirectoryUseCases,
+    },
 };
-use agent_room_domain::project_rooms::GithubRepository;
+use agent_room_domain::{
+    project_rooms::GithubRepository,
+    room_listing::{RoomJoinMode, RoomShareCode},
+};
+use agent_room_protocol_conformance::generated::ErrorCategory;
 use axum::{
     Router,
+    body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -41,13 +54,27 @@ use render::Origins;
 // 提醒邮件的退订页也是一整页 HTML，和这里用同一套语言判断和转义。
 pub(crate) use render::{Language, escape};
 
-use crate::features::anonymous_limits::AnonymousLimiter;
+use crate::{
+    correlation::CorrelationId,
+    error::ApiError,
+    features::{anonymous_limits::AnonymousLimiter, authentication::no_store},
+    public_watch::{RoomLiveFailure, RoomLiveSource},
+};
 
 const STYLESHEET: &str = include_str!("share_page/share.css");
 const SCRIPT: &str = include_str!("share_page/share.js");
 const ROOM_CACHE: &str = "public, max-age=60";
 /// 样式和脚本的名字是固定的，发版以后最多五分钟就换成新的。
 const ASSET_CACHE: &str = "public, max-age=300";
+/// 实况的快照最多 3 秒重读一次，浏览器缓存同样久。
+const LIVE_CACHE: &str = "public, max-age=3";
+/// 实况暂时读不到时，请页面隔这么多秒再问。
+const LIVE_RETRY_AFTER_SECONDS: u64 = 5;
+/// 分享页、仓库地址和它们的样式、脚本、徽章的内容安全策略：和裸域网站那一份一样，多一句
+/// `connect-src 'self'`，`share.js` 才问得了 `/r/<码>/live`。
+const PAGE_POLICY: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+                           img-src 'self'; connect-src 'self'; font-src 'self'; base-uri 'none'; \
+                           form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests";
 
 #[derive(Clone)]
 pub(crate) struct SharePageHttpState {
@@ -61,12 +88,15 @@ pub(crate) struct SharePageHttpState {
     site_origin: Arc<str>,
     /// 网页应用，按钮去它的 `/explore/<分享码>`。
     app_origin: Arc<str>,
+    /// 分享页放的实况。
+    live: Arc<dyn RoomLiveSource>,
 }
 
 impl SharePageHttpState {
     pub(crate) fn new(
         directory: Arc<dyn PublicRoomDirectoryUseCases>,
         repositories: Arc<dyn RepositoryRoomPages>,
+        live: Arc<dyn RoomLiveSource>,
         clock: Arc<dyn Clock>,
         limits: Arc<AnonymousLimiter>,
         server_name: &str,
@@ -76,6 +106,7 @@ impl SharePageHttpState {
             directory,
             badges: BadgeCounts::new(repositories.clone(), clock.clone()),
             repositories,
+            live,
             clock,
             limits,
             site_origin: site_origin(server_name).into(),
@@ -96,9 +127,19 @@ pub(crate) fn router(state: SharePageHttpState) -> Router {
         .route("/r/_/share.css", get(stylesheet))
         .route("/r/_/share.js", get(script))
         .route("/r/{share_code}", get(page))
+        .route("/r/{share_code}/live", get(live))
         .route("/gh/{owner}/{repo}", get(repository_page))
         .route("/gh/{owner}/{repo}/badge.svg", get(badge::badge))
+        .layer(middleware::map_response(with_page_policy))
         .with_state(state)
+}
+
+async fn with_page_policy(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(PAGE_POLICY),
+    );
+    response
 }
 
 async fn page(
@@ -111,11 +152,7 @@ async fn page(
         return busy;
     }
     match state.directory.detail(None, share_code).await {
-        Ok(detail) => {
-            let language = accepted.unwrap_or_else(|| guess_language(&detail.room.room.name));
-            let html = render::room_page(&detail, language, &state.origins(), state.clock.now());
-            html_response(StatusCode::OK, ROOM_CACHE, html)
-        }
+        Ok(detail) => room_response(&state, &detail, accepted).await,
         Err(failure) => {
             let language = accepted.unwrap_or(Language::English);
             match failure.kind() {
@@ -162,11 +199,7 @@ async fn repository_page(
         return busy;
     }
     match state.repositories.public_room(repository.clone()).await {
-        Ok(detail) => {
-            let language = accepted.unwrap_or_else(|| guess_language(&detail.room.room.name));
-            let html = render::room_page(&detail, language, &state.origins(), state.clock.now());
-            html_response(StatusCode::OK, ROOM_CACHE, html)
-        }
+        Ok(detail) => room_response(&state, &detail, accepted).await,
         Err(failure) => {
             let language = accepted.unwrap_or(Language::English);
             match failure.kind() {
@@ -193,6 +226,94 @@ async fn repository_page(
             }
         }
     }
+}
+
+/// 一间公开房间的分享页。直接进、不加密的才去问放不放实况。
+async fn room_response(
+    state: &SharePageHttpState,
+    detail: &PublicRoomDetailView,
+    accepted: Option<Language>,
+) -> Response {
+    let room = &detail.room.room;
+    let live = room.join_mode == RoomJoinMode::Open
+        && !room.end_to_end_encrypted
+        && state.live.is_live(&room.share_code).await;
+    let language = accepted.unwrap_or_else(|| guess_language(&room.name));
+    let html = render::room_page(detail, live, language, &state.origins(), state.clock.now());
+    html_response(StatusCode::OK, ROOM_CACHE, html)
+}
+
+/// 实况：放着的回快照，别的（不放、没有这个码、码写得不对）一律 404，不说是哪一种。
+/// 5 秒内刚查过这个码的不算来源的名额：开着页面的人每 5 秒问一次，别让他把自己的名额用完；
+/// 挨个猜分享码的每次都是没查过的码。
+async fn live(
+    State(state): State<SharePageHttpState>,
+    Path(share_code): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let correlation_id = CorrelationId::from_headers(&headers);
+    let Ok(share_code) = RoomShareCode::parse(&share_code) else {
+        return live_failure(RoomLiveFailure::NotLive, correlation_id);
+    };
+    if !state.live.knows(&share_code)
+        && let Err(limited) = state.limits.admit(&headers)
+    {
+        return no_store(
+            ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "room_live.rate_limited",
+                ErrorCategory::Transient,
+                "请求太频繁，请稍后再试。",
+                correlation_id,
+            )
+            .retry_after_seconds(limited.retry_after_seconds)
+            .into_response(),
+        );
+    }
+    match state.live.snapshot(&share_code).await {
+        Ok(body) => live_response(body),
+        Err(failure) => live_failure(failure, correlation_id),
+    }
+}
+
+fn live_response(body: Bytes) -> Response {
+    let mut response = body.into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(LIVE_CACHE));
+    headers.insert(
+        HeaderName::from_static("x-robots-tag"),
+        HeaderValue::from_static("noindex"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
+}
+
+fn live_failure(failure: RoomLiveFailure, correlation_id: CorrelationId) -> Response {
+    let error = match failure {
+        RoomLiveFailure::NotLive => ApiError::new(
+            StatusCode::NOT_FOUND,
+            "room_live.unavailable",
+            ErrorCategory::Validation,
+            "这间房的分享页现在不放实况。",
+            correlation_id,
+        ),
+        RoomLiveFailure::Unavailable => ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "room_live.dependency_unavailable",
+            ErrorCategory::DependencyUnavailable,
+            "实况暂时看不了，请稍后再试。",
+            correlation_id,
+        )
+        .retry_after_seconds(LIVE_RETRY_AFTER_SECONDS),
+    };
+    no_store(error.into_response())
 }
 
 /// 按来源限流：这个来源一分钟里打开得太多时回“等一分钟”那一页，不去查。
@@ -312,6 +433,8 @@ fn guess_language(name: &str) -> Language {
     }
 }
 
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
