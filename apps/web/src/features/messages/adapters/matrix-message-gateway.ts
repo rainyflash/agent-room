@@ -19,6 +19,7 @@ import {
   parseRoomNoticeChange,
   roomNoticeEventType,
 } from '@/features/room-notice/domain/room-notice';
+import { parseRoomPinsChange, roomPinsEventType } from '@/features/room-pins/domain/room-pins';
 import {
   parseRoomOwnerHandover,
   roomOwnerHandoverEventType,
@@ -36,6 +37,7 @@ import {
   type ReadOnlyFederatedEvent,
   type RoomNoticeChange,
   type RoomOwnerHandover,
+  type RoomPinsChange,
   type RoomStateLine,
   type MessageSignatureStatus,
   type RoomMessageSignal,
@@ -54,6 +56,7 @@ const MAX_PROJECTED_STATE_LINES = 50;
 const ownRoomStateEventTypes = new Set([
   roomListingEventType,
   roomNoticeEventType,
+  roomPinsEventType,
   roomOwnerHandoverEventType,
   matrixRosterPolicyEventType,
 ]);
@@ -621,7 +624,25 @@ function parseStateLine(event: MatrixMessageTimelineEvent): RoomStateLine | null
     return parseNoticeChange(event.eventId, event.serverTimestamp, event.content);
   if (event.type === roomOwnerHandoverEventType)
     return parseOwnerHandover(event.eventId, event.serverTimestamp, event.content);
+  if (event.type === roomPinsEventType)
+    return parsePinsChange(event.eventId, event.serverTimestamp, event.content);
   return null;
+}
+
+function parsePinsChange(
+  matrixEventId: string,
+  serverTimestamp: number,
+  content: unknown,
+): RoomPinsChange | null {
+  const change = parseRoomPinsChange(content);
+  if (change === undefined) return null;
+  return Object.freeze({
+    kind: change.kind,
+    matrixEventId,
+    serverTimestamp,
+    targetEventId: change.eventId,
+    updatedBy: change.updatedBy,
+  });
 }
 
 function parseNoticeChange(

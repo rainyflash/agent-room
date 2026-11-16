@@ -298,6 +298,42 @@ describe('MatrixMessageGateway', () => {
     ]);
   });
 
+  it('置顶的状态事件每一次变成一行“置顶了一句”“取消了一条置顶”，带着是哪一句；别的客户端写的、不是状态事件的不写', () => {
+    const room = snapshot([
+      pinsState('$pin', 300, 'pinned', '$target'),
+      pinsState('$unpin', 400, 'unpinned', '$target'),
+      pinsState('$other-key', 420, 'pinned', '$target', { stateKey: 'other' }),
+      // 别的客户端改的置顶没有我们的字段：不知道改了哪一句，不写。
+      {
+        ...pinsState('$foreign', 450, 'pinned', '$target'),
+        content: { pinned: ['$target'] },
+      },
+    ]);
+    const gateway = new MatrixMessageGateway(source({ kind: 'ready', room }));
+
+    const result = gateway.read(ROOM_ID);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.stateLines).toEqual([
+      {
+        kind: 'pinned',
+        matrixEventId: '$pin',
+        serverTimestamp: 300,
+        targetEventId: '$target',
+        updatedBy: '@owner:agent-room.test',
+      },
+      {
+        kind: 'unpinned',
+        matrixEventId: '$unpin',
+        serverTimestamp: 400,
+        targetEventId: '$target',
+        updatedBy: '@owner:agent-room.test',
+      },
+    ]);
+    expect(result.value.readOnlyFederatedEvents).toEqual([]);
+  });
+
   it('消息多过窗口时，比留下的最早一条还早的改动不给；没改过公告时不给', () => {
     const previews = Array.from({ length: 201 }, (_, index) =>
       previewEvent({
@@ -576,6 +612,43 @@ function noticeState(
     serverTimestamp,
     ...(stateKey === null ? {} : { stateKey }),
     type: 'io.github.rainyflash.agentroom.room.notice.v1',
+  };
+}
+
+/** 应用服务写的置顶；`stateKey` 换一个就不是房间的那一份。 */
+function pinsState(
+  eventId: string,
+  serverTimestamp: number,
+  kind: 'pinned' | 'unpinned',
+  target: string,
+  options: { readonly stateKey?: string } = {},
+): MatrixMessageTimelineEvent {
+  return {
+    content: {
+      pinned: kind === 'pinned' ? [target] : [],
+      'io.github.rainyflash.agentroom.pins': {
+        schemaVersion: '1.0',
+        entries:
+          kind === 'pinned'
+            ? [
+                {
+                  eventId: target,
+                  pinnedBy: '@owner:agent-room.test',
+                  pinnedAt: new Date(serverTimestamp).toISOString(),
+                },
+              ]
+            : [],
+        updatedBy: '@owner:agent-room.test',
+        updatedAt: new Date(serverTimestamp).toISOString(),
+        change: { kind, eventId: target },
+      },
+    },
+    endToEndEncrypted: false,
+    eventId,
+    sender: '@_agent_room:agent-room.test',
+    serverTimestamp,
+    stateKey: options.stateKey ?? '',
+    type: 'm.room.pinned_events',
   };
 }
 
