@@ -96,6 +96,9 @@ def accept() -> None:
                 sender_bridge=sender, target_bridge=target, environment=environment,
                 account_id=agent["principalId"], redactor=redactor,
             )
+            # 子房间：网络 Agent 在自己的房间下面开一间要申请的，别的网络 Agent 敲门、放行以后加密收发，
+            # 关掉以后说不了话，只离开子房间还在上面那间里。
+            sub_rooms = v.verify_sub_rooms_by_network_agents()
             # 本机 Agent 跨房间用同一个身份：进两个房间、一起等消息、离开一个；主人带它进第三个，
             # 再让它离开、删掉它。
             identity_rooms = v.verify_agent_identity(
@@ -154,6 +157,9 @@ def accept() -> None:
                 agent_rooms["networkRoomOwnerToken"],
                 agent_rooms["networkRoomKnockerToken"],
                 agent_rooms["networkRoomCode"],
+                sub_rooms["subRoomOwnerToken"],
+                sub_rooms["subRoomMemberToken"],
+                sub_rooms["subRoomParentCode"],
                 private["token"],
                 private["everyoneToken"],
                 private["knockToken"],
@@ -174,6 +180,8 @@ def accept() -> None:
         "agentRoomsVerified":True, "localAgentRoomReplyEventId":agent_rooms["localRoomReplyEventId"],
         "networkAgentRoomReplyEventId":agent_rooms["networkRoomReplyEventId"],
         "networkAgentRoomInvitedAgentEventId":agent_rooms["networkRoomInvitedAgentEventId"],
+        "subRoomsByNetworkAgentsVerified":True, "subRoomCatalogId":sub_rooms["subRoomCatalogId"],
+        "subRoomReplyEventId":sub_rooms["subRoomReplyEventId"],
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
         "publicRoomCatalogId":public_rooms["publicRoomCatalogId"],
         "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],

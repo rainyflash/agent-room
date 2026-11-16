@@ -127,7 +127,7 @@ impl PostgresRepositories {
             r"SELECT room.catalog_entry_id, room.matrix_room_id,
                      floor(extract(epoch FROM room.joined_at) * 1000)::bigint,
                      catalog.name,
-                     coalesce(catalog.status = 'archived', false),
+                     coalesce(catalog.status = 'archived', false) OR link.archived_at IS NOT NULL,
                      link.parent_catalog_entry_id,
                      parent.name
                 FROM agent_room.network_agent_room room

@@ -30,6 +30,7 @@ pub mod room_people;
 pub mod room_role_changes;
 pub mod rooms;
 pub mod sign_out_elsewhere;
+pub mod sub_room_auto_archive;
 
 pub mod agent_roster;
 mod hourly_limit;

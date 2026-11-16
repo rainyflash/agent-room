@@ -422,6 +422,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-3b 步（#847）：网络 Agent 只离开一间（`agent_room_leave` 的 `roomId`，`DELETE /me/rooms/{房间}`）。离开走本机 Agent 那一套（`AgentRoomPlacementUseCases::leave`，以它的设备和连接），离开成了才忘掉这间（`forget_room`）：别倒过来，不然聊天服务器上没离开成时它就再也找不到这间、离不开了。不带 `roomId` 的照旧全部离开、停用。
   - 子房间第 2h-4a-1 步（#849）：网络 Agent 管它管得了的子房间。私人房间那边认它用 `AgentSubRoomManagement`，Agent 进门那边（看、放行敲门，移出 Agent）用 `agent_managed_sub_room`，两边规矩一样：合成主体管得了（它自己的房间下面），或者建的人是它的合成主体、`created_by_agent` 还在这一间和父房间里。改一边要改另一边。
   - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed` 先找整间房、再问 `AgentSubRoomManagement`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
+  - 网络 Agent 的账户房间列表（`list_for_account`，底下是 `list_for_principal`）不列子房间：它房间下面的子房间房主虽然记成它的合成主体，也不在里面。要它自己房间下面的子房间就按父房间去子房间名单里拿（`own_sub_rooms`），同名回到那间交给私人房间用例认（#875）。以前当成在里面，同名的子房间回了撞了名字，测试替身也列着，单元测试没抓到。
   - 子房间第 2h-4b 步（#851）：邀请人在子房间上走 `admit_person_by_agent`（只请父房间里的人、直接进来、批准他在等的申请），不算每天的邀请；整间房照旧发邀请、算每天的。看申请只有子房间有，整间房回空的。
   - 子房间第 2i-2a 步（#854）：子房间不在 `GET /private-rooms` 里（旧版网页认不得），网页列表里找不到这间房时单独问一次（`usePrivateRoomListWith`），入场页在公开大厅入场说找不到以后才问。新加“在列表里找这间房”的地方也用它，别让服务器的列表带上子房间。公共大厅（`LobbyRoom.publicLobby`，Matrix 上不加密、加入规则是 `public`）也不在列表里，别去问它：回 404，控制面记告警，浏览器验收算出错（#868）。
   - 子房间第 2i-6a 步（#859）：子房间设置是房间设置对话框里的第一节“这间子房间”（`sub-room-settings.tsx`），给了 `subRoom` 时成员、公开、Agent 进门几节不出现。别拆的：谁管得了看名单上有没有 `pendingRequestCount`（`managesSubRoom`），别另问权限；保存只发改了的项，拆门时不带 `hidden`（服务器回 400）。
@@ -430,8 +431,10 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2i-7 步（#862）：房间设置里的“子房间”一节（`room-sub-rooms-settings.tsx`），整间房的房主和管理员看得到，三项只有房主改得动。别拆的：建分类要带网页先定好的分类号（`Idempotency-Key`，服务器没有就回 400），换了名字换一个号。
   - 子房间第 2i-8a 步（#863）：左栏每一间子房间的“⋯”（`sub-room-row-menu.tsx`）和免打扰。别拆的：免打扰和标为已读写个人设置（`mute`、`read`），和收件箱同一套，别另记；不是眼前这一间的子房间设置只开“这间子房间”一节（`subRoomOnly`），公告、自动发言、治理要这一页的房间状态。
   - 子房间第 2i-8b 步（#864）：“房间”页的卡片把你在的子房间的未读和 @ 算进去（`use-family-unread.ts`）。别拆的：免打扰的子房间只算 @，归档的不算；子房间不另起卡片。
+  - 子房间第 2j-2 步（#867）：30 天没人说话的子房间每小时一轮自动归档（`sub_room_auto_archive.rs`）。别拆的：动手前再问一次聊天服务器最新一条的时间，别只信库里记的；恢复时写 `restored_at`，从恢复那一刻重新算，不然刚恢复的下一轮又被收起来。
   - 子房间第 2j-1 步（#866）：子房间最近说话的时间和发现页同一轮读（`public_room_activity.rs` 接着读子房间，`SubRoomActivityStore`）。别拆的：只往后挪、不动房间版本；先读公开房间，子房间那段出错不能让公开房间这一轮白读。
   - 子房间第 2i-8c 步（#865）：“浏览子房间”上管得了的那几行有齿轮，没进去的那间也能打开设置。别拆的：有没有齿轮看 `managesSubRoom`，和左栏“⋯”一条规则，别另按身份猜；没进去的那间设置里没有“管这一间的人”，那要先进去才列得出里面的人。
+  - 子房间第 2k-1 步（#869）：无头验收里网络 Agent 在子房间里敲门、放行、关掉、只离开一间（`verify_sub_rooms_by_network_agents`）。子房间归档只记在父子关系那一行（`private_room_parent.archived_at`），房间目录照旧开着：新加“这间房归档了没有”的地方两样都看，网络 Agent 的房间列表（`network_agent_rooms`）就漏过一次。
   - 子房间第 2i-5 步（#858）：还没进的子房间是父房间地址上的 `door=<子房间号>`，卡片在 `sub-room-door.tsx`。别拆的：入场页单间问不到时按号问整间房、转到父房间（`onEntered(target, door)`），换别的 `view` 时地址里不留 `door`；归档的子房间对话上面那一行是 `ArchivedSubRoomNotice`，恢复以后刷新的是房间列表（`privateRoomListQueryKey`），不只是子房间名单。
   - 子房间第 2i-4 步（#857）：“新建子房间”对话框（`new-sub-room-dialog.tsx`）。别拆的：房间号由网页先定好，再点是同一个请求（服务器按房间号幂等），只有填写不行的才换号；建好以后先带 Agent、再 `commands.enter`，加入没成时说“建好了，还没进去”。原生对话框打开时焦点给关闭按钮，`autoFocus` 不管用，名字框在打开以后的 effect 里拿焦点。
   - 子房间第 2i-3 步（#856）：“浏览子房间”是房间页的 `view=sub-rooms`（`roomPanelViews`），和 Agent 表格一样展开成整页（`fullPage`）。别拆的：加入子房间先 `subRooms.join`、再照进私人房间那一套 `commands.enter`（在 Matrix 上加入）；入场页进去以后带着地址里的 `view`；“没见过的新子房间”只记在这台设备上（`use-unseen-sub-rooms.ts`），头一回打开时名单上的都算见过。

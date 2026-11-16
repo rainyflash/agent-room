@@ -3147,6 +3147,8 @@ def drain_network_agent_messages(token: str, *, gaps: list[object] | None = None
 
 AGENT_ROOM_NAME: Final = "Vertical Agent Room"
 NETWORK_AGENT_ROOM_NAME: Final = "Vertical Network Room"
+SUB_ROOM_PARENT_NAME: Final = "Vertical Sub-room Parent"
+SUB_ROOM_NAME: Final = "Vertical Specs"
 
 
 def verify_agent_rooms(
@@ -3400,6 +3402,200 @@ def verify_network_agent_room(
         "networkRoomReplyEventId": replied,
         "networkRoomInvitedAgentEventId": invited_agent_said,
     }
+
+
+def verify_sub_rooms_by_network_agents() -> dict[str, str]:
+    """子房间（specs/redesign/sub-rooms.md“验收”，2k-1）：网络 Agent 建房间，在下面开一间要申请的子房间，
+    同名再开回到那一间；凭口令进了上面那间的网络 Agent 列得出它、拿房间号敲门，管它的网络 Agent 在子房间里
+    等消息时被叫醒、放行，两边在子房间里加密收发。子房间关掉以后里面的说不了话、知道它归档了，之前的话
+    还翻得到；敲门进来的只离开子房间，还在上面那间里说得了话。"""
+    owner = create_waiting_network_agent("Vertical Sub-room Owner", "198.51.100.51")
+    parent_catalog, parent_room, code = create_sub_room_parent(owner)
+    member, member_id = join_sub_room_parent(code, parent_room)
+    sub_catalog, sub_room = create_request_sub_room(owner, parent_catalog)
+    entry = listed_sub_room(member, parent_catalog, sub_catalog)
+    if entry.get("access") != "request" or entry.get("joined") is not False:
+        raise VerticalFailure(f"上面那间里的网络 Agent 该看到一间要申请、还没进的子房间：{entry}。")
+    if entry.get("createdByYou") is True:
+        raise VerticalFailure("不是它建的子房间，不该标成它建的。")
+
+    knock_sub_room_while_owner_waits(
+        owner, member, member_id=member_id, sub_catalog=sub_catalog, sub_room=sub_room
+    )
+    status, admitted = network_agent_request(
+        "PUT",
+        f"/me/private-rooms/{sub_catalog}/knocks/{member_id}",
+        token=owner,
+        timeout_seconds=180,
+    )
+    if status != 200 or admitted is None:
+        raise VerticalFailure(f"管子房间的网络 Agent 放行敲门失败：HTTP {status}。")
+    if require_object(admitted.get("agent"), "放进子房间的 Agent").get("agentId") != member_id:
+        raise VerticalFailure("放进子房间的不是敲门的那个网络 Agent。")
+    rooms, knocks = network_agent_rooms(member)
+    if sub_room not in rooms or parent_room not in rooms or knocks:
+        raise VerticalFailure("放行以后，敲门的网络 Agent 该在子房间和上面那间里，门不该还在等。")
+    drain_network_agent_messages(member)
+    said, replied = network_agents_round_trip(owner, member, room_id=sub_room)
+
+    close_sub_room_and_check(owner, member, sub_catalog=sub_catalog, sub_room=sub_room, said=said)
+    status, _ = network_agent_request(
+        "DELETE", f"/me/rooms/{quote(sub_room, safe='')}", token=member, timeout_seconds=180
+    )
+    if status != 204:
+        raise VerticalFailure(f"网络 Agent 只离开子房间失败：HTTP {status}。")
+    rooms, _ = network_agent_rooms(member)
+    if sub_room in rooms or parent_room not in rooms:
+        raise VerticalFailure("只离开子房间以后，它该不在子房间里、还在上面那间里。")
+    network_agent_say_in(member, parent_room, "Back in the main room.")
+    for token in (member, owner):
+        status, _ = network_agent_request("DELETE", "/me", token=token)
+        if status != 204:
+            raise VerticalFailure(f"子房间那一轮的网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "subRoomOwnerToken": owner,
+        "subRoomMemberToken": member,
+        "subRoomParentCode": code,
+        "subRoomCatalogId": sub_catalog,
+        "subRoomReplyEventId": replied,
+    }
+
+
+def create_sub_room_parent(owner: str) -> tuple[str, str, str]:
+    """子房间那一轮上面那间：网络 Agent 自己建，带着口令。回答房间号、Matrix 房间和口令。"""
+    status, made = network_agent_request(
+        "POST",
+        "/me/private-rooms",
+        token=owner,
+        body={"name": SUB_ROOM_PARENT_NAME},
+        timeout_seconds=180,
+    )
+    if status != 201 or made is None or made.get("created") is not True:
+        raise VerticalFailure(f"网络 Agent 建上面那间房失败：HTTP {status}。")
+    room = require_object(made.get("room"), "上面那间房")
+    code = require_object(made.get("code"), "上面那间房的口令")
+    return (
+        require_text(room.get("catalogId"), "上面那间房的房间号"),
+        require_text(room.get("matrixRoomId"), "上面那间房的 Matrix 房间"),
+        require_text(code.get("code"), "上面那间房的口令"),
+    )
+
+
+def join_sub_room_parent(code: str, parent_room: str) -> tuple[str, str]:
+    """另一个网络 Agent 凭口令进上面那间房。回答它的令牌和 Agent ID。"""
+    status, created = network_agent_request(
+        "POST",
+        "",
+        body={"name": "Vertical Sub-room Member", "code": code},
+        source="198.51.100.52",
+        timeout_seconds=180,
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"网络 Agent 凭口令进上面那间房失败：HTTP {status}。")
+    if require_object(created.get("room"), "凭口令进的房间").get("matrixRoomId") != parent_room:
+        raise VerticalFailure("凭口令进的不是上面那间房。")
+    token = require_text(created.get("token"), "上面那间房里的网络 Agent 令牌")
+    drain_network_agent_messages(token)
+    return token, require_text(created.get("agentId"), "上面那间房里的网络 Agent 的 Agent ID")
+
+
+def create_request_sub_room(owner: str, parent_catalog: str) -> tuple[str, str]:
+    """在上面那间下面开一间要申请的子房间：新开回答 201、带着上面那间、没有口令；同名再开回到那一间，
+    回答 200。回答子房间的房间号和 Matrix 房间。"""
+
+    def create() -> tuple[int, dict[str, object]]:
+        status, body = network_agent_request(
+            "POST",
+            "/me/private-rooms",
+            token=owner,
+            body={"name": SUB_ROOM_NAME, "parentRoomId": parent_catalog, "access": "request"},
+            timeout_seconds=180,
+        )
+        if body is None:
+            raise VerticalFailure(f"网络 Agent 开子房间没有回答：HTTP {status}。")
+        return status, body
+
+    status, made = create()
+    if status != 201 or made.get("created") is not True:
+        raise VerticalFailure(f"网络 Agent 开子房间失败：HTTP {status}，{made.get('code')}。")
+    if require_object(made.get("parent"), "子房间上面那间").get("catalogId") != parent_catalog:
+        raise VerticalFailure("开出来的子房间不在上面那间下面。")
+    if "code" in made:
+        raise VerticalFailure("子房间没有口令，回答里不该带。")
+    room = require_object(made.get("room"), "开出来的子房间")
+    sub_catalog = require_text(room.get("catalogId"), "子房间的房间号")
+    status, again = create()
+    again_room = require_object(again.get("room"), "同名再开回到的子房间")
+    if status != 200 or again.get("created") is not False or again_room.get("catalogId") != sub_catalog:
+        raise VerticalFailure(f"同名再开子房间，该回到原来那间：HTTP {status}。")
+    return sub_catalog, require_text(room.get("matrixRoomId"), "子房间的 Matrix 房间")
+
+
+def listed_sub_room(token: str, parent_catalog: str, sub_catalog: str) -> dict[str, object]:
+    """网络 Agent 列上面那间房下面的子房间，找出这一间。"""
+    listing = network_agent_get(token, f"/me/private-rooms/{parent_catalog}/sub-rooms")
+    for item in require_list(listing.get("subRooms")):
+        entry = require_object(item, "子房间")
+        if require_object(entry.get("room"), "子房间的房间").get("catalogId") == sub_catalog:
+            return entry
+    raise VerticalFailure("上面那间里的网络 Agent 列不出这间子房间。")
+
+
+def knock_sub_room_while_owner_waits(
+    owner: str, member: str, *, member_id: str, sub_catalog: str, sub_room: str
+) -> None:
+    """管子房间的网络 Agent 在子房间里等消息，上面那间里的网络 Agent 拿子房间的房间号敲门：管它的被
+    叫醒，incomingKnocks 列着这次敲门。"""
+    waiting = in_background(
+        lambda: network_agent_wait(owner, f"wait=30&roomId={quote(sub_room, safe='')}")
+    )
+    time.sleep(2)  # 让管它的先挂上等消息
+    status, entered = network_agent_request(
+        "POST", "/me/rooms", token=member, body={"room": sub_catalog}, timeout_seconds=180
+    )
+    if status != 202 or entered is None or "room" in entered:
+        raise VerticalFailure(f"网络 Agent 敲子房间的门失败：HTTP {status}。")
+    knock = require_object(entered.get("knock"), "敲的子房间的门")
+    if knock.get("status") != "waiting" or knock.get("catalogId") != sub_catalog:
+        raise VerticalFailure("敲的子房间的门不对，或者不在等。")
+    page = waiting()
+    wake = network_page_wake(page)
+    if wake.get("reason") != "knocks":
+        raise VerticalFailure(f"管子房间的网络 Agent 没被敲门叫醒：{wake}。")
+    incoming = page.get("incomingKnocks")
+    if not isinstance(incoming, list) or not any(
+        is_knock_of(item, agent_id=member_id, catalog_id=sub_catalog) for item in incoming
+    ):
+        raise VerticalFailure("叫醒管子房间的网络 Agent 的回答里没列出这次敲门。")
+    acknowledge_network_page(owner, page)
+
+
+def close_sub_room_and_check(
+    owner: str, member: str, *, sub_catalog: str, sub_room: str, said: str
+) -> None:
+    """管子房间的网络 Agent 关掉它：记成手动归档，里面的网络 Agent 再说话直接说归档了（不说“可能被移出”），
+    查看自己时这间标着 archived: true，之前的话照样翻得到。"""
+    status, _ = network_agent_request(
+        "DELETE", f"/me/private-rooms/{sub_catalog}", token=owner, timeout_seconds=180
+    )
+    if status != 204:
+        raise VerticalFailure(f"管子房间的网络 Agent 关掉它失败：HTTP {status}。")
+    require_uuid_v7(sub_catalog, "子房间号")
+    reason = compose_psql(
+        "SELECT archived_reason FROM agent_room.private_room_parent "
+        f"WHERE catalog_entry_id = '{sub_catalog}';"
+    )
+    if reason != "manual":
+        raise VerticalFailure(f"关掉的子房间该记成手动归档，实际是 {reason!r}。")
+    status, refused = network_agent_request(
+        "POST", "/me/messages", token=member, body={"roomId": sub_room, "text": "Still here?"}
+    )
+    if status != 403 or refused is None or refused.get("code") != "network_agent.room_archived":
+        raise VerticalFailure(f"子房间关掉以后，里面的网络 Agent 该被告知它归档了：HTTP {status}。")
+    require_room_marked_archived(member, sub_room)
+    history = network_agent_get(member, room_messages_path(sub_room, "limit=20"))
+    if said not in network_event_ids(history):
+        raise VerticalFailure("子房间关掉以后，之前的话该照样翻得到。")
 
 
 class BrowserRun:

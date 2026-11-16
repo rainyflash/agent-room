@@ -7,6 +7,9 @@
 //! 网络 Agent 用 `agent_room_close_room` 归档它管的子房间（2h-3a，[`AgentSubRoomArchival`]）：它自己
 //! 当房主的房间下面每一间照房主归档；凭口令、敲门进了别人的房间、在下面建的，照“它建的”认它
 //! （[`authorize_creator_agent_sub_room_archive`]）。恢复只给人做。
+//!
+//! 30 天没人说话的由每小时那一轮收起来（2j-2，[`InactiveSubRoomArchival`]）：没有动手的人，原因记
+//! `inactive`，原来在里面的人谁都能恢复。安静不安静由那一轮问过聊天服务器再定，这里只管存。
 
 use agent_room_domain::{
     ids::{AgentId, PrincipalId, RoomCatalogId},
@@ -49,6 +52,27 @@ pub trait AgentSubRoomArchival: Send + Sync {
         &self,
         request: ArchiveAgentSubRoom,
     ) -> PortFuture<'_, PrivateRoomResult<Option<PrivateRoomSnapshot>>>;
+}
+
+/// 自动归档那一轮用的。
+pub trait InactiveSubRoomArchival: Send + Sync {
+    /// 把这间子房间记成没人说话、自动归档。归档了的回 `true`；已经归档了、不再挂在这间房下面、父房间
+    /// 不在用了的什么都不做，回 `false`。读到以后又被存过的报错，下一轮再来。
+    fn archive_inactive_sub_room(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, PrivateRoomResult<bool>>;
+}
+
+impl InactiveSubRoomArchival for PrivateRoomService {
+    fn archive_inactive_sub_room(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, PrivateRoomResult<bool>> {
+        Box::pin(self.archive_inactive_sub_room_internal(parent_catalog_id, catalog_id))
+    }
 }
 
 impl AgentSubRoomArchival for PrivateRoomService {
@@ -178,6 +202,48 @@ impl PrivateRoomService {
         self.archive_loaded(&parent, sub_room, viewer, now, OPERATION)
             .await
             .map(Some)
+    }
+
+    async fn archive_inactive_sub_room_internal(
+        &self,
+        parent_catalog_id: RoomCatalogId,
+        catalog_id: RoomCatalogId,
+    ) -> PrivateRoomResult<bool> {
+        const OPERATION: &str = "sub_room.auto_archive";
+        let now = self.clock.now();
+        let Some(parent) = self.find(parent_catalog_id, OPERATION).await? else {
+            return Ok(false);
+        };
+        let Some(sub_room) = self
+            .find(catalog_id, OPERATION)
+            .await?
+            .filter(|sub_room| sub_room.parent_catalog_id() == Some(parent_catalog_id))
+        else {
+            return Ok(false);
+        };
+        let Some(archived) =
+            archived_sub_room(sub_room.room()).map_err(|error| domain(OPERATION, &error))?
+        else {
+            return Ok(false);
+        };
+        let outcome = self
+            .sub_rooms
+            .archive_sub_room(&SubRoomArchival {
+                room: &archived,
+                expected_version: sub_room.room().version(),
+                parent_catalog_id,
+                by: None,
+                reason: SubRoomArchiveReason::Inactive,
+                at: now,
+            })
+            .await
+            .map_err(|error| repository(OPERATION, PrivateRoomFailureStage::Persistence, &error))?;
+        if outcome != SubRoomArchiveOutcome::Done {
+            return Ok(false);
+        }
+        // 聊天服务器上锁住它：没做成的还排着，后台接着做。
+        self.sync_sub_rooms_under(&parent).await;
+        Ok(true)
     }
 
     pub(super) async fn restore_sub_room_internal(
