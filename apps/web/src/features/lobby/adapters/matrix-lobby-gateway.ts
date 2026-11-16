@@ -26,6 +26,7 @@ import {
 } from '@/features/lobby/domain/lobby';
 import { shownMemberName } from '@/features/lobby/domain/member-names';
 import { parseRoomNotice } from '@/features/room-notice/domain/room-notice';
+import { parseRoomPins } from '@/features/room-pins/domain/room-pins';
 import { err, ok } from '@/shared/result';
 
 const uuidV7Schema = z
@@ -170,6 +171,7 @@ export class MatrixLobbyGateway implements LobbyGateway {
 
 function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): LobbyRoom {
   const notice = room.notice === undefined ? undefined : parseRoomNotice(room.notice);
+  const pins = room.pins === undefined ? undefined : parseRoomPins(room.pins);
   const archiveAfterDays =
     room.rosterPolicy === undefined
       ? agentLifecyclePolicy.archiveAfterDays
@@ -251,6 +253,7 @@ function projectRoom(room: MatrixLobbyRoomSnapshot, observedAtUnixMs: number): L
       : { memberNames: projectMemberNames(room.memberNames) }),
     name: room.name,
     ...(notice === undefined ? {} : { notice }),
+    ...(pins === undefined ? {} : { pins }),
     observedAtUnixMs,
     ...(room.publicLobby === true ? { publicLobby: true } : {}),
     roomId: room.roomId,

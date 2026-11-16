@@ -216,6 +216,12 @@ const subRoomFixture = privateFixture && new URLSearchParams(window.location.sea
 const parentNoticeFixture =
   subRoomFixture && new URLSearchParams(window.location.search).has('parentNotice');
 const FIXTURE_PARENT_MATRIX_ID = '!parent-room:agent-room.test';
+// `?private&pins&history` 里 Grace 置顶了两句：最新的是第 79 条（一开始就加载了），另一句是很早以前的
+// 第 11 条（往前补三页才到，没补到时写“还没加载”）；对话里有一行“Grace 置顶了一句”。你没点开看过，
+// 置顶那一行亮一个点。不带 `&history` 时两句都没加载。
+const pinsFixture = privateFixture && new URLSearchParams(window.location.search).has('pins');
+const FIXTURE_PINNED_RECENT = `$01990d9e-8400-7000-8000-${String(1000 + 78).padStart(12, '0')}`;
+const FIXTURE_PINNED_OLD = `$01990d9e-8400-7000-8000-${String(1000 + 10).padStart(12, '0')}`;
 // `?muted` 里你此刻不能在这里发消息（被禁言或只能查看），房间本身照常。
 const mutedFixture = new URLSearchParams(window.location.search).has('muted');
 // `?private&matrix-invite` 是本机 Agent 刚替你建的房间：服务器记着你在里面，Matrix 上你还只是受邀，
@@ -248,6 +254,27 @@ let room: LobbyRoom = {
     : {}),
   ...(handoverFixture
     ? { memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }] }
+    : {}),
+  ...(pinsFixture
+    ? {
+        memberNames: [{ displayName: 'Grace', matrixUserId: '@grace:matrix.test' }],
+        pins: {
+          entries: [
+            {
+              eventId: FIXTURE_PINNED_RECENT,
+              pinnedAtUnixMs: Date.parse('2026-11-16T08:00:00.000Z'),
+              pinnedBy: '@grace:matrix.test',
+            },
+            {
+              eventId: FIXTURE_PINNED_OLD,
+              pinnedAtUnixMs: Date.parse('2026-11-15T08:00:00.000Z'),
+              pinnedBy: '@grace:matrix.test',
+            },
+          ],
+          updatedAtUnixMs: Date.parse('2026-11-16T08:00:00.000Z'),
+          updatedBy: '@grace:matrix.test',
+        },
+      }
     : {}),
 };
 const fixtureIdentity = { matrixUserId: '@fixture:matrix.test', displayName: 'Fixture operator' };
@@ -481,7 +508,7 @@ const fixtureChatter: readonly RoomMessageSignal[] = chatterFixture
   : [];
 let historyWindow = historyPage;
 // 须知每改一次，对话里多一行“某某改了须知”；`?notice` 一开始就有 Grace 那一次，`?handover` 一开始
-// 就有房间交给 Grace 的那一行。
+// 就有房间交给 Grace 的那一行，`?pins` 一开始就有 Grace 置顶的那一行。
 const stateLines: RoomStateLine[] = [
   ...(handoverFixture
     ? [
@@ -502,6 +529,17 @@ const stateLines: RoomStateLine[] = [
           serverTimestamp: room.notice.updatedAtUnixMs,
           text: room.notice.text,
           updatedBy: room.notice.updatedBy,
+        },
+      ]),
+  ...(room.pins === undefined
+    ? []
+    : [
+        {
+          kind: 'pinned' as const,
+          matrixEventId: '$fixture-pins',
+          serverTimestamp: room.pins.updatedAtUnixMs,
+          targetEventId: FIXTURE_PINNED_RECENT,
+          updatedBy: room.pins.updatedBy,
         },
       ]),
 ];

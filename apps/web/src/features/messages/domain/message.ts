@@ -147,8 +147,27 @@ export type RoomOwnerHandover = {
   readonly serverTimestamp: number;
 };
 
-/** 对话里按时间夹在消息中间的一行：须知改了，或者房间换了房主。 */
-export type RoomStateLine = RoomNoticeChange | RoomOwnerHandover;
+/**
+ * 置顶改了一次（`m.room.pinned_events` 的状态事件），对话里按时间写一行“某某置顶了一句”“某某取消了一条置顶”，
+ * 点了跳到那一句（`specs/redesign/brief-and-pins.md`“记录和未读”）。
+ */
+export type RoomPinsChange = {
+  readonly kind: 'pinned' | 'unpinned';
+  readonly matrixEventId: string;
+  readonly serverTimestamp: number;
+  /** 置顶、取消的是哪一句（Matrix 事件 ID）。 */
+  readonly targetEventId: string;
+  /** 改的人在 Matrix 上的 ID。 */
+  readonly updatedBy: string;
+};
+
+/** 对话里按时间夹在消息中间的一行：须知改了、置顶改了，或者房间换了房主。 */
+export type RoomStateLine = RoomNoticeChange | RoomOwnerHandover | RoomPinsChange;
+
+/** 对话里的那一行是不是置顶改了（它的 `kind` 是两个值，`===` 连着比收窄不了类型）。 */
+export function isRoomPinsChange(line: RoomStateLine): line is RoomPinsChange {
+  return line.kind === 'pinned' || line.kind === 'unpinned';
+}
 
 /**
  * 解不开的原因，按用户能做什么来分：

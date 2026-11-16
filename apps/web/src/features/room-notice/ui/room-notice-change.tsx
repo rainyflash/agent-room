@@ -2,16 +2,13 @@ import { Crown, Pin } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type {
-  RoomNoticeChange,
-  RoomOwnerHandover,
-  RoomStateLine,
-} from '@/features/messages/domain/message';
+import type { RoomNoticeChange, RoomOwnerHandover } from '@/features/messages/domain/message';
 
 import './room-notice-change.css';
 
 export type RoomNoticeChangeLineProps = {
-  readonly change: RoomStateLine;
+  /** 置顶改了的那一行另有 `RoomPinsChangeLine`。 */
+  readonly change: RoomNoticeChange | RoomOwnerHandover;
   /** Matrix ID 到名字；认不出的写“房主或管理员”“一位管理员”。 */
   readonly names: ReadonlyMap<string, string>;
   readonly selfMatrixUserId: string | null;

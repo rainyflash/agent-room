@@ -1,5 +1,6 @@
 import type { Result } from '@/shared/result';
 import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
+import type { RoomPins } from '@/features/room-pins/domain/room-pins';
 import type { AgentLifecycle, MatrixPresenceObservation } from '@agent-room/protocol';
 
 export const lobbyAgentStatuses = [
@@ -61,6 +62,8 @@ export type LobbyRoom = {
   readonly name: string;
   /** 房主和管理员挂在对话上方的常驻公告；没有或撤掉了不给。公共大厅没有。 */
   readonly notice?: RoomNotice;
+  /** 房主和管理员置顶的几句，新的在最前面；一条都没有时不给。公共大厅没有。 */
+  readonly pins?: RoomPins;
   readonly observedAtUnixMs: number;
   /**
    * 公共大厅：谁都能直接进、不加密。它不在你的房间列表里，也不会是子房间，打开时不用单独问

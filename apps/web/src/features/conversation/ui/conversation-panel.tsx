@@ -21,6 +21,8 @@ import type {
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
 import { RoomNoticeChangeLine } from '@/features/room-notice/ui/room-notice-change';
+import { RoomPinsChangeLine } from '@/features/room-pins/ui/room-pins-change';
+import { eventFocus, resolveFocus } from '../domain/message-focus';
 import { agentRunFoldingEnabled, rememberAgentRunFolding } from '../application/agent-run-folding';
 import { withStateLines } from '../domain/conversation-entries';
 import { foldAgentRuns, type ConversationItem } from '../domain/conversation-folds';
@@ -49,7 +51,11 @@ import { useConversationComposer } from '@/features/conversation/ui/use-conversa
 import type { MessageSubmissionIdFactory } from '@/features/messages/adapters/browser-submission-id-factory';
 import type { MessagePublisher } from '@/features/messages/domain/publication';
 import type { TypingNotifier } from '@/features/conversation/domain/typing';
-import { mentionsAccount, type RoomMessageSignal } from '@/features/messages/domain/message';
+import {
+  isRoomPinsChange,
+  mentionsAccount,
+  type RoomMessageSignal,
+} from '@/features/messages/domain/message';
 import {
   compareCursors,
   type ReadingCursor,
@@ -157,7 +163,8 @@ function ConversationPanelView({
     setLinked(linkedMessageId);
     setJump(null);
   }
-  const focusMessageId = jump?.id ?? linkedMessageId;
+  // 置顶的那一句只知道事件 ID（`eventFocus`）：加载了就换成它的消息 ID，没加载到就照找不到的那一套往前补。
+  const focusMessageId = resolveFocus(jump?.id ?? linkedMessageId, messages);
   const timeline = useMemo(() => conversationMessages(messages), [messages]);
   const messagesById = useMemo(
     () => new Map(messages.map((message) => [message.messageId, message])),
@@ -263,6 +270,21 @@ function ConversationPanelView({
       setSearchOpen(true);
       setSearchFocusTurn(requestedTurn);
     }
+  }
+  // 回到对话里的某一句，放开查找和筛选：回复的那句、置顶的那句多半不在筛出来的那几条里。
+  const jumpTo = (target: string): void => {
+    setFilter(emptyConversationFilter);
+    setSearchOpen(false);
+    setScope('all');
+    setJump((current) => ({ id: target, turn: (current?.turn ?? 0) + 1 }));
+  };
+  // 外面请跳到这间房的某一句（置顶那一行点的）。
+  const jumpRequest = searchRequests?.jump?.roomId === roomId ? searchRequests.jump : undefined;
+  const requestedJumpTurn = jumpRequest?.turn ?? 0;
+  const [answeredJumpTurn, setAnsweredJumpTurn] = useState(requestedJumpTurn);
+  if (answeredJumpTurn !== requestedJumpTurn) {
+    setAnsweredJumpTurn(requestedJumpTurn);
+    if (jumpRequest !== undefined) jumpTo(eventFocus(jumpRequest.eventId));
   }
   useEffect(() => {
     if (searchFocusTurn === 0) return;
@@ -406,6 +428,11 @@ function ConversationPanelView({
     }
   }, [latestMessage, selfId]);
   const jumpTurn = jump?.turn ?? 0;
+  // 每跳一次都重新给几次自动往前补的机会：要去的那一句（比如置顶的）可能在很早以前。
+  // 要排在下面自动往前补的那一段前面。
+  useLayoutEffect(() => {
+    automaticLoads.current = 0;
+  }, [jumpTurn]);
   useEffect(() => {
     if (!active || focusMessageId === null || focusedMessage.current === null) return;
     focusedMessage.current.scrollIntoView({ block: 'center' });
@@ -561,11 +588,7 @@ function ConversationPanelView({
             input.current?.focus();
           }}
           onJump={(targetId) => {
-            // 被回复的那句多半不在查找、筛出来的那几条里：都放开，回到完整的对话。
-            setFilter(emptyConversationFilter);
-            setSearchOpen(false);
-            setScope('all');
-            setJump((current) => ({ id: targetId, turn: (current?.turn ?? 0) + 1 }));
+            jumpTo(targetId);
           }}
         />
         {topicMessageIds.has(message.messageId) ? (
@@ -779,18 +802,31 @@ function ConversationPanelView({
                 </div>
               ) : null;
             if (item.kind === 'state') {
+              const line = item.line;
               return (
                 <div
                   className="conversation-panel__notice-entry"
-                  key={`state:${item.line.matrixEventId}`}
+                  key={`state:${line.matrixEventId}`}
                 >
                   {separator}
-                  <RoomNoticeChangeLine
-                    change={item.line}
-                    names={names}
-                    selfMatrixUserId={selfId}
-                    time={time}
-                  />
+                  {isRoomPinsChange(line) ? (
+                    <RoomPinsChangeLine
+                      change={line}
+                      names={names}
+                      onJump={(eventId) => {
+                        jumpTo(eventFocus(eventId));
+                      }}
+                      selfMatrixUserId={selfId}
+                      time={time}
+                    />
+                  ) : (
+                    <RoomNoticeChangeLine
+                      change={line}
+                      names={names}
+                      selfMatrixUserId={selfId}
+                      time={time}
+                    />
+                  )}
                 </div>
               );
             }
