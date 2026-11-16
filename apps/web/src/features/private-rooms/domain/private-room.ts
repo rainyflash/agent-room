@@ -138,6 +138,8 @@ export type PrivateRoomFailure = {
   readonly code: string;
   readonly correlationId?: string;
   readonly retryable: boolean;
+  /** 太快了（429）时服务器说过多少秒再来：回答里的 `retryAfterSeconds`，没有就看 `Retry-After`。 */
+  readonly retryAfterSeconds?: number;
 };
 
 export type PrivateRoomInvitationInput = {

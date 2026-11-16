@@ -93,6 +93,7 @@ import {
   usePrivateRoomListing,
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
+import { useRoomRepository } from '@/features/private-rooms/data/project-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
@@ -241,6 +242,7 @@ function ReadyLobby({
     privateRoomInvites,
     privateRoomListings,
     privateRooms,
+    projectRooms,
     roomNotices,
     roomPins,
     subRooms,
@@ -313,6 +315,26 @@ function ReadyLobby({
     privateRoomList.data.value.some(
       (entry) => entry.catalogId === catalogId && entry.status === 'archived',
     );
+  // 绑着 GitHub 仓库的公开房间，房间名旁边一个勾（specs/redesign/project-rooms.md）。绑定只有房主问得到，
+  // 别人问回 403：只给房主看。
+  const ownsRoom =
+    principal !== null &&
+    privateRoomList.data?.ok === true &&
+    privateRoomList.data.value.some(
+      (entry) => entry.catalogId === catalogId && entry.ownerPrincipalId === principal.principalId,
+    );
+  const repositoryQuery = useRoomRepository(
+    projectRooms,
+    catalogId,
+    ownsRoom && listing.data?.ok === true && listing.data.value.listed,
+  );
+  const repository =
+    repositoryQuery.data?.ok === true && repositoryQuery.data.value !== null
+      ? {
+          repository: repositoryQuery.data.value.repository,
+          url: repositoryQuery.data.value.repositoryUrl,
+        }
+      : null;
   // 私人房间里你没有“自动发言”时，带进来的 Agent 进得来、说不了话：“接入 Agent”里先说。
   const agentsCanSpeak = agentsSpeakIn(
     privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
@@ -1113,6 +1135,7 @@ function ReadyLobby({
                   </>
                 )
           }
+          repository={repository}
           roomName={room.name}
           share={
             shareRoom === null
@@ -1158,6 +1181,7 @@ function ReadyLobby({
         {...roomKind}
         layoutSwitch={layoutSwitch}
         membersButtonRef={membersButton}
+        repository={repository}
         roomName={room.name}
         onOpenSettings={
           principal === null
