@@ -4004,15 +4004,16 @@ def verify_brief_and_pins(
         wait_for_browser_step(
             BRIEF_PINS_UNPINNED, browser, timeout_seconds=600, failure="10 分钟内没取消那条置顶。"
         )
+        # 网页那一侧写完最后一步就跑完了：先等它收尾（出错在这里抛），最后一步不再看它还在不在。
+        browser.finish(timeout_seconds=120)
         both_agents_see(
             agent,
             reader,
-            browser,
+            None,
             sub_room=sub_room,
             what="取消置顶",
             seen=lambda page: pinned_and_readable(page, sub_room) == [],
         )
-    browser.finish(timeout_seconds=120)
     status, _ = network_agent_request("DELETE", "/me", token=reader)
     if status != 204:
         raise VerticalFailure(f"须知与置顶那一轮的网络 Agent 停用失败：HTTP {status}。")
@@ -4071,21 +4072,34 @@ def brief_pins_local_agent(
 def both_agents_see(
     agent: McpAgentSession,
     reader: str,
-    browser: BrowserRun,
+    browser: BrowserRun | None,
     *,
     sub_room: str,
     what: str,
     seen: Callable[[Mapping[str, object]], bool],
 ) -> None:
-    """须知和置顶改了跟着下一批交、不叫醒：另一个先说一句，两个 Agent 各自一批一批等，直到带着它的那一批。"""
+    """须知和置顶改了跟着下一批交、不叫醒：另一个先说一句，两个 Agent 各自一批一批等，直到带着它的那一批。
+    网页那一侧已经跑完的最后一步传 `browser=None`，不再看它还在不在。"""
     network_agent_say_in(reader, sub_room, "Checking that everyone got the latest update.")
-    for page in public_room_agent_pages(agent, browser, failure=f"本机 Agent 4 分钟内没拿到{what}。"):
+    deadline = time.monotonic() + 240
+    while True:
+        if browser is not None:
+            browser.ensure_running()
+        page = agent.call_tool(
+            "agent_room_wait_for_messages", {"wake": "all", "settleSeconds": 0, "waitSeconds": 15}
+        )
+        cursor = page.get("nextCursor")
+        if isinstance(cursor, str) and cursor:
+            agent.call_tool("agent_room_ack", {"eventId": cursor})
         if seen(page):
             break
+        if time.monotonic() >= deadline:
+            raise VerticalFailure(f"本机 Agent 4 分钟内没拿到{what}。")
     say_in_room(agent, sub_room, "Got it on my side.")
     deadline = time.monotonic() + 240
     while time.monotonic() < deadline:
-        browser.ensure_running()
+        if browser is not None:
+            browser.ensure_running()
         page = network_agent_wait(reader, "wait=15")
         acknowledge_network_page(reader, page)
         if seen(page):
