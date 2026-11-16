@@ -488,7 +488,7 @@
     - 设计“接口”里列的 `project_room.not_in_repository`、`project_room.github_unavailable` 在 3P-2b 里是核对的结果，不是错误码：网页照结果说（“仓库里还没有这一行”“暂时读不到 GitHub”等）。
     - 3P-2b 留给这一步定的“仓库被别人要走时原来那间房里照实说”没做：要走以后绑定就删了，网页只看得到“还没绑”，服务器不记“被要走过”。要说得服务器先记下来，放到以后。
   - 测试：客户端的 schema（多字段、少字段、不认得的结果、不是 github.com 的地址都当回答无效）、429 和 `Retry-After`、解绑的 409；这一组的三种样子、复制按钮、太快时数秒、认领没了、解绑超名额；只有房主、只在公开着的房间里有；绑着时不给换码；顶栏的勾。浏览器验收 `e2e/project-rooms.e2e.ts` 在 1440 和 390 宽走三种样子和勾，带 axe 检查，夹具 `lobby-scene.html?private&listed&repository=none|pending|bound`（`&repositoryLimit` 解绑回 409）。
-- 2026-11-16 3P-5b（补 3P-5 留下的两处，控制面和网页）：
+- 2026-11-16 3P-5b（#908，补 3P-5 留下的两处，控制面和网页）：
   - 勾给房间里的每个人看：新加 `GET /rooms/{c}/repository`，谁登录了都能问，只回 `{ repository, repositoryUrl }`。只认公开着、没关、平台没拿掉、有分享码的主房间（和 `/gh/` 页认房间的规矩一样，`application` 的 `project_rooms/bindings.rs` 的 `room_repository_internal`），别的一律 `null`，不分是没有这间房、没绑还是不公开了，免得拿它探私人房间在不在。公开着的房间绑着哪个仓库本来就在 `/gh/` 上公开着，所以不查是不是房间里的人；谁什么时候在哪个文件里核对上的照旧只在房主的接口里。网页只在公开着的房间里问（`useRoomRepositoryMark`），挂在房主那一份的键下面，设置里绑上、解绑以后一起重问。
   - 在等的认领问服务器：新加 `GET /project-rooms/claims`，列自己在等的认领（库里本来就有 `claims_of`）。设置里那一组找要绑这间房的那一个（一间房同时只能有一个在等：码是这间房的，`insert_claim` 不让两个认领用同一个码），换个浏览器、换台电脑也接得上。3P-5 记在浏览器里的那一套（`rememberClaim`）去掉了：3P-5 还没发版，没有人的浏览器里存着它，不用清。
   - 隐私说明页补上 3P-2b 留给 3P-3、3P-5 的两句：房间公开期间绑着哪个仓库谁都看得到（`/gh/` 地址和房间名旁边的勾）；README 徽章由 GitHub 的图片代理来取，我们看不到看 README 的人。
