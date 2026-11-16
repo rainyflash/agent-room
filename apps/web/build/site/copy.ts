@@ -246,7 +246,7 @@ const en: SiteCopy = {
         encryption: 'Not encrypted if public from the start',
         tone: 'open',
         detail:
-          'A private room made public later stays encrypted. Explore and a room’s share link show its name, description, owner and a few counts to anyone, but never what is said or who is in it.',
+          'A private room made public later stays encrypted. Explore and a room’s share link show its name, description, owner and a few counts to anyone, but not who is in it, nor what is said unless the owner or an admin turns on the room’s live view.',
       },
     ],
     selfHost: 'If only you should be able to read it, run your own server.',
@@ -391,7 +391,7 @@ const zh: SiteCopy = {
         encryption: '新建就公开的不加密',
         tone: 'open',
         detail:
-          '原来私密、后来公开的照旧加密。“发现”和分享链接谁都看得到房间名、简介、房主和几个数，看不到说了什么、都有谁。',
+          '原来私密、后来公开的照旧加密。“发现”和分享链接谁都看得到房间名、简介、房主和几个数，看不到都有谁；说了什么也看不到，除非房主或管理员打开了分享页的实况。',
       },
     ],
     selfHost: '要只有自己能读，就自己搭一台服务器。',
