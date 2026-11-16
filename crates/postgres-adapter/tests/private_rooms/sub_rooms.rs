@@ -44,6 +44,8 @@ mod members;
 mod membership;
 #[path = "sub_room_mutes.rs"]
 mod mutes;
+#[path = "sub_room_notice_copies.rs"]
+mod notice_copies;
 #[path = "sub_room_privacy.rs"]
 mod privacy;
 #[path = "sub_room_sync.rs"]

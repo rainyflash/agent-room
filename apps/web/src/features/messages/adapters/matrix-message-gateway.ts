@@ -18,6 +18,7 @@ import { matrixRosterPolicyEventType } from '@/features/lobby/adapters/matrix-lo
 import {
   parseRoomNoticeChange,
   roomNoticeEventType,
+  roomParentNoticeEventType,
 } from '@/features/room-notice/domain/room-notice';
 import { parseRoomPinsChange, roomPinsEventType } from '@/features/room-pins/domain/room-pins';
 import {
@@ -50,12 +51,14 @@ const MAX_PROJECTED_MESSAGES = 200;
 const MAX_PROJECTED_READ_ONLY_EVENTS = 50;
 const MAX_PROJECTED_STATE_LINES = 50;
 /**
- * 我们自己写的房间状态：第一次公开的时间、公告、Agent 名册的设置、换了房主。大厅和公告条从房间状态里读，
- * 不是聊天记录，也不是看不懂的事件；公告改了、换了房主另在对话里写一行。
+ * 我们自己写的房间状态：第一次公开的时间、公告、子房间里父房间须知的副本、置顶、Agent 名册的设置、换了房主。
+ * 大厅和公告条从房间状态里读，不是聊天记录，也不是看不懂的事件；公告改了、置顶改了、换了房主另在对话里写一行，
+ * 副本不写。
  */
 const ownRoomStateEventTypes = new Set([
   roomListingEventType,
   roomNoticeEventType,
+  roomParentNoticeEventType,
   roomPinsEventType,
   roomOwnerHandoverEventType,
   matrixRosterPolicyEventType,

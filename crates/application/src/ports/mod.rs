@@ -188,6 +188,9 @@ pub use rooms::{
     NewSubRoomCategory, SubRoomCategory, SubRoomCategoryName, SubRoomCategoryOutcome,
     SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
 };
+pub use rooms::{
+    ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
+};
 pub use rooms::{PinTarget, PrivateRoomPinsGateway, RoomPinsChange, RoomPinsWriteFailure};
 pub use rooms::{
     QuietSubRoom, SubRoomActivityStore, SubRoomArchival, SubRoomArchiveOutcome,

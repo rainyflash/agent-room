@@ -3,6 +3,10 @@
 //!
 //! 每写一次就是一条新的状态事件，聊天服务器不删，应用服务又不受它的限速，所以每个人一小时最多写
 //! [`NOTICES_PER_HOUR`] 次，和置顶合起来算（[`RoomStateWriteLimit`]）。
+//!
+//! 改的是父房间时，下面每间子房间里的副本跟着写（`parent_copies`）。
+
+mod parent_copies;
 
 use std::sync::Arc;
 
@@ -15,10 +19,13 @@ use crate::{
     authentication::AuthenticatedPrincipal,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
-        Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, PortFuture,
-        PrivateRoomNoticeGateway, PrivateRoomStore, RoomNoticeWrite,
+        Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, ParentNoticeGateway,
+        ParentNoticeSyncStore, PortFuture, PrivateRoomNoticeGateway, PrivateRoomStore,
+        RoomNoticeWrite,
     },
 };
+
+pub use parent_copies::{ParentNoticeSyncOutcome, ParentNoticeSyncRetry, ParentNoticeSyncUseCases};
 
 use super::{ROOM_STATE_WRITES_PER_HOUR, RoomStateWriteLimit};
 
@@ -87,6 +94,10 @@ pub trait PrivateRoomNoticeUseCases: Send + Sync {
 pub struct PrivateRoomNoticeDependencies {
     pub rooms: Arc<dyn PrivateRoomStore>,
     pub matrix: Arc<dyn PrivateRoomNoticeGateway>,
+    /// 子房间里的副本还要写的那几间。
+    pub copy_queue: Arc<dyn ParentNoticeSyncStore>,
+    /// 读父房间的须知、读写子房间里的副本。
+    pub copies: Arc<dyn ParentNoticeGateway>,
     pub clock: Arc<dyn Clock>,
     /// 和置顶共用的那一份次数上限。
     pub writes: Arc<RoomStateWriteLimit>,
@@ -95,6 +106,8 @@ pub struct PrivateRoomNoticeDependencies {
 pub struct PrivateRoomNoticeService {
     rooms: Arc<dyn PrivateRoomStore>,
     matrix: Arc<dyn PrivateRoomNoticeGateway>,
+    copy_queue: Arc<dyn ParentNoticeSyncStore>,
+    copies: Arc<dyn ParentNoticeGateway>,
     clock: Arc<dyn Clock>,
     written: Arc<RoomStateWriteLimit>,
 }
@@ -104,6 +117,8 @@ impl PrivateRoomNoticeService {
         Self {
             rooms: dependencies.rooms,
             matrix: dependencies.matrix,
+            copy_queue: dependencies.copy_queue,
+            copies: dependencies.copies,
             clock: dependencies.clock,
             written: dependencies.writes,
         }
@@ -157,6 +172,10 @@ impl PrivateRoomNoticeService {
             .set_notice(&matrix_room, &notice)
             .await
             .map_err(|error| matrix(OPERATION, error))?;
+        // 子房间没有子房间。
+        if snapshot.parent_catalog_id().is_none() {
+            self.copy_to_sub_rooms(request.catalog_id, now).await;
+        }
         Ok(RoomNotice {
             text: notice.text.as_str().to_owned(),
             updated_at: now,

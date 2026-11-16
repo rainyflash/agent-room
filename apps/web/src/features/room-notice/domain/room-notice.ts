@@ -11,6 +11,13 @@ import type { Result } from '@/shared/result';
  */
 export const roomNoticeEventType = 'io.github.rainyflash.agentroom.room.notice.v1';
 
+/**
+ * 子房间里父房间须知的副本（`specs/redesign/brief-and-pins.md` 的 4N-3b）：控制面以应用服务写给子房间里的
+ * Agent 读，内容和须知一样多一个 `parentRoomId`。网页不读它（人都在父房间里，直接读父房间的须知），只是别把它
+ * 当成看不懂的事件列出来。
+ */
+export const roomParentNoticeEventType = 'io.github.rainyflash.agentroom.room.parent_notice.v1';
+
 /** 公告最多写多少个字，按 Unicode 字符数，和控制面一样。 */
 export const ROOM_NOTICE_MAX_CHARACTERS = 2_000;
 

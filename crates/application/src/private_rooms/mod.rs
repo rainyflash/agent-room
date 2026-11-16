@@ -58,9 +58,9 @@ pub use moderation_grants::{
     RoomModerationGrantDependencies, RoomModerationGrantService, RoomModerationGrantUseCases,
 };
 pub use notice::{
-    NOTICES_PER_HOUR, NoticeFailure, NoticeFailureKind, NoticeResult,
-    PrivateRoomNoticeDependencies, PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice,
-    UpdateRoomNotice,
+    NOTICES_PER_HOUR, NoticeFailure, NoticeFailureKind, NoticeResult, ParentNoticeSyncOutcome,
+    ParentNoticeSyncRetry, ParentNoticeSyncUseCases, PrivateRoomNoticeDependencies,
+    PrivateRoomNoticeService, PrivateRoomNoticeUseCases, RoomNotice, UpdateRoomNotice,
 };
 pub use owner_handover::{
     DeletedOwnerRooms, OwnerHandoverDependencies, OwnerHandoverFailure, OwnerHandoverOutcome,

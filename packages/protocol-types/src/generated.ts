@@ -272,3 +272,12 @@ export type RoomNoticeState = {
   readonly updatedAt: string;
   readonly updatedBy: string;
 } & Readonly<Record<string, unknown>>;
+
+export type RoomParentNoticeState = {
+  readonly eventType: "io.github.rainyflash.agentroom.room.parent_notice.v1";
+  readonly parentRoomId: string;
+  readonly schemaVersion: "1.0";
+  readonly text: string;
+  readonly updatedAt: string;
+  readonly updatedBy: string;
+} & Readonly<Record<string, unknown>>;
