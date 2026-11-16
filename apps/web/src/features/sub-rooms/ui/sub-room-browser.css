@@ -203,6 +203,31 @@ button.sub-room-browser__name:hover {
   justify-content: flex-end;
   gap: 6px;
 }
+/* 管得了的那一行后面的齿轮：灰的，指过去变深。 */
+.sub-room-browser__settings {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-muted);
+  background: transparent;
+}
+.sub-room-browser__settings:hover {
+  color: var(--color-ink);
+  background: var(--ar-selected);
+}
+.sub-room-browser__settings:focus-visible {
+  outline: 2px solid var(--ar-accent);
+  outline-offset: 1px;
+}
+.sub-room-browser__settings > svg {
+  width: 16px;
+  height: 16px;
+}
 .sub-room-browser__state {
   display: inline-flex;
   align-items: center;
