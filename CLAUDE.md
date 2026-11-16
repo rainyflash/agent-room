@@ -432,6 +432,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2i-8c 步（#865）：“浏览子房间”上管得了的那几行有齿轮，没进去的那间也能打开设置。别拆的：有没有齿轮看 `managesSubRoom`，和左栏“⋯”一条规则，别另按身份猜；没进去的那间设置里没有“管这一间的人”，那要先进去才列得出里面的人。
   - 子房间第 2k-1 步（#869）：无头验收里网络 Agent 在子房间里敲门、放行、关掉、只离开一间（`verify_sub_rooms_by_network_agents`）。子房间归档只记在父子关系那一行（`private_room_parent.archived_at`），房间目录照旧开着：新加“这间房归档了没有”的地方两样都看，网络 Agent 的房间列表（`network_agent_rooms`）就漏过一次。
   - 子房间第 2k-2a 步（#870）：无头验收里人在网页上建分类和子房间、本机 Agent 按 `父房间名/子房间名` 进来、申请和批准（`verify_sub_rooms_in_web`，`e2e-vertical/sub-rooms.e2e.ts`）。网页上建子房间时不带 Agent（取消勾选“带上我的 Agent”）：这一轮只看人，Agent 由纵向验收按名字带进来。
+  - 子房间第 2k-2b 步（#871）：同一轮接着归档、恢复、把人移出上面那间，最后问 Synapse 他和他的 Agent 在子房间里是不是 `leave`。移出要最近登录过，用例另开一页刚登录的房主去移；移出以后他那一页读不到房间是正常的，只查房主两页的报错。
   - 子房间第 2i-5 步（#858）：还没进的子房间是父房间地址上的 `door=<子房间号>`，卡片在 `sub-room-door.tsx`。别拆的：入场页单间问不到时按号问整间房、转到父房间（`onEntered(target, door)`），换别的 `view` 时地址里不留 `door`；归档的子房间对话上面那一行是 `ArchivedSubRoomNotice`，恢复以后刷新的是房间列表（`privateRoomListQueryKey`），不只是子房间名单。
   - 子房间第 2i-4 步（#857）：“新建子房间”对话框（`new-sub-room-dialog.tsx`）。别拆的：房间号由网页先定好，再点是同一个请求（服务器按房间号幂等），只有填写不行的才换号；建好以后先带 Agent、再 `commands.enter`，加入没成时说“建好了，还没进去”。原生对话框打开时焦点给关闭按钮，`autoFocus` 不管用，名字框在打开以后的 effect 里拿焦点。
   - 子房间第 2i-3 步（#856）：“浏览子房间”是房间页的 `view=sub-rooms`（`roomPanelViews`），和 Agent 表格一样展开成整页（`fullPage`）。别拆的：加入子房间先 `subRooms.join`、再照进私人房间那一套 `commands.enter`（在 Matrix 上加入）；入场页进去以后带着地址里的 `view`；“没见过的新子房间”只记在这台设备上（`use-unseen-sub-rooms.ts`），头一回打开时名单上的都算见过。
