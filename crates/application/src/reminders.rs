@@ -1,10 +1,21 @@
 //! 提醒（`specs/redesign/reminders.md` 的“邮件提醒”）：每个账户一个邮件提醒开关，默认开着；邮件里的
 //! 退订链接不用登录，凭签过名的令牌关掉它。
 //!
-//! 这一步（4R-3）只存开关、出退订页，还不发信。“这台服务器开没开邮件提醒”由部署配置定，生产上要等
-//! 发信那一步（4R-5）维护者点了头才打开；没开时网页不显示这个开关。
+//! 4R-3 存开关、出退订页；4R-4 算该提醒什么（[`ReminderPlanner`]），还不发信。“这台服务器开没开邮件
+//! 提醒”由部署配置定，生产上要等发信那一步（4R-5）维护者点了头才打开；没开时网页不显示这个开关。
+
+mod plan;
+mod planner;
+mod workspace;
 
 use std::sync::Arc;
+
+pub use plan::{
+    LOOKBACK_MS, MINIMUM_GAP_MS, ReminderDecision, ReminderHold, ReminderPlan, ReminderRoomTally,
+    SETTLE_MS,
+};
+pub use planner::{ReminderPlanFailure, ReminderPlanner, ReminderPlannerDependencies};
+pub use workspace::{Pause, PersonalWorkspace, ReadPosition};
 
 use crate::{
     authentication::AuthenticatedPrincipal,
