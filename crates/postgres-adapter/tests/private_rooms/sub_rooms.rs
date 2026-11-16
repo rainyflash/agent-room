@@ -20,6 +20,8 @@ use super::{
     *,
 };
 
+#[path = "sub_room_activity.rs"]
+mod activity;
 #[path = "sub_room_agent_members.rs"]
 mod agent_members;
 #[path = "sub_room_archive.rs"]
