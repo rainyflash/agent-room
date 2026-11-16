@@ -23,10 +23,15 @@ mod moderation;
 pub use moderation::{
     IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcModerationOutcome,
 };
+mod project_rooms;
 mod room_management;
 mod room_notices;
 mod room_pins;
 mod session_rooms;
+pub use project_rooms::{
+    IpcCheckRepositoryClaimRequest, IpcClaimRepositoryRequest, IpcRepositoryCheck,
+    IpcRepositoryClaim, IpcRepositoryClaimStatus,
+};
 pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
     IpcRoomAccess, IpcRoomAccessAction, IpcRoomAccessRequest, IpcRoomCode, IpcRoomKnock,

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-/// 一次最多报几个版本。Bridge 为了还开着的旧版 MCP 进程同时认 4.4 到 4.8 五个版本（4.8 起从 4 放到 8）；
+/// 一次最多报几个版本。Bridge 为了还开着的旧版 MCP 进程同时认 4.4 到 4.9 六个版本（4.8 起从 4 放到 8）；
 /// 只是本地的上限，不上线路：旧 Bridge 收到的新版客户端提议只报一个版本。
 const MAX_ADVERTISED_VERSIONS: usize = 8;
 const MAX_REQUESTED_SCOPES: usize = 16;
@@ -73,6 +73,10 @@ impl IpcProtocolVersion {
     /// 4.8：读房间的置顶（`ReadRoomPins`，`specs/redesign/brief-and-pins.md`“Agent 读置顶”）。Bridge
     /// 同时接受 4.4 到 4.7：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这个方法。
     pub const V4_8: Self = Self { major: 4, minor: 8 };
+    /// 4.9：替这台电脑的账户认领 GitHub 仓库、现在核对（`ClaimRepository`、`CheckRepositoryClaim`，
+    /// `specs/redesign/project-rooms.md` 的 3P-4a）。Bridge 同时接受 4.4 到 4.8：升级以后宿主里还开着的
+    /// 旧版 MCP 进程照样连得上，它们不会发这两个方法。
+    pub const V4_9: Self = Self { major: 4, minor: 9 };
 
     /// 构造本地 IPC 协议版本。
     ///

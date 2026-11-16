@@ -868,8 +868,12 @@ fn build_project_rooms(
     }));
     let routes =
         features::project_rooms::router(features::project_rooms::ProjectRoomHttpState::new(
-            service.clone(),
-            dependencies.authentication.clone(),
+            features::project_rooms::ProjectRoomHttpDependencies {
+                rooms: service.clone(),
+                authentication: dependencies.authentication.clone(),
+                devices: dependencies.devices.clone(),
+                secrets: dependencies.secrets.clone(),
+            },
             &config.authentication.frontend_origin,
             &config.authentication.desktop_origins,
             &config.authentication.matrix_server_name,

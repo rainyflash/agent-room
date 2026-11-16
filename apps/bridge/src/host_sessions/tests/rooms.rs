@@ -221,6 +221,7 @@ fn handler(rooms: Arc<RoomsFake>, host_agents: Arc<HostAgentsFake>) -> SessionAw
         invitations: InvitationSlot::default(),
         join_codes: join_codes(Arc::new(JoinCodesFake::default()), host_agents.clone()),
         rooms: access(rooms, host_agents),
+        project_rooms: project_rooms::access(Arc::default()),
     }
 }
 

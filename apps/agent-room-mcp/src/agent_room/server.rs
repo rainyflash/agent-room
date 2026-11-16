@@ -1450,6 +1450,7 @@ const fn response_name(response: &IpcResponse) -> &'static str {
         IpcResponse::Invitation { .. } => "invitation",
         IpcResponse::JoinCodeRoom { .. } => "join_code_room",
         IpcResponse::CreatedRoom { .. } => "created_room",
+        IpcResponse::RepositoryClaim { .. } => "repository_claim",
         IpcResponse::RoomAccess { .. } => "room_access",
         IpcResponse::RoomUpdated { .. } => "room_updated",
         IpcResponse::RoomEntered { .. } => "room_entered",

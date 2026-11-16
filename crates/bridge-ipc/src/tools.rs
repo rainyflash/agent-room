@@ -45,6 +45,11 @@ pub enum IpcMethod {
     RedeemJoinCode(IpcRedeemJoinCodeRequest),
     /// 建私人房间，这个会话键的人物当建房的 Agent；随后照常开会话进入返回的房间。不需要先开会话。
     CreateRoom(IpcCreateRoomRequest),
+    /// 替这台电脑的账户认领 GitHub 仓库（4.9 起，`specs/redesign/project-rooms.md` 的 3P-4a）。不需要先
+    /// 开会话；同一个仓库再认领回同一个认领。
+    ClaimRepository(crate::IpcClaimRepositoryRequest),
+    /// 现在核对一个认领（4.9 起），每个认领每分钟一次。不需要先开会话。
+    CheckRepositoryClaim(crate::IpcCheckRepositoryClaimRequest),
     /// 会话所在的房间怎么进：口令和等着的敲门，口令可以生成、更换、停用。下面四个都只管 Agent
     /// 建的房间，由控制面把关。
     RoomAccess(IpcRoomAccessRequest),
@@ -113,6 +118,8 @@ impl IpcMethod {
             Self::ResolveJoinCode(_) => "resolve_join_code",
             Self::RedeemJoinCode(_) => "redeem_join_code",
             Self::CreateRoom(_) => "create_room",
+            Self::ClaimRepository(_) => "claim_repository",
+            Self::CheckRepositoryClaim(_) => "check_repository_claim",
             Self::RoomAccess(_) => "room_access",
             Self::AnswerKnock(_) => "answer_knock",
             Self::InvitePerson(_) => "invite_person",
@@ -159,6 +166,9 @@ impl IpcMethod {
             | Self::ReceptionControl(_) => IpcScope::HostSessionsManage,
             Self::WithSession { method, .. } => method.required_scope(),
             Self::CreateRoom(_)
+            // 认领仓库认上以后建房间、绑房间，和建房同一类权限。
+            | Self::ClaimRepository(_)
+            | Self::CheckRepositoryClaim(_)
             | Self::RoomAccess(_)
             | Self::AnswerKnock(_)
             | Self::InvitePerson(_)
@@ -215,6 +225,8 @@ impl IpcMethod {
             Self::ResolveJoinCode(request) => request.validate(),
             Self::RedeemJoinCode(request) => request.validate(),
             Self::CreateRoom(request) => request.validate(),
+            Self::ClaimRepository(request) => request.validate(),
+            Self::CheckRepositoryClaim(request) => request.validate(),
             Self::AnswerKnock(request) => request.validate(),
             Self::InvitePerson(request) => request.validate(),
             Self::RemoveAgent(request) => request.validate(),
@@ -256,6 +268,8 @@ impl IpcMethod {
                         | Self::ResolveJoinCode(_)
                         | Self::RedeemJoinCode(_)
                         | Self::CreateRoom(_)
+                        | Self::ClaimRepository(_)
+                        | Self::CheckRepositoryClaim(_)
                 ) {
                     return Err(failure("bridge.ipc.session_method_invalid"));
                 }
@@ -870,6 +884,10 @@ pub enum IpcResponse {
             skip_serializing_if = "std::ops::Not::not"
         )]
         category_missing: bool,
+    },
+    /// 认领、核对的结果（4.9 起）。
+    RepositoryClaim {
+        claim: crate::IpcRepositoryClaim,
     },
     /// 房间怎么进：口令和等着的敲门。
     RoomAccess {
