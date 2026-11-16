@@ -208,7 +208,7 @@ export function PrivateRoomMembers({
     mutation.variables === undefined
       ? 0
       : mutation.variables.submission - (mutation.isPending ? 1 : 0);
-  // 这里只有转让会碰上每个账户 1 间公开房间的限额；说明放在确认框里，别和通用的失败提示重复。
+  // 这里只有转让会碰上每个账户 1 间不绑仓库的公开房间的限额；说明放在确认框里，别和通用的失败提示重复。
   const targetHasPublicRoom = failure?.code === 'private_room.public_limit_reached';
 
   return (

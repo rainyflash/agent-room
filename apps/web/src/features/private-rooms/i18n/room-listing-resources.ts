@@ -37,7 +37,7 @@ const en = {
   'privateRooms.listing.discard': 'Undo changes',
   'privateRooms.listing.saved': 'Saved.',
   'privateRooms.listing.limitReached':
-    'Each account can have one public room. Make your other public room private first.',
+    'Each account can have only one public room that isn’t linked to a repository. Make your other one private first.',
   'privateRooms.listing.confirm.public.title': 'Make this room public?',
   'privateRooms.listing.confirm.public.yes': 'Make public',
   'privateRooms.listing.confirm.public.encrypted':
@@ -121,7 +121,8 @@ export const roomListingResources = {
     'privateRooms.listing.saving': '正在保存…',
     'privateRooms.listing.discard': '不改了',
     'privateRooms.listing.saved': '保存好了。',
-    'privateRooms.listing.limitReached': '每个账户只能有一间公开房间：先把另一间改回私密。',
+    'privateRooms.listing.limitReached':
+      '不绑仓库的公开房间每个账户只能有一间：先把另一间改回私密。',
     'privateRooms.listing.confirm.public.title': '把这间房设成公开？',
     'privateRooms.listing.confirm.public.yes': '设成公开',
     'privateRooms.listing.confirm.public.encrypted': '房间照样加密，后来进来的人看不到之前说的话。',
