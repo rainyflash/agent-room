@@ -47,7 +47,7 @@ async fn 只列没归档的子房间_父房间归档了一间都不列_最近说
     }
     assert_eq!(
         last_message_at(&database.runtime, id(&alpha)).await,
-        Some(9_000),
+        Some(time(9_000).value()),
         "早一点的不往回挪"
     );
     assert_eq!(

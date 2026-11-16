@@ -35,6 +35,11 @@ export type MatrixLobbyRoomSnapshot = {
    */
   readonly memberNames?: readonly MatrixLobbyMemberName[];
   readonly name: string;
+  /**
+   * 公共大厅：不加密、谁都能直接进（`public` 加入规则）。只有它不在你的房间列表里、也不会是子房间；
+   * 别的房间（还没读到加入规则的也算）不给这一项。
+   */
+  readonly publicLobby?: true;
   /** 房间状态里的常驻公告（`room.notice.v1`），原样；没有这条状态时不给。 */
   readonly notice?: unknown;
   readonly roomId: string;
@@ -122,6 +127,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
             }
           : {}),
         name: room.name.trim() || roomId,
+        ...(!encrypted && joinRule === 'public' ? { publicLobby: true as const } : {}),
         ...(notice === null ? {} : { notice: notice.getContent() }),
         roomId,
         ...(rosterPolicy === null ? {} : { rosterPolicy: rosterPolicy.getContent() }),
