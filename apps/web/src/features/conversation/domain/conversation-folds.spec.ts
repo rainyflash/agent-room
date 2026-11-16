@@ -80,8 +80,8 @@ function shape(items: readonly ConversationItem[]): readonly (string | readonly 
   return items.map((item) =>
     item.kind === 'message'
       ? item.message.messageId
-      : item.kind === 'notice'
-        ? `notice:${item.change.matrixEventId}`
+      : item.kind === 'state'
+        ? `state:${item.line.matrixEventId}`
         : item.messages.map((message) => message.messageId),
   );
 }
@@ -186,8 +186,8 @@ describe('Agent 之间的长串折起来', () => {
     const withNotice: ConversationEntry[] = [
       ...entries.slice(0, 3),
       {
-        kind: 'notice',
-        change: {
+        kind: 'state',
+        line: {
           kind: 'updated',
           matrixEventId: '$notice',
           serverTimestamp: NOON,
@@ -200,7 +200,7 @@ describe('Agent 之间的长串折起来', () => {
       'a1',
       'a2',
       'a3',
-      'notice:$notice',
+      'state:$notice',
       'b1',
       'b2',
       'b3',

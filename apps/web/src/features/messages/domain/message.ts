@@ -132,6 +132,21 @@ export type RoomNoticeChange = {
 };
 
 /**
+ * 房主删除了账户、房间交给了当管理员最久的那位（`room.owner_handover.v1` 的状态事件），对话里按时间
+ * 写一行“房间交给了某某”。
+ */
+export type RoomOwnerHandover = {
+  readonly kind: 'owner_handover';
+  readonly matrixEventId: string;
+  /** 接手的人在 Matrix 上的 ID。 */
+  readonly owner: string;
+  readonly serverTimestamp: number;
+};
+
+/** 对话里按时间夹在消息中间的一行：公告改了，或者房间换了房主。 */
+export type RoomStateLine = RoomNoticeChange | RoomOwnerHandover;
+
+/**
  * 解不开的原因，按用户能做什么来分：
  * 没收到密钥、发送方不肯给（这台设备当时还没签好）、发送方设备不可信、消息早于加入、其他。
  */
@@ -156,8 +171,8 @@ export type UndecryptableRecovery = 'idle' | 'requested' | 'awaiting_signing';
 export type MessageRoomProjection = {
   readonly history?: { readonly canLoadMore: boolean; readonly limited: boolean };
   readonly messages: readonly RoomMessageSignal[];
-  /** 公告改过几次，按时间先后；没改过时不给。 */
-  readonly noticeChanges?: readonly RoomNoticeChange[];
+  /** 公告改过的、房主换过的，按时间先后；都没有时不给。 */
+  readonly stateLines?: readonly RoomStateLine[];
   /**
    * 这份投影算出来的时间。房间没变时网关交回同一份投影，这个时间也不变，
    * 所以它不是“现在”；需要当前时间的地方自己取时钟。

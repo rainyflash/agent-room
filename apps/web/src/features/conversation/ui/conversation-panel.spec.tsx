@@ -13,6 +13,7 @@ import type {
 import type {
   RoomMessageSignal,
   RoomNoticeChange,
+  RoomStateLine,
   UndecryptableRecovery,
   UndecryptableSummary,
 } from '@/features/messages/domain/message';
@@ -37,7 +38,7 @@ function harness(
   undecryptable?: UndecryptableSummary,
   recovery: UndecryptableRecovery = 'idle',
   memberNames?: readonly ConversationParticipant[],
-  noticeChanges?: readonly RoomNoticeChange[],
+  stateLines?: readonly RoomStateLine[],
 ) {
   const publish = vi.fn((request: MessagePublicationRequest): Promise<MessagePublicationResult> =>
     Promise.resolve(
@@ -86,7 +87,7 @@ function harness(
       submissionIds={{ next: () => submissionId }}
       {...(undecryptable === undefined ? {} : { recovery, undecryptable })}
       {...(memberNames === undefined ? {} : { memberNames })}
-      {...(noticeChanges === undefined ? {} : { noticeChanges })}
+      {...(stateLines === undefined ? {} : { stateLines })}
     />
   );
   render(
@@ -818,7 +819,7 @@ describe('Agent 点名房间里的人', () => {
   });
 });
 
-describe('公告的改动', () => {
+describe('公告的改动、换了房主', () => {
   const grace = '@grace:agent-room.test';
   const question = (id: string, at: number, text: string): RoomMessageSignal => ({
     actor: {
@@ -893,5 +894,40 @@ describe('公告的改动', () => {
     fireEvent.click(topic);
     expect(log).not.toHaveTextContent('updated the notice');
     expect(log).toHaveTextContent('An answer');
+  });
+
+  it('房主删除了账户：写交给了谁，交给你写“你”，认不出的写一位管理员', async () => {
+    const handover = (id: string, at: number, owner: string): RoomStateLine => ({
+      kind: 'owner_handover',
+      matrixEventId: id,
+      owner,
+      serverTimestamp: at,
+    });
+    harness(
+      false,
+      [question('root', 1_000, 'Root question')],
+      null,
+      undefined,
+      'idle',
+      [{ matrixUserId: grace, displayName: 'Grace' }],
+      [
+        handover('$to-grace', 1_500, grace),
+        handover('$to-you', 2_000, '@rainy:agent-room.test'),
+        handover('$to-someone', 2_500, '@stranger:agent-room.test'),
+      ],
+    );
+
+    const log = screen.getByRole('log');
+    await waitFor(() => {
+      expect(log).toHaveTextContent(
+        'The owner deleted their account, so this room now belongs to Grace',
+      );
+    });
+    expect(log).toHaveTextContent(
+      'The owner deleted their account, so this room now belongs to you',
+    );
+    expect(log).toHaveTextContent(
+      'The owner deleted their account, so this room now belongs to one of its admins',
+    );
   });
 });

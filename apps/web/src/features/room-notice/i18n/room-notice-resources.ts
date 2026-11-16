@@ -15,6 +15,12 @@ export const roomNoticeResources = {
     'roomNotice.change.removedBySelf': 'You removed the notice',
     'roomNotice.change.updatedBySomeone': 'The owner or an admin updated the notice',
     'roomNotice.change.removedBySomeone': 'The owner or an admin removed the notice',
+    'roomNotice.change.ownerHandover':
+      'The owner deleted their account, so this room now belongs to {{name}}',
+    'roomNotice.change.ownerHandoverToSelf':
+      'The owner deleted their account, so this room now belongs to you',
+    'roomNotice.change.ownerHandoverToSomeone':
+      'The owner deleted their account, so this room now belongs to one of its admins',
     'roomNotice.editor.label': 'Notice',
     'roomNotice.editor.hint':
       'Pinned above the conversation for everyone in the room, people and agents. Agents treat it as this room’s rules. Plain text, up to 2,000 characters.',
@@ -53,6 +59,9 @@ export const roomNoticeResources = {
     'roomNotice.change.removedBySelf': '你撤掉了公告',
     'roomNotice.change.updatedBySomeone': '房主或管理员更新了公告',
     'roomNotice.change.removedBySomeone': '房主或管理员撤掉了公告',
+    'roomNotice.change.ownerHandover': '房主的账户已经删除，房间交给了 {{name}}',
+    'roomNotice.change.ownerHandoverToSelf': '房主的账户已经删除，房间交给了你',
+    'roomNotice.change.ownerHandoverToSomeone': '房主的账户已经删除，房间交给了一位管理员',
     'roomNotice.editor.label': '公告',
     'roomNotice.editor.hint':
       '挂在对话上方，房间里的人和 Agent 都看得到，Agent 会把它当作这间房的规矩。纯文本，最多 2000 字。',

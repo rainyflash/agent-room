@@ -20,6 +20,10 @@ import {
   roomNoticeEventType,
 } from '@/features/room-notice/domain/room-notice';
 import {
+  parseRoomOwnerHandover,
+  roomOwnerHandoverEventType,
+} from '@/features/private-rooms/domain/owner-handover';
+import {
   messageProvenances,
   messageSensitivities,
   type MessageActor,
@@ -31,6 +35,8 @@ import {
   type MessageRoomProjection,
   type ReadOnlyFederatedEvent,
   type RoomNoticeChange,
+  type RoomOwnerHandover,
+  type RoomStateLine,
   type MessageSignatureStatus,
   type RoomMessageSignal,
   type UndecryptableReason,
@@ -40,14 +46,15 @@ import { err, ok } from '@/shared/result';
 
 const MAX_PROJECTED_MESSAGES = 200;
 const MAX_PROJECTED_READ_ONLY_EVENTS = 50;
-const MAX_PROJECTED_NOTICE_CHANGES = 50;
+const MAX_PROJECTED_STATE_LINES = 50;
 /**
- * 我们自己写的房间状态：第一次公开的时间、公告、Agent 名册的设置。大厅和公告条从房间状态里读，
- * 不是聊天记录，也不是看不懂的事件；公告另在对话里写一行。
+ * 我们自己写的房间状态：第一次公开的时间、公告、Agent 名册的设置、换了房主。大厅和公告条从房间状态里读，
+ * 不是聊天记录，也不是看不懂的事件；公告改了、换了房主另在对话里写一行。
  */
 const ownRoomStateEventTypes = new Set([
   roomListingEventType,
   roomNoticeEventType,
+  roomOwnerHandoverEventType,
   matrixRosterPolicyEventType,
 ]);
 const legacyMatrixAgentRoomEventNamespace = ['org', 'agentroom'].join('.');
@@ -402,7 +409,7 @@ function projectRoom(
   const pendingRevisions = new Map<string, ParsedRevision[]>();
   const moderationNotices = new Map<string, ParsedModerationNotice>();
   const readOnlyFederatedEvents: ReadOnlyFederatedEvent[] = [];
-  const noticeChanges: RoomNoticeChange[] = [];
+  const stateLines: RoomStateLine[] = [];
   const undecryptable = new UndecryptableTally();
   const seenMatrixEventIds = new Set<string>();
 
@@ -460,8 +467,8 @@ function projectRoom(
       continue;
     }
     if (timelineEvent.stateKey !== undefined && ownRoomStateEventTypes.has(timelineEvent.type)) {
-      const change = parseNoticeChange(timelineEvent);
-      if (change !== null) noticeChanges.push(change);
+      const line = parseStateLine(timelineEvent);
+      if (line !== null) stateLines.push(line);
       continue;
     }
     const readOnlyEvent = projectReadOnlyFederatedEvent(timelineEvent);
@@ -489,8 +496,8 @@ function projectRoom(
     .slice(0, windowSize)
     .map(freezeMessage);
   const undecryptableSummary = undecryptable.summary();
-  const projectedNoticeChanges = noticeChangesWithin(
-    noticeChanges,
+  const projectedStateLines = stateLinesWithin(
+    stateLines,
     messages.size > windowSize ? projected.at(-1)?.serverTimestamp : undefined,
   );
   return Object.freeze({
@@ -500,7 +507,7 @@ function projectRoom(
           history: { canLoadMore: more && windowSize < 5000, limited: more && windowSize >= 5000 },
         }),
     messages: Object.freeze(projected),
-    ...(projectedNoticeChanges.length === 0 ? {} : { noticeChanges: projectedNoticeChanges }),
+    ...(projectedStateLines.length === 0 ? {} : { stateLines: projectedStateLines }),
     observedAtUnixMs,
     readOnlyFederatedEvents: Object.freeze(
       readOnlyFederatedEvents
@@ -599,25 +606,51 @@ function projectReadOnlyFederatedEvent(
 }
 
 /**
- * 公告只认 `state_key` 为空的状态事件：同一个类型的普通事件谁都发得了，状态事件只有应用服务写得进
- * （房间的 `state_default` 是管理员那一级），所以内容里写的改的人可以照着显示。
+ * 只认 `state_key` 为空的状态事件：同一个类型的普通事件谁都发得了，状态事件只有应用服务写得进
+ * （房间的 `state_default` 是管理员那一级），所以内容里写的改的人、接手的人可以照着显示。
  */
-function parseNoticeChange(event: MatrixMessageTimelineEvent): RoomNoticeChange | null {
+function parseStateLine(event: MatrixMessageTimelineEvent): RoomStateLine | null {
   if (
-    event.type !== roomNoticeEventType ||
     event.stateKey !== '' ||
     event.eventId === undefined ||
     !validServerTimestamp(event.serverTimestamp)
   ) {
     return null;
   }
-  const change = parseRoomNoticeChange(event.content);
+  if (event.type === roomNoticeEventType)
+    return parseNoticeChange(event.eventId, event.serverTimestamp, event.content);
+  if (event.type === roomOwnerHandoverEventType)
+    return parseOwnerHandover(event.eventId, event.serverTimestamp, event.content);
+  return null;
+}
+
+function parseNoticeChange(
+  matrixEventId: string,
+  serverTimestamp: number,
+  content: unknown,
+): RoomNoticeChange | null {
+  const change = parseRoomNoticeChange(content);
   if (change === undefined) return null;
   return Object.freeze({
     kind: change.kind,
-    matrixEventId: event.eventId,
-    serverTimestamp: event.serverTimestamp,
+    matrixEventId,
+    serverTimestamp,
     updatedBy: change.updatedBy,
+  });
+}
+
+function parseOwnerHandover(
+  matrixEventId: string,
+  serverTimestamp: number,
+  content: unknown,
+): RoomOwnerHandover | null {
+  const handover = parseRoomOwnerHandover(content);
+  if (handover === undefined) return null;
+  return Object.freeze({
+    kind: 'owner_handover',
+    matrixEventId,
+    owner: handover.owner,
+    serverTimestamp,
   });
 }
 
@@ -625,19 +658,19 @@ function parseNoticeChange(event: MatrixMessageTimelineEvent): RoomNoticeChange 
  * 按时间先后，最多留最近的这么多次。消息多过窗口、最早的被截掉时，比留下的最早一条还早的改动也不要，
  * 不然它们会堆在对话最前面，跟前后的话对不上。
  */
-function noticeChangesWithin(
-  changes: readonly RoomNoticeChange[],
+function stateLinesWithin(
+  lines: readonly RoomStateLine[],
   earliest: number | undefined,
-): readonly RoomNoticeChange[] {
+): readonly RoomStateLine[] {
   return Object.freeze(
-    changes
-      .filter((change) => earliest === undefined || change.serverTimestamp >= earliest)
+    lines
+      .filter((line) => earliest === undefined || line.serverTimestamp >= earliest)
       .toSorted(
         (left, right) =>
           left.serverTimestamp - right.serverTimestamp ||
           left.matrixEventId.localeCompare(right.matrixEventId),
       )
-      .slice(-MAX_PROJECTED_NOTICE_CHANGES),
+      .slice(-MAX_PROJECTED_STATE_LINES),
   );
 }
 
