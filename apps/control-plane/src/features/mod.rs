@@ -27,6 +27,7 @@ pub(crate) mod private_room_description;
 pub(crate) mod private_room_invites;
 pub(crate) mod private_room_listing;
 pub(crate) mod private_room_notice;
+pub(crate) mod private_room_pins;
 pub(crate) mod private_rooms;
 pub(crate) mod public_room_join;
 pub(crate) mod public_room_platform_hold;
