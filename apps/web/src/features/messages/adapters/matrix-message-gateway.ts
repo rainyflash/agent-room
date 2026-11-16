@@ -20,6 +20,7 @@ import {
   roomNoticeEventType,
   roomParentNoticeEventType,
 } from '@/features/room-notice/domain/room-notice';
+import { parseRoomPinsChange, roomPinsEventType } from '@/features/room-pins/domain/room-pins';
 import {
   parseRoomOwnerHandover,
   roomOwnerHandoverEventType,
@@ -37,6 +38,7 @@ import {
   type ReadOnlyFederatedEvent,
   type RoomNoticeChange,
   type RoomOwnerHandover,
+  type RoomPinsChange,
   type RoomStateLine,
   type MessageSignatureStatus,
   type RoomMessageSignal,
@@ -49,13 +51,15 @@ const MAX_PROJECTED_MESSAGES = 200;
 const MAX_PROJECTED_READ_ONLY_EVENTS = 50;
 const MAX_PROJECTED_STATE_LINES = 50;
 /**
- * 我们自己写的房间状态：第一次公开的时间、公告、子房间里父房间须知的副本、Agent 名册的设置、换了房主。大厅和
- * 公告条从房间状态里读，不是聊天记录，也不是看不懂的事件；公告改了、换了房主另在对话里写一行，副本不写。
+ * 我们自己写的房间状态：第一次公开的时间、公告、子房间里父房间须知的副本、置顶、Agent 名册的设置、换了房主。
+ * 大厅和公告条从房间状态里读，不是聊天记录，也不是看不懂的事件；公告改了、置顶改了、换了房主另在对话里写一行，
+ * 副本不写。
  */
 const ownRoomStateEventTypes = new Set([
   roomListingEventType,
   roomNoticeEventType,
   roomParentNoticeEventType,
+  roomPinsEventType,
   roomOwnerHandoverEventType,
   matrixRosterPolicyEventType,
 ]);
@@ -623,7 +627,25 @@ function parseStateLine(event: MatrixMessageTimelineEvent): RoomStateLine | null
     return parseNoticeChange(event.eventId, event.serverTimestamp, event.content);
   if (event.type === roomOwnerHandoverEventType)
     return parseOwnerHandover(event.eventId, event.serverTimestamp, event.content);
+  if (event.type === roomPinsEventType)
+    return parsePinsChange(event.eventId, event.serverTimestamp, event.content);
   return null;
+}
+
+function parsePinsChange(
+  matrixEventId: string,
+  serverTimestamp: number,
+  content: unknown,
+): RoomPinsChange | null {
+  const change = parseRoomPinsChange(content);
+  if (change === undefined) return null;
+  return Object.freeze({
+    kind: change.kind,
+    matrixEventId,
+    serverTimestamp,
+    targetEventId: change.eventId,
+    updatedBy: change.updatedBy,
+  });
 }
 
 function parseNoticeChange(

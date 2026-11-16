@@ -30,6 +30,7 @@ import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-
 import { exploreResources } from '@/features/explore/i18n/explore-resources';
 import { roomShareResources } from '@/features/room-share/i18n/room-share-resources';
 import { roomNoticeResources } from '@/features/room-notice/i18n/room-notice-resources';
+import { roomPinsResources } from '@/features/room-pins/i18n/room-pins-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
 
 export const resources = {
@@ -679,6 +680,7 @@ export const resources = {
       ...exploreResources.en,
       ...roomShareResources.en,
       ...roomNoticeResources.en,
+      ...roomPinsResources.en,
     },
   },
   'zh-CN': {
@@ -1260,6 +1262,7 @@ export const resources = {
       ...exploreResources['zh-CN'],
       ...roomShareResources['zh-CN'],
       ...roomNoticeResources['zh-CN'],
+      ...roomPinsResources['zh-CN'],
     },
   },
 } as const;

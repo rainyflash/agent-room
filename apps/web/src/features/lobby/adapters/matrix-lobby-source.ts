@@ -3,6 +3,7 @@ import type { Direction, RoomState } from 'matrix-js-sdk';
 
 import type { AgentPresenceSource } from './matrix-presence-tracker';
 import { roomNoticeEventType } from '@/features/room-notice/domain/room-notice';
+import { roomPinsEventType } from '@/features/room-pins/domain/room-pins';
 import type { MatrixClientSource } from '@/shared/matrix/matrix-client-registry';
 
 export const matrixAgentStatusEventType = 'io.github.rainyflash.agentroom.agent.status.v1';
@@ -42,6 +43,8 @@ export type MatrixLobbyRoomSnapshot = {
   readonly publicLobby?: true;
   /** 房间状态里的常驻公告（`room.notice.v1`），原样；没有这条状态时不给。 */
   readonly notice?: unknown;
+  /** 房间状态里的置顶（`m.room.pinned_events`），原样；没有这条状态时不给。 */
+  readonly pins?: unknown;
   readonly roomId: string;
   readonly statusEvents: readonly MatrixLobbyStateEvent[];
   readonly rosterPolicy?: unknown;
@@ -89,6 +92,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
     const topic = readRoomTopic(state);
     const rosterPolicy = state.getStateEvents(matrixRosterPolicyEventType, '');
     const notice = state.getStateEvents(roomNoticeEventType, '');
+    const pins = state.getStateEvents(roomPinsEventType, '');
     const encrypted = state.getStateEvents('m.room.encryption', '') !== null;
     const joinRule: unknown = state.getStateEvents('m.room.join_rules', '')?.getContent().join_rule;
     const named = encrypted || (typeof joinRule === 'string' && joinRule !== 'public');
@@ -129,6 +133,7 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
         name: room.name.trim() || roomId,
         ...(!encrypted && joinRule === 'public' ? { publicLobby: true as const } : {}),
         ...(notice === null ? {} : { notice: notice.getContent() }),
+        ...(pins === null ? {} : { pins: pins.getContent() }),
         roomId,
         ...(rosterPolicy === null ? {} : { rosterPolicy: rosterPolicy.getContent() }),
         statusEvents: Object.freeze(statusEvents),

@@ -231,6 +231,47 @@ describe('MatrixLobbyGateway', () => {
     expect(read(undefined)).toBeUndefined();
   });
 
+  it('房间状态里的置顶交给房间页；一条都没有的、读不出来的当没有', () => {
+    const read = (pins: unknown) => {
+      const room = { ...snapshot([]), pins };
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room }), () => NOW).read(
+        room.roomId,
+      );
+      return result.ok ? result.value.pins : 'failed';
+    };
+    const pins = (pinned: readonly string[]) => ({
+      pinned,
+      'io.github.rainyflash.agentroom.pins': {
+        schemaVersion: '1.0',
+        entries: [
+          {
+            eventId: '$a',
+            pinnedBy: '@owner:agent-room.test',
+            pinnedAt: '2026-11-16T08:00:00.000Z',
+          },
+        ],
+        updatedBy: '@owner:agent-room.test',
+        updatedAt: '2026-11-16T08:00:00.000Z',
+        change: { kind: 'pinned', eventId: '$a' },
+      },
+    });
+
+    expect(read(pins(['$a']))).toEqual({
+      entries: [
+        {
+          eventId: '$a',
+          pinnedBy: '@owner:agent-room.test',
+          pinnedAtUnixMs: Date.parse('2026-11-16T08:00:00.000Z'),
+        },
+      ],
+      updatedAtUnixMs: Date.parse('2026-11-16T08:00:00.000Z'),
+      updatedBy: '@owner:agent-room.test',
+    });
+    expect(read(pins([]))).toBeUndefined();
+    expect(read({ pinned: ['$a'] })).toBeUndefined();
+    expect(read(undefined)).toBeUndefined();
+  });
+
   it('成员的名字只留认得出的，邮箱只留 @ 前面那段；源里没有就不给', () => {
     const owner = '@user-3412b8ab0ef3cf6a658cbdcf29595500:agent-room.test';
     const unnamed = '@user-0123456789abcdef0123456789abcdef:agent-room.test';

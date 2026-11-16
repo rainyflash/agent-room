@@ -12,6 +12,11 @@ export type ConversationSearchRequests = {
    * 外面就别摆一个点了没反应的按钮。
    */
   readonly onAvailable: (available: boolean) => void;
+  /**
+   * 外面请这间房的对话跳到某一句（须知下面置顶那一行点的，按 Matrix 事件 ID；没加载到就往前补）。
+   * `turn` 每请求一次加一，同一句点第二次也再跳一次。别的房间的对话不理；对话挂上时已经有的不算。
+   */
+  readonly jump?: { readonly roomId: string; readonly eventId: string; readonly turn: number };
 };
 
 export const ConversationSearchRequestContext = createContext<ConversationSearchRequests | null>(

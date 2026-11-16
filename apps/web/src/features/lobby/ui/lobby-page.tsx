@@ -75,6 +75,7 @@ import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-lab
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
 import { RoomBriefs } from '@/features/room-notice/ui/room-briefs';
+import { RoomPinsBar } from '@/features/room-pins/ui/room-pins-bar';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
 import { RoomDesk, roomDeskSideQuery } from '@/features/lobby/ui/room-desk';
@@ -247,9 +248,19 @@ function ReadyLobby({
   // 那段对话也告诉这里此刻有没有可查的。
   const [searchable, setSearchable] = useState(false);
   const [searchTurn, setSearchTurn] = useState(0);
+  // 须知下面置顶那一行点了一句：请这间房的对话跳过去（`turn` 加一，同一句点第二次也再跳）。
+  const [pinJump, setPinJump] = useState<{
+    readonly roomId: string;
+    readonly eventId: string;
+    readonly turn: number;
+  } | null>(null);
   const searchRequests = useMemo(
-    () => ({ turn: searchTurn, onAvailable: setSearchable }),
-    [searchTurn],
+    () => ({
+      turn: searchTurn,
+      onAvailable: setSearchable,
+      ...(pinJump === null ? {} : { jump: pinJump }),
+    }),
+    [searchTurn, pinJump],
   );
   // 重新登录回来时，没提交完的自动发言授权要接着填：直接打开房间设置的那一节。
   const [roomSettings, setRoomSettings] = useState<{
@@ -792,50 +803,68 @@ function ReadyLobby({
           selfMatrixUserId={principal?.matrixUserId ?? null}
         />
       ) : null}
+      {publicConversationVisible && room.pins !== undefined ? (
+        <RoomPinsBar
+          key={`pins:${room.roomId}`}
+          onJump={(eventId) => {
+            setPinJump((current) => ({
+              roomId: room.roomId,
+              eventId,
+              turn: (current?.turn ?? 0) + 1,
+            }));
+          }}
+          pins={room.pins}
+          roomId={room.roomId}
+          selfMatrixUserId={principal?.matrixUserId ?? null}
+        />
+      ) : null}
     </>
   );
   // 对话版面里没有“对话 / 资料”两个标签：换过去、换回来的按钮和须知都放进对话那一栏里。
   const deskViews = conversationLayout ? { onViewChange } : {};
+  // 对话版面和场景版面都放在这里面：手机上“更多”里的查找、置顶那一行点的一句都由它交给对话。
   const conversationContent = (
-    <div
-      {...(conversationLayout
-        ? { className: 'room-desk__content' }
-        : {
-            className: 'room-panel__content',
-            id: 'workspace-current-view',
-            role: 'tabpanel',
-            'aria-labelledby': `workspace-tab-${panelView}`,
-          })}
-    >
-      <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
-        <MessageLayer
+    <ConversationSearchRequestContext.Provider value={searchRequests}>
+      <div
+        {...(conversationLayout
+          ? { className: 'room-desk__content' }
+          : {
+              className: 'room-panel__content',
+              id: 'workspace-current-view',
+              role: 'tabpanel',
+              'aria-labelledby': `workspace-tab-${panelView}`,
+            })}
+      >
+        <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
+          <MessageLayer
+            {...deskViews}
+            {...(conversationLayout
+              ? { conversationUnread: activity.unread, notices: conversationNotices }
+              : {})}
+            active={publicConversationVisible}
+            focusedConversationMessageId={focusedConversationMessageId}
+            participants={room.agents}
+            {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
+            catalogId={catalogId}
+            onSelectedMessageChange={onSelectedMessageChange}
+            roomId={room.roomId}
+            roomName={room.name}
+            privateRoom={room.encrypted === true}
+            selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+            view={panelView}
+            writesAllowed={writesAllowed}
+          />
+        </div>
+        <DirectConversationDock
           {...deskViews}
-          {...(conversationLayout
-            ? { conversationUnread: activity.unread, notices: conversationNotices }
-            : {})}
-          active={publicConversationVisible}
-          focusedConversationMessageId={focusedConversationMessageId}
-          participants={room.agents}
-          {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
-          catalogId={catalogId}
+          activeCatalogId={selectedDirectSessionId}
+          controller={directSessions}
           onSelectedMessageChange={onSelectedMessageChange}
-          roomId={room.roomId}
-          roomName={room.name}
-          privateRoom={room.encrypted === true}
-          selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+          selectedMessageId={selectedMessageId}
           view={panelView}
-          writesAllowed={writesAllowed}
         />
       </div>
-      <DirectConversationDock
-        {...deskViews}
-        activeCatalogId={selectedDirectSessionId}
-        controller={directSessions}
-        onSelectedMessageChange={onSelectedMessageChange}
-        selectedMessageId={selectedMessageId}
-        view={panelView}
-      />
-    </div>
+    </ConversationSearchRequestContext.Provider>
   );
   const agentDrawer =
     drawer === null ? null : (
@@ -1080,9 +1109,7 @@ function ReadyLobby({
           side={rosterPanel()}
           view={panelView}
         >
-          <ConversationSearchRequestContext.Provider value={searchRequests}>
-            {conversationContent}
-          </ConversationSearchRequestContext.Provider>
+          {conversationContent}
         </RoomDesk>
         {dialogs}
         {agentDrawer}
