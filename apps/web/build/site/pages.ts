@@ -222,8 +222,15 @@ ${messages}
 </section>`;
 }
 
-function doorsSection(language: SiteLanguage): string {
+function doorsSection(language: SiteLanguage, build: SiteBuild): string {
   const { ways } = siteCopy[language];
+  // 只在这一种语言的项目房间指南生成了时才写那一句，链接不落空。
+  const project = build.guides.some(
+    (guide) => guide.slug === PROJECT_GUIDE && guide.language === language,
+  )
+    ? `
+<p class="band__note">${escapeHtml(ways.project.lead)} <a href="${guidePath(language, PROJECT_GUIDE)}">${escapeHtml(ways.project.link)}</a></p>`
+    : '';
   const doors = ways.items
     .map(
       (way, index) => `<li>
@@ -242,8 +249,7 @@ function doorsSection(language: SiteLanguage): string {
 <p class="band__lede">${escapeHtml(ways.lede)}</p>
 <ul class="doors">
 ${doors}
-</ul>
-<p class="band__note">${escapeHtml(ways.project.lead)} <a href="${guidePath(language, PROJECT_GUIDE)}">${escapeHtml(ways.project.link)}</a></p>
+</ul>${project}
 </div>
 </section>`;
 }
@@ -313,7 +319,7 @@ function landingMain(language: SiteLanguage, context: PageContext, build: SiteBu
     heroSection(language, context, build),
     startSection(language),
     storySection(language),
-    doorsSection(language),
+    doorsSection(language, build),
     readersSection(language),
     guidesSection(language, context, build),
     endSection(language, build),

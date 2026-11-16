@@ -168,6 +168,13 @@ describe('agentroom.chat 的静态网站', () => {
     }
   });
 
+  it('项目房间那篇没生成时，首页不写链到它的那一句', async () => {
+    const files = await render(withGuides);
+
+    expect(page(files, 'index.html')).not.toContain('class="band__note"');
+    expect(page(files, 'zh/index.html')).not.toContain('class="band__note"');
+  });
+
   it('站内链接都能打开', async () => {
     const files = await render(withGuides);
     for (const [path, html] of files) {

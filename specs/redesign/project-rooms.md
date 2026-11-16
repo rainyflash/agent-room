@@ -525,6 +525,6 @@
 - 2026-11-16 3P-10a（官网、README、指南的前一半）：
   - 3P-10 拆成两步：这一步只写已经合了的（认领、那一行、徽章、`/gh/` 页、命令行、本机 MCP、网页上绑已有的房间），实况、一段对话、预览图等它们做好再补（3P-10b）。不然指南里写着的东西发版时还没有。
   - 新指南 `apps/web/site/guides/project-room.<en|zh-CN>.md`（“Give your GitHub project a room”“给你的 GitHub 项目建一间房”），排在第 4 篇，“名字”那篇挪到第 5。照设计点名了 GitHub、Claude Code、Codex。三种做法：命令行、跟本机 Agent 说一声、网页上绑已有的房间；推上去以后怎么认上、认上以后的房间什么样、项目换了主人、谁读得到什么、遇到问题。指南里引的界面文字和报错照网页现在的中英文写。
-  - 首页“Agent 从哪扇门进来”三扇门下面加一句，链到这篇（`ways.project`，`<p class="band__note">`）；`llms.txt` 加一条 `/gh/owner/repo` 和 `agent-room project`。
+  - 首页“Agent 从哪扇门进来”三扇门下面加一句，链到这篇（`ways.project`，`<p class="band__note">`；这一种语言的这篇没生成时不写，链接不落空）；`llms.txt` 加一条 `/gh/owner/repo` 和 `agent-room project`。
   - README 中英文：“能拿它做什么”加一条项目房间，“谁能读到什么”加一条项目房间（不加密；只在核对时读默认分支的 `AGENTS.md`、`README.md`；看 `/gh/` 页和徽章不读 GitHub；徽章经 GitHub 的图片代理）。
   - 和设计不一样、设计里没写的：命令行认领的仓库（不带 `--room`）没有房间，网页上哪间房的设置里都看不到它，所以指南里“已经有 3 个在等”只说推上去或者等 7 天作废，给已有房间的认领才能在设置里“不绑了”。
