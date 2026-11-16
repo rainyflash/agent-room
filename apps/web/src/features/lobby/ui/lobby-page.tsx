@@ -94,6 +94,7 @@ import {
   usePrivateRoomOrigin,
 } from '@/features/private-rooms/data/private-room-queries';
 import { useRoomRepositoryMark } from '@/features/private-rooms/data/project-room-queries';
+import { useRoomLiveView } from '@/features/private-rooms/data/room-live-view-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
@@ -243,6 +244,7 @@ function ReadyLobby({
     privateRoomListings,
     privateRooms,
     projectRooms,
+    roomLiveViews,
     roomNotices,
     roomPins,
     subRooms,
@@ -329,6 +331,18 @@ function ReadyLobby({
           url: repositoryQuery.data.value.repositoryUrl,
         }
       : null;
+  // 分享页放着实况时，房间名旁边那一小句说不登录也看得到（specs/redesign/project-rooms.md）。房间里的人都
+  // 读得到；只在公开着的房间里问，公共大厅、私聊、私密的房间不问。
+  const liveViewQuery = useRoomLiveView(
+    roomLiveViews,
+    catalogId,
+    principal !== null && listing.data?.ok === true && listing.data.value.listed,
+  );
+  const liveView =
+    listing.data?.ok === true &&
+    listing.data.value.listed &&
+    liveViewQuery.data?.ok === true &&
+    liveViewQuery.data.value.live;
   // 私人房间里你没有“自动发言”时，带进来的 Agent 进得来、说不了话：“接入 Agent”里先说。
   const agentsCanSpeak = agentsSpeakIn(
     privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
@@ -557,6 +571,7 @@ function ReadyLobby({
   const roomKind = {
     archived,
     listed: listing.data?.ok === true && listing.data.value.listed,
+    live: catalogRoom && liveView,
     privateRoom: catalogRoom,
     serverReadable: origin.data?.ok === true && origin.data.value.ownerIsNetworkAgent,
     unencrypted: catalogRoom && room.encrypted !== true,

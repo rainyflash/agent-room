@@ -131,6 +131,11 @@ import type {
   RepositoryClaim,
   RoomRepositoryBinding,
 } from '@/features/private-rooms/domain/project-rooms';
+import type {
+  LiveViewCondition,
+  RoomLiveView,
+  RoomLiveViewGateway,
+} from '@/features/private-rooms/domain/room-live-view';
 import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
 import { ROOM_PINS_MAX, type RoomPinsGateway } from '@/features/room-pins/domain/room-pins';
 import type {
@@ -211,6 +216,10 @@ const repositoryFixture = privateFixture
   : null;
 const repositoryLimitFixture =
   repositoryFixture !== null && new URLSearchParams(window.location.search).has('repositoryLimit');
+// `?private&listed&live=on|off|ineligible`：“公开”一节里的“分享页放实况”一组开着（房间名旁边那一小句说不登录也
+// 看得到）、关着、开不了（房间要申请才能进）。和服务器一样，公开设置改回私密、换掉“直接进”时自己关掉；
+// 开不了时开关回 409 `room_live.not_eligible`。
+const liveFixture = privateFixture ? new URLSearchParams(window.location.search).get('live') : null;
 // `?private&notice` 里房间有一条 Grace 写的三行须知（时间固定，重新打开还是同一版）；不带时没有须知，
 // 房主能在设置的“须知”里写。加 `&seenElsewhere` 是你在别的设备上看过这一版：个人工作区里记着，这个浏览器
 // 里没有。
@@ -2294,7 +2303,7 @@ let fixtureListing: PrivateRoomListing = {
   allowNetworkAgents: true,
   endToEndEncrypted: !listedFixture,
   firstListedAtUnixMs: listedFixture ? Date.now() - 86_400_000 : null,
-  joinMode: requestsFixture ? 'request' : 'open',
+  joinMode: requestsFixture || liveFixture === 'ineligible' ? 'request' : 'open',
   listed: listedFixture,
   memberPermissions: DEFAULT_INVITE_PERMISSIONS,
   platformHold: null,
@@ -2302,6 +2311,8 @@ let fixtureListing: PrivateRoomListing = {
   shareUrl: listedFixture ? 'https://agentroom.test/r/aB3xYz' : null,
 };
 const fixtureShareCodes = ['aB3xYz', 'Q7mPz2', 'Zz9Zz9'];
+/** 分享页的实况打开的那一刻（`&live=on`）；关着是 `null`。 */
+let fixtureLiveSince: number | null = liveFixture === 'on' ? Date.now() - 3_600_000 : null;
 /** 改须知：像同步回来一样换掉房间状态里的须知，改的人是你。 */
 const roomNotices: RoomNoticeGateway = {
   updateNotice: (_catalogId, text) => {
@@ -2486,6 +2497,8 @@ const privateRoomListings: PrivateRoomListingGateway = {
       shareCode,
       shareUrl: shareCode === null ? null : `https://agentroom.test/r/${shareCode}`,
     };
+    // 和服务器一样：改回私密、不再直接进时实况自己关掉。
+    if (!fixtureListing.listed || fixtureListing.joinMode !== 'open') fixtureLiveSince = null;
     return Promise.resolve(ok(fixtureListing));
   },
   changeShareCode: () => {
@@ -2503,6 +2516,42 @@ const privateRoomListings: PrivateRoomListingGateway = {
       shareUrl: `https://agentroom.test/r/${next}`,
     };
     return Promise.resolve(ok(fixtureListing));
+  },
+};
+
+/** 和服务器一样按先后查：归档了、不公开、平台拿掉、加密、不是直接进。 */
+function fixtureLiveConditions(): LiveViewCondition[] {
+  return [
+    ...(archivedFixture ? (['closed'] as const) : []),
+    ...(fixtureListing.listed ? [] : (['not_listed'] as const)),
+    ...(fixtureListing.platformHold === null ? [] : (['platform_hold'] as const)),
+    ...(fixtureListing.endToEndEncrypted ? (['encrypted'] as const) : []),
+    ...(fixtureListing.joinMode === 'open' ? [] : (['join_mode'] as const)),
+  ];
+}
+function fixtureLiveView(): RoomLiveView {
+  const unmetConditions = fixtureLiveConditions();
+  return {
+    canChange: true,
+    enabled: fixtureLiveSince !== null,
+    enabledAtUnixMs: fixtureLiveSince,
+    live: fixtureLiveSince !== null && unmetConditions.length === 0,
+    unmetConditions,
+  };
+}
+const roomLiveViews: RoomLiveViewGateway = {
+  liveView: () => Promise.resolve(ok(fixtureLiveView())),
+  updateLiveView: (_catalogId, enabled) => {
+    if (!enabled) {
+      fixtureLiveSince = null;
+      return Promise.resolve(ok(fixtureLiveView()));
+    }
+    const [condition] = fixtureLiveConditions();
+    if (condition !== undefined) {
+      return Promise.resolve(err({ code: 'room_live.not_eligible', condition, retryable: false }));
+    }
+    fixtureLiveSince ??= Date.now();
+    return Promise.resolve(ok(fixtureLiveView()));
   },
 };
 
@@ -2657,6 +2706,7 @@ const services: AppServices = {
         privateRoomInvites,
         privateRoomListings,
         ...(repositoryFixture === null ? {} : { projectRooms }),
+        ...(liveFixture === null ? {} : { roomLiveViews }),
         publicRoomJoins,
         roomNotices,
         roomPins,

@@ -140,6 +140,11 @@ export type PrivateRoomFailure = {
   readonly retryable: boolean;
   /** 太快了（429）时服务器说过多少秒再来：回答里的 `retryAfterSeconds`，没有就看 `Retry-After`。 */
   readonly retryAfterSeconds?: number;
+  /**
+   * 服务器在错误的 `details.condition` 里指出的是哪一样，比如实况开不了时差的那一样
+   * （`room_live.not_eligible`）。只收字符串，认不认得由用它的地方判断。
+   */
+  readonly condition?: string;
 };
 
 export type PrivateRoomInvitationInput = {

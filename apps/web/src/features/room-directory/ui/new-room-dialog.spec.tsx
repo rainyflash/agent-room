@@ -47,17 +47,28 @@ beforeEach(async () => {
 
 afterEach(cleanup);
 
+type EnterCall = (room: PrivateRoom) => Promise<void>;
+type LiveViewCall = (catalogId: string) => Promise<Result<unknown, PrivateRoomFailure>>;
+
 function renderForm(
   onCreate: CreateCall = vi.fn<CreateCall>(() => Promise.resolve(ok(created))),
   initiallyListed = false,
+  onTurnOnLiveView?: LiveViewCall,
 ) {
   const onClose = vi.fn();
+  const onEnter = vi.fn<EnterCall>(() => Promise.resolve());
   render(
     <I18nextProvider i18n={i18n}>
-      <NewRoomForm initiallyListed={initiallyListed} onClose={onClose} onCreate={onCreate} />
+      <NewRoomForm
+        initiallyListed={initiallyListed}
+        onClose={onClose}
+        onCreate={onCreate}
+        onEnter={onEnter}
+        onTurnOnLiveView={onTurnOnLiveView}
+      />
     </I18nextProvider>,
   );
-  return { onClose };
+  return { onClose, onEnter };
 }
 
 function submit(): HTMLElement {
@@ -69,7 +80,7 @@ function submit(): HTMLElement {
 describe('新建房间', () => {
   it('一屏：只填名字就能建，用途可空，保留天数和邀请都用默认值', async () => {
     const onCreate = vi.fn<CreateCall>(() => Promise.resolve(ok(created)));
-    const { onClose } = renderForm(onCreate);
+    const { onClose, onEnter } = renderForm(onCreate);
 
     expect(screen.getByRole('dialog', { name: 'New room' })).toHaveAccessibleDescription(
       'Private rooms are invite only and end-to-end encrypted. Public rooms are listed on Explore and not encrypted.',
@@ -83,6 +94,7 @@ describe('新建房间', () => {
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce();
     });
+    expect(onEnter).toHaveBeenCalledWith(created);
     expect(onCreate).toHaveBeenCalledWith(expect.any(String), {
       description: '',
       invitations: [],
@@ -262,5 +274,139 @@ describe('新建房间', () => {
       expect(onClose).toHaveBeenCalledOnce();
     });
     expect(onCreate.mock.calls[1]?.[1]).not.toHaveProperty('listing');
+  });
+});
+
+describe('新建时就公开的房间：分享页放实况', () => {
+  const liveViewBox = () =>
+    screen.queryByRole('checkbox', { name: /^Live view on the share page/u });
+
+  function fillPublicRoom(): void {
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), {
+      target: { value: 'Eval club' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: /^Public/u }));
+  }
+
+  it('公开、直接进的房间才有这个勾，默认勾上；私密、要申请、只能邀请的没有', () => {
+    renderForm(undefined, false, vi.fn<LiveViewCall>());
+
+    expect(liveViewBox()).not.toBeInTheDocument();
+    fillPublicRoom();
+    expect(liveViewBox()).toBeChecked();
+    expect(liveViewBox()).toHaveAccessibleName(
+      /People who aren’t signed in can see what’s said here on the share page \(the latest 20 messages\)\. You can turn it off later in room settings, under Public\.$/u,
+    );
+    fireEvent.click(screen.getByRole('radio', { name: /^Ask to join/u }));
+    expect(liveViewBox()).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: /^Invite only/u }));
+    expect(liveViewBox()).not.toBeInTheDocument();
+  });
+
+  it('没有实况这项服务时不出勾', () => {
+    renderForm(undefined, true);
+    expect(liveViewBox()).not.toBeInTheDocument();
+  });
+
+  it('勾着：建好以后再开实况，建房的请求里不带它，开好了再进房间', async () => {
+    const order: string[] = [];
+    const onCreate = vi.fn<CreateCall>(() => {
+      order.push('create');
+      return Promise.resolve(ok(created));
+    });
+    const turnOn = vi.fn<LiveViewCall>(() => {
+      order.push('live');
+      return Promise.resolve(ok(undefined));
+    });
+    const { onClose, onEnter } = renderForm(onCreate, false, turnOn);
+
+    fillPublicRoom();
+    submit();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(turnOn).toHaveBeenCalledWith(created.catalogId);
+    expect(order).toEqual(['create', 'live']);
+    expect(onEnter).toHaveBeenCalledWith(created);
+    // 建房的请求一个字段都不多：实况建好以后单独开。
+    expect(onCreate.mock.calls[0]?.[1]).toEqual({
+      description: '',
+      invitations: [],
+      listing: {
+        allowNetworkAgents: true,
+        joinMode: 'open',
+        listed: true,
+        memberPermissions: { capabilities: ['view', 'speak', 'automate'] },
+      },
+      name: 'Eval club',
+    });
+  });
+
+  it('不勾就不开', async () => {
+    const turnOn = vi.fn<LiveViewCall>(() => Promise.resolve(ok(undefined)));
+    const { onClose } = renderForm(undefined, false, turnOn);
+
+    fillPublicRoom();
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Live view on the share page/u }));
+    expect(liveViewBox()).not.toBeChecked();
+    submit();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(turnOn).not.toHaveBeenCalled();
+  });
+
+  it('实况没开成：房间照样在，说一句能在设置里开，按钮换成“进房间”，不再建', async () => {
+    const onCreate = vi.fn<CreateCall>(() => Promise.resolve(ok(created)));
+    const turnOn = vi.fn<LiveViewCall>(() =>
+      Promise.resolve(err({ code: 'room_live.dependency_unavailable', retryable: true })),
+    );
+    const { onClose, onEnter } = renderForm(onCreate, false, turnOn);
+
+    fillPublicRoom();
+    submit();
+
+    expect(
+      await screen.findByText(
+        'The room is ready, but the live view on the share page didn’t turn on. You can turn it on in room settings, under Public.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('room_live.dependency_unavailable')).toBeInTheDocument();
+    expect(onEnter).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enter the room' }));
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(onEnter).toHaveBeenCalledWith(created);
+    expect(onCreate).toHaveBeenCalledOnce();
+    expect(turnOn).toHaveBeenCalledOnce();
+  });
+
+  it('房间没建成就不去开实况；重试建好以后再开', async () => {
+    const onCreate = vi
+      .fn<CreateCall>()
+      .mockResolvedValueOnce(err({ code: 'private_room.matrix_join_failed', retryable: true }))
+      .mockResolvedValueOnce(ok(created));
+    const turnOn = vi.fn<LiveViewCall>(() => Promise.resolve(ok(undefined)));
+    const { onClose } = renderForm(onCreate, false, turnOn);
+
+    fillPublicRoom();
+    submit();
+    expect(await screen.findByRole('alert')).toHaveTextContent('private_room.matrix_join_failed');
+    expect(turnOn).not.toHaveBeenCalled();
+    // 第一次提交以后请求定下来了，勾也锁住。
+    expect(liveViewBox()).toBeDisabled();
+    submit();
+
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalledOnce();
+    });
+    expect(turnOn).toHaveBeenCalledOnce();
   });
 });

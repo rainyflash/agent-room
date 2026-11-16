@@ -84,8 +84,13 @@ export type RoomCommands = {
   /** 进一个私人房间；受邀还没答复的，先接受邀请。成功后直接跳过去。 */
   readonly enter: (room: PrivateRoom, invited: boolean) => Promise<RoomResult>;
   readonly decline: (room: PrivateRoom) => Promise<RoomResult>;
-  /** 同一个请求 ID 重试不会再建一个房间。成功后直接跳进新房间。 */
+  /**
+   * 同一个请求 ID 重试不会再建一个房间。建好、加入以后不跳过去：新建房间的对话框先打开分享页的实况
+   * （`specs/redesign/project-rooms.md`，建房的请求里不带它），再用 `show` 进去。
+   */
   readonly create: (requestId: string, input: CreatePrivateRoomInput) => Promise<RoomResult>;
+  /** 跳进一个已经加入了的房间。 */
+  readonly show: (room: PrivateRoom) => Promise<void>;
   /**
    * 房主归档自己的房间。不要最近登录过（`specs/cleanup-without-reauth/design.md`），页面上先确认；
    * 成功后重读房间列表，卡片挪进“已归档的房间”。
@@ -106,14 +111,15 @@ export function useRoomCommands(): RoomCommands {
       await queries.invalidateQueries({ queryKey: privateRoomListQueryKey });
       return result;
     };
+    const show = async (room: PrivateRoom): Promise<void> => {
+      await navigate({
+        to: '/lobby/$catalogId/instance/$roomId',
+        params: { catalogId: room.catalogId, roomId: room.matrixRoomId },
+        search: {},
+      });
+    };
     const go = async (result: RoomResult): Promise<RoomResult> => {
-      if (result.ok) {
-        await navigate({
-          to: '/lobby/$catalogId/instance/$roomId',
-          params: { catalogId: result.value.catalogId, roomId: result.value.matrixRoomId },
-          search: {},
-        });
-      }
+      if (result.ok) await show(result.value);
       return result;
     };
     return {
@@ -121,7 +127,8 @@ export function useRoomCommands(): RoomCommands {
         await go(await settle(await (invited ? coordinator.accept(room) : coordinator.open(room)))),
       decline: async (room) => await settle(await coordinator.decline(room)),
       create: async (requestId, input) =>
-        await go(await settle(await coordinator.createAndJoin(requestId, input))),
+        await settle(await coordinator.createAndJoin(requestId, input)),
+      show,
       archive: async (room) => await settle(await privateRooms.archive(room.catalogId)),
     };
   }, [coordinator, navigate, privateRooms, queries]);

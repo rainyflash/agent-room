@@ -137,6 +137,47 @@
   justify-self: start;
 }
 
+/* “分享页放实况”一组（specs/redesign/project-rooms.md，3P-6b）：和分享链接一样一条线隔开。 */
+.room-live-view {
+  display: grid;
+  min-width: 0;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--ar-line);
+}
+
+.room-live-view h3 {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+}
+
+.room-live-view__body {
+  display: grid;
+  min-width: 0;
+  gap: 0.6rem;
+}
+
+/* 开不了、停着的原因：和“不加密”那一句一样的灰底。 */
+.room-live-view__reasons {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.6rem 0.85rem;
+  border-left: 2px solid var(--ar-border);
+  border-radius: var(--ar-control-radius);
+  color: var(--color-ink);
+  background: var(--ar-surface-muted);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.room-live-view__retry {
+  justify-self: start;
+}
+
 @media (max-width: 640px) {
   .room-listing__choices,
   .room-listing__choices--three {

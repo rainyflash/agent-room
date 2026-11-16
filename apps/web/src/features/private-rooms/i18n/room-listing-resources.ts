@@ -25,7 +25,7 @@ const en = {
   'privateRooms.listing.networkAgents.detail':
     'They follow the join method: the room number is enough when anyone can join, they knock when people ask, and need a join code when it is invite only.',
   'privateRooms.listing.readers':
-    'Without signing in, anyone can see on Explore and the share page: the room name, description, your nickname, the admins, how many people and agents are here, how many are online and when someone last spoke. Messages and the member list stay inside.',
+    'Without signing in, anyone can see on Explore and the share page: the room name, description, your nickname, the admins, how many people and agents are here, how many are online and when someone last spoke. The member list stays inside, and so do messages unless the live view on the share page is on.',
   'privateRooms.listing.encrypted':
     'This room is end-to-end encrypted and stays that way while public. People who join later can’t read what was said before they came in.',
   'privateRooms.listing.plain':
@@ -44,6 +44,8 @@ const en = {
     'It stays encrypted, so people who join later won’t see earlier messages.',
   'privateRooms.listing.confirm.public.plain':
     'This room is not encrypted: everyone who joins and the server can read it.',
+  'privateRooms.listing.confirm.public.liveView':
+    'The live view on the share page doesn’t turn on by itself. Once the room is public, you can turn it on in this section.',
   'privateRooms.listing.confirm.private.title': 'Make this room private?',
   'privateRooms.listing.confirm.private.yes': 'Make private',
   'privateRooms.listing.confirm.private.detail':
@@ -111,7 +113,7 @@ export const roomListingResources = {
     'privateRooms.listing.networkAgents.detail':
       '照加入方式来：直接进的拿房间号就能进，要申请的敲门，只能邀请的要口令。',
     'privateRooms.listing.readers':
-      '不登录的人在发现页和分享页看得到：房间名、简介、你的昵称、几位管理员、几个人几个 Agent、现在几个在线、多久以前有人说话。房间里说的话和成员名单不给。',
+      '不登录的人在发现页和分享页看得到：房间名、简介、你的昵称、几位管理员、几个人几个 Agent、现在几个在线、多久以前有人说话。成员名单不给；房间里说的话也不给，开了“分享页放实况”的除外。',
     'privateRooms.listing.encrypted':
       '这间房是端到端加密的，公开以后也是。后来进来的人看不到他们进来以前说的话。',
     'privateRooms.listing.plain': '这间房不加密：进来的人和服务器都读得到这里的话。',
@@ -127,6 +129,8 @@ export const roomListingResources = {
     'privateRooms.listing.confirm.public.yes': '设成公开',
     'privateRooms.listing.confirm.public.encrypted': '房间照样加密，后来进来的人看不到之前说的话。',
     'privateRooms.listing.confirm.public.plain': '这间房不加密：进来的人和服务器都读得到。',
+    'privateRooms.listing.confirm.public.liveView':
+      '分享页的实况不会自己打开：设成公开以后，可以在这一节里打开。',
     'privateRooms.listing.confirm.private.title': '改回私密？',
     'privateRooms.listing.confirm.private.yes': '改回私密',
     'privateRooms.listing.confirm.private.detail':

@@ -9,6 +9,8 @@ const errorEnvelopeSchema = z.looseObject({
   correlationId: z.string().optional(),
   retryable: z.boolean().optional(),
   retryAfterSeconds: z.number().int().nonnegative().optional(),
+  // 只要 `condition` 这一项（实况开不了时差的那一样）；别的样子当成没有，不让整个错误读不出来。
+  details: z.looseObject({ condition: z.string().optional() }).optional().catch(undefined),
 });
 
 export type PrivateRoomHttpOptions = {
@@ -103,11 +105,13 @@ async function readFailure(response: Response): Promise<PrivateRoomFailure> {
     if (parsed.success) {
       const responseCorrelationId = parsed.data.correlationId ?? correlationId;
       const retryAfterSeconds = parsed.data.retryAfterSeconds ?? headerRetryAfter;
+      const condition = parsed.data.details?.condition;
       return {
         code: parsed.data.code,
         retryable: parsed.data.retryable ?? response.status >= 500,
         ...(responseCorrelationId === undefined ? {} : { correlationId: responseCorrelationId }),
         ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
+        ...(condition === undefined ? {} : { condition }),
       };
     }
   } catch {

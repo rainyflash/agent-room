@@ -33,6 +33,12 @@ const warnings: readonly (readonly [RoomKind, string, string])[] = [
     'Public room · Not encrypted',
     '公开房间 · 不加密',
   ],
+  // 分享页放着实况：比“不加密”说得更宽，先说它（放着实况的房间一定不加密）。
+  [
+    { privateRoom: true, listed: true, unencrypted: true, live: true },
+    'Public room · Visible without signing in',
+    '公开房间 · 不登录也看得到这里说的话',
+  ],
 ];
 
 describe('房间名旁边那一小句', () => {
@@ -59,6 +65,21 @@ describe('房间名旁边那一小句', () => {
       }
     });
   }
+
+  it('放着实况时指上去说不登录的人在分享页上也看得到；归档了的照旧先说归档', async () => {
+    await initializeI18n(window.localStorage, ['en']);
+    await i18n.changeLanguage('en');
+    expect(
+      label({ privateRoom: true, listed: true, unencrypted: true, live: true }),
+    ).toHaveAttribute(
+      'title',
+      'This public room shows a live view on its share page: people who aren’t signed in can see what’s said here. It isn’t encrypted, so the server can read it too.',
+    );
+    cleanup();
+    expect(
+      label({ privateRoom: true, listed: true, live: true, archived: true }),
+    ).toHaveTextContent('Private room · Archived');
+  });
 
   it('不用提醒的几种只有一句，不分两半', async () => {
     await initializeI18n(window.localStorage, ['en']);

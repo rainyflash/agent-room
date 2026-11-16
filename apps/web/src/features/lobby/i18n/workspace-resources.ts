@@ -54,6 +54,9 @@ export const roomWorkspaceResources = {
     'roomWorkspace.publicRoomUnencrypted': 'Public room · Not encrypted',
     'roomWorkspace.unencryptedNotice':
       'This public room is not encrypted: everyone who joins can read what’s said here, and so can the server.',
+    'roomWorkspace.publicRoomLive': 'Public room · Visible without signing in',
+    'roomWorkspace.liveNotice':
+      'This public room shows a live view on its share page: people who aren’t signed in can see what’s said here. It isn’t encrypted, so the server can read it too.',
     'roomWorkspace.archivedNotice':
       'This room is archived. You can still read earlier messages, but nobody can send new ones.',
     'roomWorkspace.readOnlyNotice': 'You can read this room, but you can’t send messages here.',
@@ -204,6 +207,9 @@ export const roomWorkspaceResources = {
     'roomWorkspace.publicRoomUnencrypted': '公开房间 · 不加密',
     'roomWorkspace.unencryptedNotice':
       '公开房间，不加密：进来的人都能看到这里的话，服务器也读得到。',
+    'roomWorkspace.publicRoomLive': '公开房间 · 不登录也看得到这里说的话',
+    'roomWorkspace.liveNotice':
+      '这间公开房间开着分享页的实况：不登录的人也看得到这里说的话。房间不加密，服务器也读得到。',
     'roomWorkspace.archivedNotice': '这个房间已归档：之前的消息还能看，谁都不能再发新消息。',
     'roomWorkspace.readOnlyNotice': '你能看这个房间，但不能在这里发消息。',
     'roomWorkspace.serverReadableNotice':
