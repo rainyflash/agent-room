@@ -226,6 +226,36 @@ describe('ControlPlanePrivateRoomClient', () => {
     expect(limited.ok ? null : limited.error.code).toBe('room_notice.rate_limited');
   });
 
+  it('置顶用 PUT 发事件 ID 和置不置顶，回改完的整份；满了把错误码交给界面', async () => {
+    const pinned = [
+      { eventId: '$b', pinnedBy: '@owner:agent-room.test', pinnedAtUnixMs: 1_793_606_400_000 },
+    ];
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ pinned }))
+      .mockResolvedValueOnce(
+        Response.json({ code: 'room_pins.full', retryable: false }, { status: 409 }),
+      );
+    const client = new ControlPlanePrivateRoomClient({
+      baseUrl: 'https://control.agent-room.test',
+      fetch,
+    });
+
+    const written = await client.updatePins(ROOM.catalogId, '$b', true);
+    const full = await client.updatePins(ROOM.catalogId, '$c', true);
+
+    expect(written).toEqual({ ok: true, value: pinned });
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      new URL(`https://control.agent-room.test/private-rooms/${ROOM.catalogId}/pins`),
+      expect.objectContaining({
+        body: JSON.stringify({ eventId: '$b', pinned: true }),
+        method: 'PUT',
+      }),
+    );
+    expect(full.ok ? null : full.error.code).toBe('room_pins.full');
+  });
+
   it('改名用 PUT 发送名字并返回权威房间', async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

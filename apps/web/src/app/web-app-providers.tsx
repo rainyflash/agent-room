@@ -263,6 +263,7 @@ export function createCloudRuntime(
     privateRoomInvites: privateRooms,
     privateRoomListings: privateRooms,
     roomNotices: privateRooms,
+    roomPins: privateRooms,
     roomRoleChanges: privateRooms,
     publicRoomEntry: privateRooms,
     publicRoomJoins: privateRooms,

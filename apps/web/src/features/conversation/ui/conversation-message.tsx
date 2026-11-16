@@ -1,9 +1,10 @@
-import { Check, CheckCheck, ChevronDown, ChevronUp, Copy, Reply } from 'lucide-react';
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { Check, CheckCheck, ChevronDown, ChevronUp, Copy, Pin, PinOff, Reply } from 'lucide-react';
+import { useContext, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { ActorAvatar } from '@/features/lobby/ui/avatars';
 import { useIsNetworkAgent, useNetworkAgentLabel } from '@/features/lobby/ui/network-agent-labels';
+import { RoomPinsActionsContext } from '@/features/room-pins/ui/room-pins-actions';
 import type { AgentDelivery } from '../domain/message-delivery';
 import { ChatMarkdown } from './chat-markdown';
 import { MessageAttachment } from './message-attachment';
@@ -65,6 +66,13 @@ export function ConversationMessage({
   const { t } = useTranslation();
   const chat = message.preview?.conversation;
   const [copied, setCopied] = useState(false);
+  // 房主和管理员在这间房的对话里能置顶、取消置顶一句。
+  const pinActions = useContext(RoomPinsActionsContext);
+  const pins =
+    pinActions !== null && pinActions.roomId === message.roomId && message.lifecycle === 'active'
+      ? pinActions
+      : null;
+  const pinned = pins?.pinned.has(message.matrixEventId) ?? false;
   const fold = useRef<HTMLDivElement>(null);
   const foldId = useId();
   const tall = useTallContent(fold);
@@ -215,6 +223,20 @@ export function ConversationMessage({
         >
           <Reply aria-hidden="true" />
         </button>
+        {pins === null ? null : (
+          <button
+            className="conversation-message__action"
+            type="button"
+            disabled={pins.pending.has(message.matrixEventId)}
+            aria-label={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
+            title={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
+            onClick={() => {
+              pins.toggle(message.matrixEventId, !pinned);
+            }}
+          >
+            {pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+          </button>
+        )}
       </div>
     </article>
   );

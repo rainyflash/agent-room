@@ -56,6 +56,11 @@ import {
   type RoomNoticeGateway,
   type WrittenRoomNotice,
 } from '@/features/room-notice/domain/room-notice';
+import {
+  roomPinsResponseSchema,
+  type RoomPin,
+  type RoomPinsGateway,
+} from '@/features/room-pins/domain/room-pins';
 import { ok, type Result } from '@/shared/result';
 
 import { PrivateRoomHttp, type PrivateRoomHttpOptions } from './private-room-http';
@@ -73,6 +78,7 @@ export class ControlPlanePrivateRoomClient
     PublicRoomEntryGateway,
     PublicRoomJoinGateway,
     RoomNoticeGateway,
+    RoomPinsGateway,
     RoomRoleChangeGateway
 {
   readonly #http: PrivateRoomHttp;
@@ -211,6 +217,19 @@ export class ControlPlanePrivateRoomClient
       { body: JSON.stringify({ text }), method: 'PUT' },
       writtenRoomNoticeSchema,
     );
+  }
+
+  async updatePins(
+    catalogId: string,
+    eventId: string,
+    pinned: boolean,
+  ): Promise<Result<readonly RoomPin[], PrivateRoomFailure>> {
+    const response = await this.#http.request(
+      `/private-rooms/${encodeURIComponent(catalogId)}/pins`,
+      { body: JSON.stringify({ eventId, pinned }), method: 'PUT' },
+      roomPinsResponseSchema,
+    );
+    return response.ok ? ok(response.value.pinned) : response;
   }
 
   archive(catalogId: string): Promise<Result<PrivateRoom, PrivateRoomFailure>> {

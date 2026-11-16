@@ -81,6 +81,8 @@ export type AppServices = {
   readonly subRooms?: import('@/features/private-rooms/domain/sub-rooms').SubRoomGateway;
   /** 房主和管理员改房间的常驻公告；测试和夹具里可以没有。 */
   readonly roomNotices?: import('@/features/room-notice/domain/room-notice').RoomNoticeGateway;
+  /** 房主和管理员置顶房间里的一句；测试和夹具里可以没有。 */
+  readonly roomPins?: import('@/features/room-pins/domain/room-pins').RoomPinsGateway;
   /** 不登录看公共大厅；不带登录，退出登录时也不会被中止。 */
   readonly publicWatch: PublicWatchGateway;
   readonly roomDirectory: PublicRoomDirectoryGateway;

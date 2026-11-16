@@ -18,6 +18,7 @@ import {
 import type { WorkspaceGateway } from '@/features/personal-workspace/domain/workspace-gateway';
 import { PersonalWorkspaceProvider } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import type { RoomPins } from '@/features/room-pins/domain/room-pins';
+import type { RoomPinsActions } from '@/features/room-pins/ui/room-pins-actions';
 import { RoomPinsBar, type RoomPinsBarProps } from '@/features/room-pins/ui/room-pins-bar';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { ok } from '@/shared/result';
@@ -229,5 +230,59 @@ describe('须知下面置顶的那一行', () => {
       </I18nextProvider>,
     );
     expect(screen.getByText('Changed since you last looked')).toBeInTheDocument();
+  });
+});
+
+describe('房主和管理员在置顶那一行里', () => {
+  const actions = (toggle = vi.fn<RoomPinsActions['toggle']>()): RoomPinsActions => ({
+    roomId: ROOM_ID,
+    pinned: new Set(['$recent', '$older']),
+    pending: new Set(['$older']),
+    toggle,
+  });
+
+  it('列表里每条都能取消置顶，正在改的那条先关着', () => {
+    const toggle = vi.fn<RoomPinsActions['toggle']>();
+    render(<I18nextProvider i18n={i18n}>{bar({ actions: actions(toggle) })}</I18nextProvider>);
+    fireEvent.click(screen.getByRole('button', { name: /Show pinned messages/u }));
+    const unpins = screen.getAllByRole('button', { name: 'Unpin this message' });
+    expect(nth(unpins, 1)).toBeDisabled();
+    fireEvent.click(nth(unpins, 0));
+    expect(toggle).toHaveBeenCalledWith('$recent', false);
+  });
+
+  it('满了说为什么，“打开置顶”展开列表；关掉交给外面', () => {
+    const onDismissFailure = vi.fn();
+    render(
+      <I18nextProvider i18n={i18n}>
+        {bar({ actions: actions(), failure: 'full', onDismissFailure })}
+      </I18nextProvider>,
+    );
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('A room can have up to 5 pinned messages. Unpin one first.');
+    fireEvent.click(within(alert).getByRole('button', { name: 'Open pinned' }));
+    expect(screen.getByRole('button', { name: /Hide pinned messages/u })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(within(alert).queryByRole('button', { name: 'Open pinned' })).toBeNull();
+    fireEvent.click(within(alert).getByRole('button', { name: 'Dismiss' }));
+    expect(onDismissFailure).toHaveBeenCalledOnce();
+  });
+
+  it('还没有置顶时，这一行只为说没成出来；什么都没有时不出来', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        {bar({ pins: undefined, failure: 'forbidden', onDismissFailure: vi.fn() })}
+      </I18nextProvider>,
+    );
+    const region = screen.getByRole('region', { name: 'Pinned messages' });
+    expect(within(region).getByRole('alert')).toHaveTextContent(
+      'Only the owner and admins can pin messages.',
+    );
+    expect(within(region).queryByRole('button', { name: /pinned messages/u })).toBeNull();
+    cleanup();
+    render(<I18nextProvider i18n={i18n}>{bar({ pins: undefined })}</I18nextProvider>);
+    expect(screen.queryByRole('region', { name: 'Pinned messages' })).toBeNull();
   });
 });

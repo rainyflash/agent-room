@@ -75,6 +75,10 @@ import { NetworkAgentRelayProvider } from '@/features/lobby/ui/network-agent-lab
 import { allows, memberFor, type PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { PrivateRoomInviteDialog } from '@/features/private-rooms/ui/private-room-invite-dialog';
 import { RoomBriefs } from '@/features/room-notice/ui/room-briefs';
+import {
+  RoomPinsActionsContext,
+  useRoomPinsActions,
+} from '@/features/room-pins/ui/room-pins-actions';
 import { RoomPinsBar } from '@/features/room-pins/ui/room-pins-bar';
 import { usePendingJoinRequestCount } from '@/features/private-rooms/ui/join-request-attention';
 import { RoomBeacon } from '@/features/lobby/ui/room-beacon';
@@ -238,6 +242,7 @@ function ReadyLobby({
     privateRoomListings,
     privateRooms,
     roomNotices,
+    roomPins,
     subRooms,
   } = useAppServices();
   const reception = useReceptionEvidence();
@@ -415,15 +420,23 @@ function ReadyLobby({
     ) + (subRoomEntry?.pendingRequestCount ?? 0);
   // 能不能发消息看 Matrix 的发言门槛：归档、被禁言、只能查看时输入框都关着，免得发了才说失败。
   const writesAllowed = !archived && room.canSpeak !== false;
-  // 房主和管理员能改公告；归档了谁都不能。
-  const noticeEditable =
-    roomNotices !== undefined &&
+  // 房主和管理员能改须知、置顶；归档了谁都不能。
+  const managesThisRoom =
     !archived &&
     managesRoom(
       privateRoomList.data?.ok === true ? privateRoomList.data.value : [],
       catalogId,
       principal?.principalId ?? null,
     );
+  const noticeEditable = roomNotices !== undefined && managesThisRoom;
+  const pinsControl = useRoomPinsActions({
+    gateway: roomPins,
+    catalogId,
+    roomId: room.roomId,
+    pins: room.pins,
+    manages: managesThisRoom,
+    selfMatrixUserId: principal?.matrixUserId ?? null,
+  });
   const projection = useMemo(
     () => ({
       ...scene,
@@ -803,9 +816,12 @@ function ReadyLobby({
           selfMatrixUserId={principal?.matrixUserId ?? null}
         />
       ) : null}
-      {publicConversationVisible && room.pins !== undefined ? (
+      {publicConversationVisible ? (
         <RoomPinsBar
+          actions={pinsControl.actions}
+          failure={pinsControl.failure}
           key={`pins:${room.roomId}`}
+          onDismissFailure={pinsControl.dismissFailure}
           onJump={(eventId) => {
             setPinJump((current) => ({
               roomId: room.roomId,
@@ -813,7 +829,7 @@ function ReadyLobby({
               turn: (current?.turn ?? 0) + 1,
             }));
           }}
-          pins={room.pins}
+          pins={pinsControl.pins}
           roomId={room.roomId}
           selfMatrixUserId={principal?.matrixUserId ?? null}
         />
@@ -825,45 +841,47 @@ function ReadyLobby({
   // 对话版面和场景版面都放在这里面：手机上“更多”里的查找、置顶那一行点的一句都由它交给对话。
   const conversationContent = (
     <ConversationSearchRequestContext.Provider value={searchRequests}>
-      <div
-        {...(conversationLayout
-          ? { className: 'room-desk__content' }
-          : {
-              className: 'room-panel__content',
-              id: 'workspace-current-view',
-              role: 'tabpanel',
-              'aria-labelledby': `workspace-tab-${panelView}`,
-            })}
-      >
-        <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
-          <MessageLayer
+      <RoomPinsActionsContext.Provider value={pinsControl.actions}>
+        <div
+          {...(conversationLayout
+            ? { className: 'room-desk__content' }
+            : {
+                className: 'room-panel__content',
+                id: 'workspace-current-view',
+                role: 'tabpanel',
+                'aria-labelledby': `workspace-tab-${panelView}`,
+              })}
+        >
+          <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
+            <MessageLayer
+              {...deskViews}
+              {...(conversationLayout
+                ? { conversationUnread: activity.unread, notices: conversationNotices }
+                : {})}
+              active={publicConversationVisible}
+              focusedConversationMessageId={focusedConversationMessageId}
+              participants={room.agents}
+              {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
+              catalogId={catalogId}
+              onSelectedMessageChange={onSelectedMessageChange}
+              roomId={room.roomId}
+              roomName={room.name}
+              privateRoom={room.encrypted === true}
+              selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+              view={panelView}
+              writesAllowed={writesAllowed}
+            />
+          </div>
+          <DirectConversationDock
             {...deskViews}
-            {...(conversationLayout
-              ? { conversationUnread: activity.unread, notices: conversationNotices }
-              : {})}
-            active={publicConversationVisible}
-            focusedConversationMessageId={focusedConversationMessageId}
-            participants={room.agents}
-            {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
-            catalogId={catalogId}
+            activeCatalogId={selectedDirectSessionId}
+            controller={directSessions}
             onSelectedMessageChange={onSelectedMessageChange}
-            roomId={room.roomId}
-            roomName={room.name}
-            privateRoom={room.encrypted === true}
-            selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+            selectedMessageId={selectedMessageId}
             view={panelView}
-            writesAllowed={writesAllowed}
           />
         </div>
-        <DirectConversationDock
-          {...deskViews}
-          activeCatalogId={selectedDirectSessionId}
-          controller={directSessions}
-          onSelectedMessageChange={onSelectedMessageChange}
-          selectedMessageId={selectedMessageId}
-          view={panelView}
-        />
-      </div>
+      </RoomPinsActionsContext.Provider>
     </ConversationSearchRequestContext.Provider>
   );
   const agentDrawer =

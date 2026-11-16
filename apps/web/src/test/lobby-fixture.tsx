@@ -127,6 +127,7 @@ import type {
   PrivateRoomListingGateway,
 } from '@/features/private-rooms/domain/private-room-listing';
 import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
+import { ROOM_PINS_MAX, type RoomPinsGateway } from '@/features/room-pins/domain/room-pins';
 import type {
   PendingJoinRequest,
   PublicRoomJoinGateway,
@@ -2310,6 +2311,45 @@ const roomNotices: RoomNoticeGateway = {
     return Promise.resolve(ok({ text, updatedAtUnixMs }));
   },
 };
+// 置顶、取消照控制面那样改房间状态，对话里多一行“你置顶了一句”；满了回 `room_pins.full`。
+// `?pinsFail=<错误码>` 时每次都回这个错。
+const pinsFailure = new URLSearchParams(window.location.search).get('pinsFail');
+const roomPins: RoomPinsGateway = {
+  updatePins: (_catalogId, eventId, pinned) => {
+    if (pinsFailure !== null)
+      return Promise.resolve(
+        err({ code: pinsFailure, retryable: pinsFailure.endsWith('limited') }),
+      );
+    const at = Date.now();
+    const entries = room.pins?.entries ?? [];
+    const already = entries.some((pin) => pin.eventId === eventId);
+    if (pinned && !already && entries.length >= ROOM_PINS_MAX)
+      return Promise.resolve(err({ code: 'room_pins.full', retryable: false }));
+    if (pinned === already) return Promise.resolve(ok(entries));
+    const next = pinned
+      ? [{ eventId, pinnedBy: fixtureIdentity.matrixUserId, pinnedAtUnixMs: at }, ...entries]
+      : entries.filter((pin) => pin.eventId !== eventId);
+    const { pins, ...rest } = room;
+    void pins;
+    room =
+      next.length === 0
+        ? rest
+        : {
+            ...rest,
+            pins: { entries: next, updatedAtUnixMs: at, updatedBy: fixtureIdentity.matrixUserId },
+          };
+    stateLines.push({
+      kind: pinned ? 'pinned' : 'unpinned',
+      matrixEventId: `$fixture-pins-${String(stateLines.length)}`,
+      serverTimestamp: at,
+      targetEventId: eventId,
+      updatedBy: fixtureIdentity.matrixUserId,
+    });
+    for (const listener of lobbyListeners) listener();
+    for (const listener of conversationListeners) listener();
+    return Promise.resolve(ok(next));
+  },
+};
 const privateRoomListings: PrivateRoomListingGateway = {
   listing: () => Promise.resolve(ok(fixtureListing)),
   updateListing: (_catalogId, settings) => {
@@ -2493,6 +2533,7 @@ const services: AppServices = {
         privateRoomListings,
         publicRoomJoins,
         roomNotices,
+        roomPins,
         roomRoleChanges,
       }
     : {}),

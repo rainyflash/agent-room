@@ -9,6 +9,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import type { AgentDelivery } from '@/features/conversation/domain/message-delivery';
 import { ConversationMessage } from '@/features/conversation/ui/conversation-message';
+import {
+  RoomPinsActionsContext,
+  type RoomPinsActions,
+} from '@/features/room-pins/ui/room-pins-actions';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 
 const message: RoomMessageSignal = {
@@ -218,5 +222,61 @@ describe('回复的是哪句', () => {
     renderReply({ ...message, lifecycle: 'redacted' }, jump);
     expect(screen.getByText('Earlier message')).toBeVisible();
     expect(screen.queryByTitle('Go to this message')).not.toBeInTheDocument();
+  });
+});
+
+describe('房主和管理员在一句话上置顶、取消置顶', () => {
+  function renderWithPins(actions: RoomPinsActions | null, shown: RoomMessageSignal = message) {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <RoomPinsActionsContext.Provider value={actions}>
+          <ConversationMessage
+            editable
+            message={shown}
+            names={new Map()}
+            onReply={vi.fn()}
+            own={false}
+            parent={undefined}
+            time={new Intl.DateTimeFormat('en', { timeStyle: 'short' })}
+          />
+        </RoomPinsActionsContext.Provider>
+      </I18nextProvider>,
+    );
+  }
+  const actions = (overrides: Partial<RoomPinsActions> = {}): RoomPinsActions => ({
+    roomId: message.roomId,
+    pinned: new Set(),
+    pending: new Set(),
+    toggle: vi.fn(),
+    ...overrides,
+  });
+
+  it('没置顶的是“置顶这一句”，置顶着的是“取消置顶这一句”，点了按事件 ID 改', () => {
+    const toggle = vi.fn<RoomPinsActions['toggle']>();
+    renderWithPins(actions({ toggle }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin this message' }));
+    cleanup();
+    renderWithPins(actions({ toggle, pinned: new Set(['$mine']) }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin this message' }));
+    expect(toggle.mock.calls).toEqual([
+      ['$mine', true],
+      ['$mine', false],
+    ]);
+  });
+
+  it('正在改的那一句按钮先关着', () => {
+    renderWithPins(actions({ pending: new Set(['$mine']) }));
+    expect(screen.getByRole('button', { name: 'Pin this message' })).toBeDisabled();
+  });
+
+  it('不是管的人、别的房间的、删了的句子没有这个按钮', () => {
+    renderWithPins(null);
+    expect(screen.queryByRole('button', { name: 'Pin this message' })).toBeNull();
+    cleanup();
+    renderWithPins(actions({ roomId: '!other:agent-room.test' }));
+    expect(screen.queryByRole('button', { name: 'Pin this message' })).toBeNull();
+    cleanup();
+    renderWithPins(actions(), { ...message, lifecycle: 'redacted' });
+    expect(screen.queryByRole('button', { name: 'Pin this message' })).toBeNull();
   });
 });
