@@ -413,9 +413,31 @@ async fn local_server(response: Vec<u8>) -> SocketAddr {
 
 fn local_transport(address: SocketAddr) -> PinnedRawTransport {
     PinnedRawTransport::new(
-        RawEndpoint::plain_http_for_tests("127.0.0.1", address.port()),
+        RawEndpoint::loopback(address).expect("本机回环地址"),
         Arc::new(FixedResolver(vec![address], AtomicUsize::new(0))),
     )
+}
+
+#[test]
+fn 假的_github_只给本机回环地址() {
+    for address in ["203.0.113.7:443", "10.0.0.5:18766", "0.0.0.0:18766"] {
+        assert_eq!(
+            RawEndpoint::loopback(address.parse().unwrap()),
+            None,
+            "{address}"
+        );
+    }
+    let repository = GithubRepository::parse("octo/hello").unwrap();
+    let v4 = RawEndpoint::loopback("127.0.0.1:18766".parse().unwrap()).unwrap();
+    assert_eq!(
+        v4.file_url(&repository, RepositoryFile::AgentsMd),
+        "http://127.0.0.1:18766/octo/hello/HEAD/AGENTS.md"
+    );
+    let v6 = RawEndpoint::loopback("[::1]:18766".parse().unwrap()).unwrap();
+    assert_eq!(
+        v6.file_url(&repository, RepositoryFile::ReadmeMd),
+        "http://[::1]:18766/octo/hello/HEAD/README.md"
+    );
 }
 
 #[tokio::test]

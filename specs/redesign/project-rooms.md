@@ -366,6 +366,8 @@
    - **3P-8a** 控制面：`resvg` 和字体，两个 `preview.png` 地址，分享页的 `og:image` 换过去。改了 `Cargo.lock`，同一个 PR 提交 `python tools/license_inventory.py generate` 的结果。
    - **3P-8b** 网页：“发出去长这样”换成真的图，分享对话框里的“README 徽章”一节。
 9. **3P-9** 无头验收，只在派发 `suite=all` 时跑：本机起一个假的 GitHub（读取器的主机只在测试配置里能换，生产上写死），走一遍认领、`/gh/` 页、徽章、实况、一段对话；私人房间、加密的公开房间、要申请的房间，这几条路都读不到。
+   - **3P-9a** 认领、`/gh/` 页、徽章、命令行和本机 MCP（3P-2 到 3P-5 都合了就能做）。
+   - **3P-9b** 实况、一段对话，和读不到的那几条路（等 3P-6、3P-7）。
 10. **3P-10** 官网、README、指南：“给你的项目建一间房”（这里可以点名 GitHub 和各家 Agent 应用），`llms.txt`，网站首页提一句。
 
 先后：
@@ -520,3 +522,14 @@
   - 隐私说明页补上 3P-2b 留给 3P-3、3P-5 的两句：房间公开期间绑着哪个仓库谁都看得到（`/gh/` 地址和房间名旁边的勾）；README 徽章由 GitHub 的图片代理来取，我们看不到看 README 的人。
   - 3P-5 那一条里“勾只给房主看”“在等的认领记在这个浏览器里”两样从这一步起不再是这样。“仓库被别人要走时原来那间房里照实说”照旧没做：要服务器先记下“被要走过”。
   - 测试：`application` 的流程测试（列认领只有自己的、认上了就没了；谁都能问、只认公开着的主房间，改回私密、关掉、平台拿掉、没有分享码都是 `None`）；控制面 `features/project_rooms/tests/reading.rs`（两个接口的回答、`null`、不登录 401）；网页客户端的 schema（列表里每一个照认领严格校验、勾只认 github.com 的 https 地址、多字段无效）、设置里那一组（在等的认领从列表里找、别的房间的不算、问不到能重试）、浏览器验收 `e2e/project-rooms.e2e.ts` 加一条：不是房主（`&asAdmin`）也看得到勾，“GitHub 仓库”一组照旧只给房主。
+- 2026-11-16 3P-9a（无头验收的前一半：认领、`/gh/` 页、徽章、命令行和本机 MCP）：
+  - 3P-9 拆成两步：3P-9a 只走 3P-2 到 3P-5 已经有的；实况、一段对话和私人房间、加密的公开房间、要申请的房间读不到这几条，等 3P-6、3P-7 合了放在 3P-9b。
+  - 控制面加了一项配置 `AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS`：只认本机回环地址加端口（`127.0.0.1:18766`、`[::1]:18766`），别的地址、域名、带 `http://` 的、端口 0 一律启动失败。配了它读取器就连这个地址上的假 GitHub（明文 HTTP，不查地址：回环地址本来就过不了那一关），启动时记一条告警。没配就是写死的 `raw.githubusercontent.com`。原来只给单元测试的 `#[cfg(test)]` 构造换成了 `RawEndpoint::loopback`，不是回环地址就给不出来。生产的部署配置和 `tools/prodops` 里不许出现这个名字，`test_prodops` 卡着。
+  - 纵向验收的控制面（`vertical_control_plane_environment`）带上它，端口 `FAKE_GITHUB_PORT`。这一轮在 `tools/vertical_project_rooms.py`，排在“公开房间改成公开、读不到以前的话”那一轮之后，用验收账号的发送方 Bridge：
+    - 一个只有 `origin` 的 git 仓库里跑 `agent-room project`：等着的认领，那一行和徽章都指着同一个 `/r/<码>`，新建了 `AGENTS.md`；再跑一次是同一个认领，不再写（`already_linked`）。
+    - 假 GitHub 放上命令行写的 `AGENTS.md`，本机 MCP `agent_room_claim_repository` 带 `wait`：第一次核对就认上，分享链接还是那一个，`next` 叫它用 `agent_room_join`；按分享链接进去说一句。
+    - 库里认上以后建的房间叫 `owner/repo`、公开、不加密、绑着这个仓库；认上了的仓库再跑命令行直接回这间房、不碰 `AGENTS.md`。
+    - `/gh/owner/repo`（owner 换成大写也行）是这间房的分享页；徽章写着在线数，`?lang=zh-CN` 写“N 在线”。没人认领的仓库出“还没人认领”（404），徽章写“no room”“没有房间”；名字不合规矩的 404。
+    - 假 GitHub 只被读过这个仓库的 `AGENTS.md`、`README.md`；看 `/gh/` 页和徽章前后，它收到的请求一个没多。
+  - 没人认领的那几条用另一个仓库名：“没有房间”的徽章在内存里留 5 分钟，先看了要认的那个仓库的徽章，认上以后 5 分钟内还是“没有房间”。
+  - 测试：控制面配置只认回环地址、读取器 `loopback` 不给别的地址；假 GitHub 和认领那一行的检查有 Python 单元测试（`tools/tests/test_vertical_project_rooms.py`），整轮在 PR 分支上派发 `suite=all` 跑。
