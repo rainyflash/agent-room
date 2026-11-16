@@ -1,7 +1,8 @@
 //! 读 GitHub 找认领的那一行（`specs/redesign/project-rooms.md` 的“服务器怎么读”，3P-2b）。
 //!
 //! 控制面里专门的一个客户端，只做这一件事：
-//! - 只连 `https://raw.githubusercontent.com`，主机写死；只在测试里能换（以后 3P-9 的假 GitHub）。
+//! - 只连 `https://raw.githubusercontent.com`，主机写死；只有单元测试和无头验收（3P-9）换成本机回环地址上
+//!   的假 GitHub（[`RawEndpoint::loopback`]，配置只认回环地址）。
 //! - 连之前看解析出的地址，内网、回环、链路本地的一律不连（防 DNS 被改指到内网），连上以后再看对方
 //!   的地址是不是刚才看过的那几个。
 //! - 不跟跳转：仓库改了名、搬了家，raw 回跳转，当成没找到、说“仓库改过名”。
@@ -65,15 +66,18 @@ impl RawEndpoint {
         }
     }
 
-    /// 测试里的假 GitHub：本机、明文 HTTP、不看地址。
-    #[cfg(test)]
-    pub(crate) fn plain_http_for_tests(host: &str, port: u16) -> Self {
-        Self {
+    /// 测试和无头验收里的假 GitHub：本机回环地址、明文 HTTP、不看地址（回环地址本来就过不了那一关）。
+    /// 不是回环地址就不给：只能连到本机。
+    pub(crate) fn loopback(address: SocketAddr) -> Option<Self> {
+        address.ip().is_loopback().then(|| Self {
             scheme: "http",
-            host: host.to_owned(),
-            port,
+            host: match address {
+                SocketAddr::V4(address) => address.ip().to_string(),
+                SocketAddr::V6(address) => format!("[{}]", address.ip()),
+            },
+            port: address.port(),
             check_addresses: false,
-        }
+        })
     }
 
     /// 这个仓库默认分支上这个文件的地址。名字验过只剩不用编码的字符，照样百分号编码一遍。

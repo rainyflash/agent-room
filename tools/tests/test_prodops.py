@@ -229,6 +229,15 @@ class ProductionConfigTests(unittest.TestCase):
             ["1 0/9000028 0/9000158", "2 1A/0000F0A8 1A/1000000"],
         )
 
+    def test_production_never_points_the_github_reader_at_a_fake(self) -> None:
+        # 读 GitHub 的主机在生产上写死；本机回环地址上的假 GitHub 只给无头验收（project-rooms.md 的 3P-9）。
+        name = "AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS"
+        text_suffixes = {".py", ".yaml", ".yml", ".json", ".toml", ".conf", ".sh", ".service", ".timer", ".md"}
+        for directory in (ROOT / "infra" / "production", ROOT / "tools" / "prodops"):
+            for path in directory.rglob("*"):
+                if path.is_file() and path.suffix in text_suffixes:
+                    self.assertNotIn(name, path.read_text(encoding="utf-8", errors="ignore"), str(path))
+
     def test_unknown_configuration_is_rejected(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))
         value["unsafeDefault"] = True

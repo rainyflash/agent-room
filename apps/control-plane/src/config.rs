@@ -219,7 +219,18 @@ pub(crate) struct ControlPlaneConfig {
     pub(crate) content: ContentConfig,
     pub(crate) network_agents: NetworkAgentConfig,
     pub(crate) reminders: ReminderConfig,
+    pub(crate) project_rooms: ProjectRoomConfig,
     pub(crate) observability: ObservabilityConfig,
+}
+
+/// 无头验收（`specs/redesign/project-rooms.md` 的 3P-9）用的假 GitHub 在哪：本机回环地址和端口。
+pub(crate) const ACCEPTANCE_GITHUB_ADDRESS: &str = "AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS";
+
+/// 项目房间。读 GitHub 的主机在生产上写死（`raw.githubusercontent.com`）；只有无头验收把它换成本机
+/// 回环地址上的假 GitHub，别的地址一律不认。部署配置从来不写它（`tools/tests/test_prodops.py` 卡着）。
+#[derive(Clone, Default)]
+pub(crate) struct ProjectRoomConfig {
+    pub(crate) acceptance_github: Option<SocketAddr>,
 }
 
 /// 提醒（`specs/redesign/reminders.md`）。邮件提醒默认关着：要等发信那一步上线、维护者点了头才打开；
@@ -247,9 +258,34 @@ impl ControlPlaneConfig {
             content: read_content_config(source)?,
             network_agents: read_network_agent_config(source)?,
             reminders: read_reminder_config(source)?,
+            project_rooms: read_project_room_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+/// 假 GitHub 只认本机回环地址加一个端口（`127.0.0.1:18766`、`[::1]:18766`）：设错了也只能连到本机。
+fn read_project_room_config(
+    source: &impl EnvironmentSource,
+) -> Result<ProjectRoomConfig, ConfigError> {
+    let Some(value) = read_optional(source, ACCEPTANCE_GITHUB_ADDRESS) else {
+        return Ok(ProjectRoomConfig::default());
+    };
+    let address: SocketAddr = value.trim().parse().map_err(|_| {
+        ConfigError::invalid(
+            ACCEPTANCE_GITHUB_ADDRESS,
+            "要写成本机回环地址和端口，比如 127.0.0.1:18766",
+        )
+    })?;
+    if !address.ip().is_loopback() || address.port() == 0 {
+        return Err(ConfigError::invalid(
+            ACCEPTANCE_GITHUB_ADDRESS,
+            "只认本机回环地址和一个端口：它只给无头验收的假 GitHub 用",
+        ));
+    }
+    Ok(ProjectRoomConfig {
+        acceptance_github: Some(address),
+    })
 }
 
 fn read_reminder_config(source: &impl EnvironmentSource) -> Result<ReminderConfig, ConfigError> {
@@ -1331,6 +1367,54 @@ mod tests {
             format!("{:?}", config.content.object_store_secret_key),
             "[已脱敏]"
         );
+    }
+
+    #[test]
+    fn 假_github_只认本机回环地址_不设就是真的() {
+        assert_eq!(
+            ControlPlaneConfig::from_source(&valid_environment())
+                .unwrap()
+                .project_rooms
+                .acceptance_github,
+            None
+        );
+        for value in ["127.0.0.1:18766", " [::1]:18766 "] {
+            let mut environment = valid_environment();
+            environment
+                .0
+                .insert(super::ACCEPTANCE_GITHUB_ADDRESS, value.to_owned());
+            let address = ControlPlaneConfig::from_source(&environment)
+                .unwrap()
+                .project_rooms
+                .acceptance_github
+                .expect("认这个地址");
+            assert!(address.ip().is_loopback());
+            assert_eq!(address.port(), 18_766);
+        }
+        for value in [
+            "10.0.0.5:18766",
+            "203.0.113.7:443",
+            "127.0.0.1:0",
+            "127.0.0.1",
+            "localhost:18766",
+            "http://127.0.0.1:18766",
+            "raw.githubusercontent.com:443",
+        ] {
+            let mut environment = valid_environment();
+            environment
+                .0
+                .insert(super::ACCEPTANCE_GITHUB_ADDRESS, value.to_owned());
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid {
+                        name: super::ACCEPTANCE_GITHUB_ADDRESS,
+                        ..
+                    })
+                ),
+                "{value}"
+            );
+        }
     }
 
     #[test]
