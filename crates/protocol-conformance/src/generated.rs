@@ -497,3 +497,16 @@ pub struct RoomNoticeState {
     #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoomParentNoticeState {
+    pub event_type: String,
+    pub parent_room_id: String,
+    pub schema_version: String,
+    pub text: String,
+    pub updated_at: String,
+    pub updated_by: String,
+    #[serde(default, flatten, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, serde_json::Value>,
+}

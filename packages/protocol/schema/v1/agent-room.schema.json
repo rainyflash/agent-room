@@ -16,7 +16,8 @@
     { "$ref": "#/$defs/RoomKeyRequestEvent" },
     { "$ref": "#/$defs/RoomKeysEvent" },
     { "$ref": "#/$defs/RoomListingState" },
-    { "$ref": "#/$defs/RoomNoticeState" }
+    { "$ref": "#/$defs/RoomNoticeState" },
+    { "$ref": "#/$defs/RoomParentNoticeState" }
   ],
   "$defs": {
     "ErrorCategory": {
@@ -907,6 +908,30 @@
           "pattern": "^@[^\\s:]+:[^\\s]+$"
         },
         "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": true,
+      "maxProperties": 16
+    },
+    "RoomParentNoticeState": {
+      "type": "object",
+      "required": ["schemaVersion", "eventType", "text", "updatedBy", "updatedAt", "parentRoomId"],
+      "properties": {
+        "schemaVersion": { "const": "1.0" },
+        "eventType": { "const": "io.github.rainyflash.agentroom.room.parent_notice.v1" },
+        "text": { "type": "string", "maxLength": 2000 },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^@[^\\s:]+:[^\\s]+$"
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "parentRoomId": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 255,
+          "pattern": "^![^:]+:[^:]+$"
+        }
       },
       "additionalProperties": true,
       "maxProperties": 16

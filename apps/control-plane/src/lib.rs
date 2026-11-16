@@ -802,13 +802,15 @@ fn start_moderation_expiry(
     ))
 }
 
-/// 子房间在聊天服务器上跟着父房间变，用自己的一份私人房间服务。
+/// 子房间在聊天服务器上跟着父房间变，用自己的一份私人房间服务；同一轮里把子房间里父房间须知的副本
+/// 补上，用自己的一份须知服务。
 fn start_sub_room_sync(
     config: &ControlPlaneConfig,
     dependencies: &AgentFeatureDependencies,
 ) -> Result<sub_room_sync::SubRoomSyncWorker, StartupError> {
     Ok(sub_room_sync::SubRoomSyncWorker::start(
         build_private_room_service(config, dependencies)?,
+        build_room_notice_service(dependencies, Arc::new(RoomStateWriteLimit::new())),
     ))
 }
 
@@ -1329,20 +1331,30 @@ fn build_room_notice_http_state(
     dependencies: &AgentFeatureDependencies,
     writes: Arc<RoomStateWriteLimit>,
 ) -> features::private_room_notice::PrivateRoomNoticeHttpState {
-    let notices = Arc::new(PrivateRoomNoticeService::new(
-        PrivateRoomNoticeDependencies {
-            rooms: dependencies.repositories.clone(),
-            matrix: dependencies.matrix_identities.clone(),
-            clock: dependencies.system_runtime.clone(),
-            writes,
-        },
-    ));
     features::private_room_notice::PrivateRoomNoticeHttpState::new(
-        notices,
+        build_room_notice_service(dependencies, writes),
         dependencies.authentication.clone(),
         &config.authentication.frontend_origin,
         &config.authentication.desktop_origins,
     )
+}
+
+/// 须知服务：写须知，父房间改了须知时把子房间里的副本跟着写（`specs/redesign/brief-and-pins.md` 的
+/// 4N-3b）。`writes` 是人改须知的次数上限，和置顶合起来算；后台补副本不用它。
+fn build_room_notice_service(
+    dependencies: &AgentFeatureDependencies,
+    writes: Arc<RoomStateWriteLimit>,
+) -> Arc<PrivateRoomNoticeService> {
+    Arc::new(PrivateRoomNoticeService::new(
+        PrivateRoomNoticeDependencies {
+            rooms: dependencies.repositories.clone(),
+            matrix: dependencies.matrix_identities.clone(),
+            copy_queue: dependencies.repositories.clone(),
+            copies: dependencies.matrix_identities.clone(),
+            clock: dependencies.system_runtime.clone(),
+            writes,
+        },
+    ))
 }
 
 /// 房主和管理员置顶房间里的一句（`specs/redesign/brief-and-pins.md`“置顶”）：以应用服务改

@@ -60,7 +60,7 @@ export const privacyResources = {
       'A room can have sub-rooms, one per piece of work. Their messages are stored the same way as the room above them and kept for the same retention period. Anyone in the room above can go into a sub-room without a door and read it, as in that room. A sub-room that needs approval or an invitation is always encrypted and counts as a private room: the people and agents let in can read it, and so can whoever runs the server; the room’s owner and admins can always go in. For each sub-room we keep who made it, who looks after it, who archived it and when (or that it was archived after 30 days without anyone speaking), and its category and who made that category. Whoever can see a sub-room in the room’s list of sub-rooms sees who made and looks after it, and for an archived one, who archived it.',
     'privacy.readers.notices.label': 'Room briefs',
     'privacy.readers.notices.text':
-      'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists.',
+      'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists. A sub-room also carries a copy of the brief of the room above it, so the agents in the sub-room can read it too. The server writes that copy; it isn’t encrypted either, and every version stays with the sub-room. Until a copy is written, the server only notes which sub-room still needs it, not the brief itself.',
     'privacy.readers.pins.label': 'Pinned messages',
     'privacy.readers.pins.text':
       'Owners and admins can pin up to five messages in a room. The list of which messages are pinned, who pinned them and when is kept with the room on the chat server without encryption, so the people in the room and whoever runs the server can see it; every change stays with the room for as long as the room exists. The list only points to the messages: in an encrypted room, the messages themselves stay encrypted.',
@@ -190,7 +190,7 @@ export const privacyResources = {
       '一间房下面可以开子房间，一件事一间。子房间里的消息和它上面那间房一样存、一样按保留期删。没有门的子房间，上面那间房里的人都进得去、读得到，和那间房一样。要批准或者只能请进来的子房间一直是加密的，照私人房间算：放进来的人和 Agent 读得到，运营服务器的人也读得到；那间房的房主和管理员随时进得去。每间子房间记着谁建的、谁在管、谁什么时候归档的（或者是 30 天没人说话自动归档的），放在哪个分类里、分类是谁建的。在子房间名单里看得到这一间的人，看得到谁建的、谁在管，归档了的还看得到谁归档的。',
     'privacy.readers.notices.label': '房间须知',
     'privacy.readers.notices.text':
-      '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。',
+      '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。子房间里还有一份上面那间房的须知的副本，好让子房间里的 Agent 也读得到；副本由服务器写进去，同样不加密，每一版跟着子房间留着。写好之前服务器只记着哪间子房间还要写，不另存须知。',
     'privacy.readers.pins.label': '置顶',
     'privacy.readers.pins.text':
       '房主和管理员能在房间里置顶最多 5 句话。置顶了哪几句、谁置顶的、什么时候，跟着房间存在聊天服务器上，不加密：房间里的人和运营服务器的人看得到这份列表；每改一次都跟着房间留着，房间在就一直在。列表里只记是哪一句，加密房间里那句话本身照旧是加密的。',

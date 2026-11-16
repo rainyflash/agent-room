@@ -8,9 +8,10 @@ use agent_room_application::{
     persistence::RepositoryResult,
     ports::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
+        ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
         PinTarget, PortFuture, PrivateRoomNoticeGateway, PrivateRoomPinsGateway,
         PrivateRoomSnapshot, PrivateRoomStore, RoomNoticeWrite, RoomPinsChange,
-        RoomPinsWriteFailure,
+        RoomPinsWriteFailure, SubRoomSyncScope,
     },
     private_rooms::{
         PinsFailureKind, PrivateRoomNoticeDependencies, PrivateRoomNoticeService,
@@ -181,6 +182,8 @@ async fn 须知和置顶的次数合起来算_按人算() {
     let notices = PrivateRoomNoticeService::new(PrivateRoomNoticeDependencies {
         rooms: Arc::new(MemoryRooms(room())),
         matrix: Arc::new(AcceptNotices),
+        copy_queue: Arc::new(NoSubRooms),
+        copies: Arc::new(NoSubRooms),
         clock: Arc::new(TestClock),
         writes: fixture.writes.clone(),
     });
@@ -338,6 +341,69 @@ impl PrivateRoomNoticeGateway for AcceptNotices {
         &'a self,
         _room_id: &'a MatrixRoomId,
         _notice: &'a RoomNoticeWrite,
+    ) -> PortFuture<'a, MatrixResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// 这间房下面没有子房间：没有副本要写。
+struct NoSubRooms;
+
+impl ParentNoticeSyncStore for NoSubRooms {
+    fn queue_parent_notice_sync(
+        &self,
+        _parent: RoomCatalogId,
+        _queued_at: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<u64>> {
+        Box::pin(async { Ok(0) })
+    }
+
+    fn claim_parent_notice_sync(
+        &self,
+        _scope: SubRoomSyncScope,
+        _limit: u16,
+        _now: UtcMillis,
+        _lease_until: UtcMillis,
+    ) -> PortFuture<'_, RepositoryResult<Vec<ParentNoticeSyncTask>>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn complete_parent_notice_sync(
+        &self,
+        _task: ParentNoticeSyncTask,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn retry_parent_notice_sync(
+        &self,
+        _task: ParentNoticeSyncTask,
+        _retry_at: UtcMillis,
+        _failure_code: &'static str,
+    ) -> PortFuture<'_, RepositoryResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+impl ParentNoticeGateway for NoSubRooms {
+    fn room_notice<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<RoomNoticeWrite>>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn parent_notice<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+    ) -> PortFuture<'a, MatrixResult<Option<ParentNoticeCopy>>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn set_parent_notice<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _copy: &'a ParentNoticeCopy,
     ) -> PortFuture<'a, MatrixResult<()>> {
         Box::pin(async { Ok(()) })
     }

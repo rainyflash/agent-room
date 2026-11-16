@@ -40,6 +40,7 @@ use crate::{
 use super::{
     decode::corrupt_data,
     join_requests::void_pending_of_room,
+    parent_notice_sync,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
     role_changes::insert_role_changes,
     sub_room_follow::{follow_parent_at_creation, follow_stale_sub_rooms},
@@ -206,6 +207,14 @@ impl SubRoomStore for PostgresRepositories {
             )
             .await?;
             insert_link(&mut transaction, sub_room, operation).await?;
+            // 子房间里父房间须知的副本：照父房间此刻的须知写上（4N-3b）。
+            parent_notice_sync::queue_new_sub_room(
+                &mut transaction,
+                sub_room.snapshot.catalog().id(),
+                sub_room.created_at,
+                operation,
+            )
+            .await?;
             if let Some(agent) = sub_room.creator_agent_member
                 && !seat_creator_agent(&mut transaction, sub_room, agent, operation).await?
             {
