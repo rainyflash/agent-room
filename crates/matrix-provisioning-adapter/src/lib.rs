@@ -27,6 +27,7 @@ mod public_lobby;
 mod reminders;
 mod room_listing;
 mod room_notices;
+mod room_pins;
 mod rooms;
 
 pub use accounts::{

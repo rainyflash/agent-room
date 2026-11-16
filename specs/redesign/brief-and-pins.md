@@ -135,6 +135,13 @@
   - 看过哪一版记进个人工作区（`use-brief-seen.ts`）：索引多了 `acknowledgedAt`（`acknowledged` 那个集合照旧，收件箱不用改）；这个浏览器以前记着的，打开这间房时搬进去、搬成了就删；写不进工作区时先记在浏览器里。工作区还在从服务器读时先不亮点，免得换了设备的人看到点亮一下又灭。
   - 隐私说明页在这一步就改了（原定副本和置顶那两步）：“房间公告”改叫“房间须知”；“你的账户”补一句读到哪、免打扰、看过哪一版须知这类设置跟着账户存在聊天服务器上，运营服务器的人读得到（读到哪、免打扰以前就在那里，页面上一直没写）。依据那份文档里网络 Agent 存着交给它的那一版的说法也在这一步改正了。
 - 2026-11-16 4N-3a 网页（#892）：子房间对话上面先写父房间的须知（“Brief · From <父房间>”，读屏念“<父房间> 的须知”），再写这一间的（“这一间的须知”）；父房间没有须知时这一间的照旧叫“须知”。网页按房间列表里父房间的 Matrix 房间号，用读这一页房间的那一套（`LobbyGateway`）读父房间的状态，只在须知或改的人的昵称变了时换一份（`use-room-brief.ts`）。父房间那条在子房间里不给改；看没看过按父房间记，在父房间里看过的这里也不亮。没动服务器，隐私说明页不用改。浏览器验收：`lobby-scene.html?private&subRoom&parentNotice`（加 `&notice` 是这一间也有）。
+- 2026-11-16 4N-4a 控制面（#893）：
+  - `PUT /private-rooms/{c}/pins`，带 `{ "eventId", "pinned" }`，回整份列表 `{ "pinned": [{ "eventId", "pinnedBy", "pinnedAtUnixMs" }] }`，新的在最前面。错误码 `room_pins.*`：满了是 409 `room_pins.full`，那一句不是这间房里的消息是 400 `room_pins.not_a_message`，归档了是 409 `room_pins.conflict`。
+  - 写 Matrix 标准的 `m.room.pinned_events`，我们的字段 `io.github.rainyflash.agentroom.pins` 记每一句谁、什么时候置顶的（`entries`），还有最近一次改了什么（`updatedBy`、`updatedAt`、`change: { kind: pinned | unpinned, eventId }`）：对话里“谁置顶了一句”那一行照它写，不用和上一版比。
+  - 置顶以前以应用服务读那一句：不在这间房里、是状态事件、删了的都不收；外面的类型只认 `m.room.encrypted`、`m.room.message` 和我们的 `message.preview`（v1、v2），改过的那一版（`revision`）不算。取消置顶不读那一句，删了的也能拿掉。
+  - 次数和须知合起来算（`RoomStateWriteLimit`，每人每小时 30 次），控制面里只建一份交给两个用例。同一个房间一次只改一个（`room_pins.rs` 的 `PIN_LOCKS`，和改权限一样只管一个进程）。
+  - 标准的列表里有、我们的字段里没记的那一句，说明状态不是我们写的：报错、不写回，免得把它丢掉。
+  - 隐私说明页加了“置顶”一条。
 - 2026-11-16 4N-3b 控制面写子房间里的副本（#894）：
   - 副本是房间状态 `room.parent_notice.v1`，内容和 `room.notice.v1` 一样，多一个 `parentRoomId`，由应用服务写。父房间改须知、新建子房间时排进 `private_room_parent_notice_sync`（每间子房间一行，迁移 `202611160002`）。改须知的请求里先写一批（最多 20 间，没写成不算请求失败），后台在子房间对账那一轮（`sub_room_sync.rs`，每 30 秒）补上。做的时候读父房间此刻的须知和子房间里的副本，不一样才写；父房间撤掉了、副本上还写着的，写一份正文空的。
   - 和原来写的不一样的几处（上面“子房间里父房间的须知也算”和“分步”已经改了）：

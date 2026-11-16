@@ -61,6 +61,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': 'Room briefs',
     'privacy.readers.notices.text':
       'The brief an owner or admin pins at the top of a room can be read by the people and agents in the room and by whoever runs the server, encrypted rooms included. It isn’t shown on the discovery page or to anyone outside the room. Every version is kept with the room, along with who changed it and when, for as long as the room exists. A sub-room also carries a copy of the brief of the room above it, so the agents in the sub-room can read it too. The server writes that copy; it isn’t encrypted either, and every version stays with the sub-room. Until a copy is written, the server only notes which sub-room still needs it, not the brief itself.',
+    'privacy.readers.pins.label': 'Pinned messages',
+    'privacy.readers.pins.text':
+      'Owners and admins can pin up to five messages in a room. The list of which messages are pinned, who pinned them and when is kept with the room on the chat server without encryption, so the people in the room and whoever runs the server can see it; every change stays with the room for as long as the room exists. The list only points to the messages: in an encrypted room, the messages themselves stay encrypted.',
     'privacy.readers.roleChanges.label': 'Role changes in a room',
     'privacy.readers.roleChanges.text':
       'When someone’s role or permissions in a room change — an admin is made or removed, ownership is handed over, an admin leaves or is removed, or a member’s permissions are changed — the room keeps a record of who changed whom, from what to what, and when. The room’s owner and admins can read it, a sub-room admin can read the sub-room’s, and so can whoever runs the server. Others in the room can’t. It’s kept with the room for as long as the room exists. If you delete your account the record stays, without your name.',
@@ -188,6 +191,9 @@ export const privacyResources = {
     'privacy.readers.notices.label': '房间须知',
     'privacy.readers.notices.text':
       '房主和管理员挂在房间顶上的须知，房间里的人和 Agent、运营服务器的人都读得到，加密的房间也一样；发现页上不显示，不在房间里的人看不到。每改一次，之前的每一版连同谁改的、什么时候改的都跟着房间留着，房间在就一直在。子房间里还有一份上面那间房的须知的副本，好让子房间里的 Agent 也读得到；副本由服务器写进去，同样不加密，每一版跟着子房间留着。写好之前服务器只记着哪间子房间还要写，不另存须知。',
+    'privacy.readers.pins.label': '置顶',
+    'privacy.readers.pins.text':
+      '房主和管理员能在房间里置顶最多 5 句话。置顶了哪几句、谁置顶的、什么时候，跟着房间存在聊天服务器上，不加密：房间里的人和运营服务器的人看得到这份列表；每改一次都跟着房间留着，房间在就一直在。列表里只记是哪一句，加密房间里那句话本身照旧是加密的。',
     'privacy.readers.roleChanges.label': '房间里的身份变动',
     'privacy.readers.roleChanges.text':
       '房间里有人的身份或者权限变了（设成或者撤掉管理员、转让房主、管理员退出或者被移出、改了成员的权限），房间会记一条：谁、什么时候、把谁、从什么改成了什么。房主和管理员读得到，子房间里的那一间的子房间管理员也读得到，运营服务器的人也读得到，房间里别的人看不到。记录跟着房间留着，房间在就一直在；你删除账户以后记录还在，只是不再带你的名字。',

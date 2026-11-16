@@ -191,6 +191,7 @@ pub use rooms::{
 pub use rooms::{
     ParentNoticeCopy, ParentNoticeGateway, ParentNoticeSyncStore, ParentNoticeSyncTask,
 };
+pub use rooms::{PinTarget, PrivateRoomPinsGateway, RoomPinsChange, RoomPinsWriteFailure};
 pub use rooms::{
     QuietSubRoom, SubRoomActivityStore, SubRoomArchival, SubRoomArchiveOutcome,
     SubRoomArchiveRecord, SubRoomArchiveStore, SubRoomRestoration,

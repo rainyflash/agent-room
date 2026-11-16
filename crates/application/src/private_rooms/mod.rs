@@ -7,8 +7,10 @@ mod models;
 mod moderation_grants;
 mod notice;
 mod owner_handover;
+mod pins;
 mod platform_hold;
 mod public_join;
+mod room_state_writes;
 mod service;
 mod sub_room_privacy;
 
@@ -64,6 +66,10 @@ pub use owner_handover::{
     DeletedOwnerRooms, OwnerHandoverDependencies, OwnerHandoverFailure, OwnerHandoverOutcome,
     OwnerHandoverService,
 };
+pub use pins::{
+    PinsFailure, PinsFailureKind, PinsResult, PrivateRoomPinsDependencies, PrivateRoomPinsService,
+    PrivateRoomPinsUseCases, RoomPinView, UpdateRoomPins,
+};
 pub use platform_hold::{
     HoldPublicRoom, MAX_PLATFORM_HOLD_REASON_CHARS, PlatformHoldFailure, PlatformHoldFailureKind,
     PlatformHoldResult, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
@@ -74,6 +80,7 @@ pub use public_join::{
     PublicJoinFailure, PublicJoinFailureKind, PublicJoinMembership, PublicJoinResult,
     PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomJoinUseCases, RequestToJoin,
 };
+pub use room_state_writes::{ROOM_STATE_WRITES_PER_HOUR, RoomStateWriteLimit};
 pub use service::{
     AccessibleSubRoom, AccountSubRoomListing, AdmitPersonByAgent, AgentOwnerSeat,
     AgentSubRoomArchival, AgentSubRoomCreation, AgentSubRoomItem, AgentSubRoomListing,

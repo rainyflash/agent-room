@@ -993,6 +993,17 @@ impl PrivateRoom {
         self.require(actor, PrivateRoomCapability::Manage, "修改房间公告")
     }
 
+    /// 置顶房间里的一句、取消置顶（`specs/redesign/brief-and-pins.md`“置顶”）：和须知一样，房主和管理员
+    /// 都能，不用最近登录过；房间归档以后置顶还看得到，不能再改。
+    ///
+    /// # Errors
+    ///
+    /// 房间已归档，或操作者没有管理权限时返回错误。
+    pub fn authorize_pins_change(&self, actor: PrincipalId) -> DomainResult<()> {
+        self.ensure_active("pins_changed")?;
+        self.require(actor, PrivateRoomCapability::Manage, "置顶房间里的一句")
+    }
+
     /// 把房间交给 Agent 管、看和撤这些授权（`specs/public-rooms/design.md`“房主的 Agent 管房间”）：
     /// 房主和管理员，房间还要在使用中。
     ///
@@ -2064,9 +2075,20 @@ mod tests {
             Err(crate::DomainError::Forbidden { .. })
         ));
         assert!(room.authorize_notice_change(principal(9)).is_err());
+        for actor in [1, 2] {
+            assert!(room.authorize_pins_change(principal(actor)).is_ok());
+        }
+        assert!(matches!(
+            room.authorize_pins_change(principal(3)),
+            Err(crate::DomainError::Forbidden { .. })
+        ));
         room.archive(principal(1)).expect("归档成功");
         assert!(matches!(
             room.authorize_notice_change(principal(1)),
+            Err(crate::DomainError::InvalidTransition { .. })
+        ));
+        assert!(matches!(
+            room.authorize_pins_change(principal(1)),
             Err(crate::DomainError::InvalidTransition { .. })
         ));
     }
