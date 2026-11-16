@@ -108,6 +108,10 @@ def accept() -> None:
             room_people = v.verify_room_people(
                 person_bridge=sender, environment=environment, redactor=redactor,
             )
+            # 子房间在网页上：建分类和两间子房间，他的 Agent 按“父房间名/子房间名”进来，申请的那间批准以后进来。
+            sub_rooms_web = v.verify_sub_rooms_in_web(
+                person_bridge=sender, environment=environment, redactor=redactor,
+            )
             # 公开房间：从发现页和分享链接进来，申请和批准，公告，Agent 照规则管房间，换分享码，
             # 改回私密以后的话是加密的。
             public_rooms = v.verify_public_rooms(
@@ -183,6 +187,8 @@ def accept() -> None:
         "subRoomsByNetworkAgentsVerified":True, "subRoomCatalogId":sub_rooms["subRoomCatalogId"],
         "subRoomReplyEventId":sub_rooms["subRoomReplyEventId"],
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
+        "subRoomsWebOpenCatalogId":sub_rooms_web["subRoomsWebOpenCatalogId"],
+        "subRoomsWebAgentEventId":sub_rooms_web["subRoomsWebAgentEventId"],
         "publicRoomCatalogId":public_rooms["publicRoomCatalogId"],
         "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],
         "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],

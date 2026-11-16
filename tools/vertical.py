@@ -86,6 +86,14 @@ LOCAL_ROOM_OWNER_SPOKE: Final = VERTICAL_ROOT / "local-agent-room-owner-spoke.js
 ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
 ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
+SUB_ROOMS_JOINED: Final = VERTICAL_ROOT / "sub-rooms-joined.json"
+SUB_ROOMS_SPOKE: Final = VERTICAL_ROOT / "sub-rooms-spoke.json"
+SUB_ROOMS_CHECKED: Final = VERTICAL_ROOT / "sub-rooms-checked.json"
+SUB_ROOMS_ARCHIVED: Final = VERTICAL_ROOT / "sub-rooms-archived.json"
+SUB_ROOMS_REFUSED: Final = VERTICAL_ROOT / "sub-rooms-refused.json"
+SUB_ROOMS_RESTORED: Final = VERTICAL_ROOT / "sub-rooms-restored.json"
+SUB_ROOMS_SPOKE_AGAIN: Final = VERTICAL_ROOT / "sub-rooms-spoke-again.json"
+SUB_ROOMS_REMOVED: Final = VERTICAL_ROOT / "sub-rooms-removed.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 # 公开房间那一轮：网页上走完了，记下是哪间房。
 PUBLIC_ROOM_RESULT: Final = VERTICAL_ROOT / "public-room.json"
@@ -3786,6 +3794,156 @@ def verify_room_people(
         )
     browser.finish(timeout_seconds=120)
     return {"roomPeopleAgentEventId": event_id}
+
+
+SUB_ROOMS_WEB_PARENT: Final = "Vertical Sub-room Studio"
+SUB_ROOMS_WEB_OPEN: Final = "Plans"
+SUB_ROOMS_WEB_REQUEST: Final = "Reviews"
+SUB_ROOMS_WEB_CATEGORY: Final = "Ops"
+SUB_ROOMS_WEB_AGENT: Final = "Vertical Sub-room Agent"
+
+
+def verify_sub_rooms_in_web(
+    *,
+    person_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """子房间在网页上（specs/redesign/sub-rooms.md 第 2k-2a 步）：第二个账号在真实网页上建房间、建分类，在下面
+    开一间直接能进的、一间要申请的；验收账号凭邀请链接进来。他的本机 Agent 按“父房间名/子房间名”进直接能进的
+    那间说一句，他自己也就跟着进去了，两边网页都解开；他申请另一间，房主在子房间设置里批准，他进去说话。
+    接着（2k-2b）房主归档 Agent 在的那间，Agent 发不出去；房主恢复（手动归档的他恢复不了），Agent 接着说；
+    房主把他移出上面那间，他和他的 Agent 在两间子房间里都是 leave。网页和这边靠几个文件对步子
+    （sub-rooms.e2e.ts）。"""
+    steps = (
+        SUB_ROOMS_JOINED,
+        SUB_ROOMS_SPOKE,
+        SUB_ROOMS_CHECKED,
+        SUB_ROOMS_ARCHIVED,
+        SUB_ROOMS_REFUSED,
+        SUB_ROOMS_RESTORED,
+        SUB_ROOMS_SPOKE_AGAIN,
+        SUB_ROOMS_REMOVED,
+    )
+    for path in steps:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_PARENT": SUB_ROOMS_WEB_PARENT,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OPEN": SUB_ROOMS_WEB_OPEN,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_REQUEST": SUB_ROOMS_WEB_REQUEST,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_CATEGORY": SUB_ROOMS_WEB_CATEGORY,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_JOINED": str(SUB_ROOMS_JOINED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_SPOKE": str(SUB_ROOMS_SPOKE),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_CHECKED": str(SUB_ROOMS_CHECKED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_ARCHIVED": str(SUB_ROOMS_ARCHIVED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_REFUSED": str(SUB_ROOMS_REFUSED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_RESTORED": str(SUB_ROOMS_RESTORED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_SPOKE_AGAIN": str(SUB_ROOMS_SPOKE_AGAIN),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_REMOVED": str(SUB_ROOMS_REMOVED),
+        }
+    )
+    browser = BrowserRun("sub-rooms.e2e.ts", playwright_environment)
+    joined = wait_for_browser_step(
+        SUB_ROOMS_JOINED, browser, timeout_seconds=600, failure="子房间那一轮 10 分钟内没建好房间、没凭链接加入。"
+    )
+    open_catalog = require_text(joined.get("openCatalogId"), "直接能进的子房间号")
+    with bridge_mcp_client(person_bridge, redactor) as transport:
+        entered = transport.call_tool(
+            "agent_room_join",
+            {
+                "room": f"{SUB_ROOMS_WEB_PARENT}/{SUB_ROOMS_WEB_OPEN}",
+                "displayName": SUB_ROOMS_WEB_AGENT,
+            },
+        )
+        room = require_object(entered.get("room"), "他的 Agent 进的子房间")
+        if room.get("catalogId") != open_catalog:
+            raise VerticalFailure("他的 Agent 按“父房间名/子房间名”进了别的房间。")
+        agent = transport.bind_session(require_text(entered.get("sessionId"), "他的 Agent 的会话"))
+        identity = wait_for_session_identity(agent, timeout_seconds=180)
+        room_id = identity["matrixRoomId"]
+        text = f"Hello from the sub-room agent ({new_uuid_v7()[-8:]})."
+        event_id = say_in_room(agent, room_id, text)
+        SUB_ROOMS_SPOKE.write_text(
+            json.dumps({"agentName": SUB_ROOMS_WEB_AGENT, "text": text}) + "\n", encoding="utf-8"
+        )
+        checked = wait_for_browser_step(
+            SUB_ROOMS_CHECKED,
+            browser,
+            timeout_seconds=600,
+            failure="子房间那一轮 10 分钟内没看到 Agent 说的话，或者没批准进另一间。",
+        )
+        request_room = require_text(checked.get("requestRoomId"), "要申请的那间的 Matrix 房间")
+        guest_user = require_text(checked.get("guestMatrixUserId"), "他的聊天账号")
+        wait_for_browser_step(
+            SUB_ROOMS_ARCHIVED, browser, timeout_seconds=300, failure="房主 5 分钟内没归档子房间。"
+        )
+        require_send_refused(agent, room_id)
+        SUB_ROOMS_REFUSED.write_text("{}\n", encoding="utf-8")
+        wait_for_browser_step(
+            SUB_ROOMS_RESTORED, browser, timeout_seconds=300, failure="他 5 分钟内没恢复子房间。"
+        )
+        again = f"Back after the restore ({new_uuid_v7()[-8:]})."
+        say_once_room_reopens(agent, room_id, again)
+        SUB_ROOMS_SPOKE_AGAIN.write_text(
+            json.dumps({"agentName": SUB_ROOMS_WEB_AGENT, "text": again}) + "\n", encoding="utf-8"
+        )
+        wait_for_browser_step(
+            SUB_ROOMS_REMOVED,
+            browser,
+            timeout_seconds=600,
+            failure="房主 10 分钟内没把他移出上面那间。",
+        )
+    # 移出上面那间：他和他的 Agent 在子房间里也都出去了。
+    for room, user in (
+        (room_id, guest_user),
+        (room_id, identity["agentMatrixUserId"]),
+        (request_room, guest_user),
+    ):
+        require_membership(room, user, "leave")
+    browser.finish(timeout_seconds=120)
+    return {"subRoomsWebOpenCatalogId": open_catalog, "subRoomsWebAgentEventId": event_id}
+
+
+def require_send_refused(client: McpAgentSession, room_id: str) -> None:
+    """子房间归档以后本机 Agent 发不出去：照实报错，不是可以重试的那种。"""
+    result = client.call_tool_result(
+        "agent_room_send_message",
+        {
+            "submissionId": new_uuid_v7(),
+            "roomId": room_id,
+            "chat": True,
+            "body": "Is this sub-room still open?",
+            "provenance": "human_confirmed_agent",
+        },
+    )
+    structured = result.get("structuredContent")
+    if result.get("isError") is not True or not isinstance(structured, dict):
+        raise VerticalFailure("子房间归档以后，本机 Agent 不该还发得出去。")
+    if structured.get("retryable") is True:
+        raise VerticalFailure(
+            f"子房间归档以后发不出去该照实说，不该让它重试（错误码 {tool_failure_code(result) or '缺失'}）。"
+        )
+
+
+def say_once_room_reopens(client: McpAgentSession, room_id: str, text: str) -> str:
+    """恢复以后本机 Agent 接着说：聊天服务器上解锁可能还没同步到它那里，被拒了隔一会儿再说。"""
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            return say_in_room(client, room_id, text)
+        except VerticalFailure:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(3)
 
 
 PUBLIC_ROOM_NAME: Final = "Vertical Public Room"
