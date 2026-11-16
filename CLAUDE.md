@@ -319,6 +319,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 读（`GET /private-rooms/{c}/role-changes`）要已加入、有“管理”，归档了的房间也读得到，所以没用 `PrivateRoom::allows`（归档以后它只放行查看）。
     - 网页对这份回答不严格校验（`roomRoleChangesSchema`），R5 要加子房间那一项；别顺手加上 `.strict()`。
     - 管理员删除账户那一下还不记（`finalize_local` 直接改成员记录），跟 R6 一起补。
+  - 房主删除账户时把房间交给当管理员最久的那位（room-roles.md 的“房主不在了（R6）”，做法 #873，实现分 R6-2 到 R6-4）。别拆的：删除任务在 `finalize_local` 以前先调私人房间的用例，房间的变动走领域层和 `save_*_recording`，别在 `finalize_local` 的 SQL 里直接改房主；写 `room.owner_handover.v1` 在存之前，重来时写一样的内容不出错。
+    - R6-2a（#876）：领域层 `hand_over_from_deleted_owner`、挑人的 `handover_candidates`、存储的 `admin_tenure`。“当了多久”按身份变动记录里最近一次拿到“管理”算，没有记录的（R3 以前就是管理员、转让后留着“管理”的原房主）算最久；别改成按成员记录建的时间，那是进房间的时间，不是当管理员的时间。
+    - R6-2b（#877）：删除任务在“停用外部账户”那一段最后调 `OwnerHandoverService`，失败照那一段退避重试，别挪到 `record_federated_deactivation` 以后（`schedule_retry` 只认那一段）。`room.owner_handover.v1` 不带时间、带原房主，重来时内容一样才去重，别加时间。接手的人原来不能说话时补发言级别：“管理”不带着“发言”。
     - 表只加不改：运行账号只有 `SELECT`、`INSERT`。删账户时不删行，主体匿名化以后记录里的人就认不出是谁；这是隐私说明页写着的，改了要一起改。
   - 子房间第 2a 步（sub-rooms.md，#812）：模型和建，连同 R4（三项设置）的控制面部分。只有控制面，网页、MCP、IPC 都没动，界面上还看不到。
     - 子房间多出来的几样在 `private_room_parent`、`private_room_sub_room_manager`、`private_room_sub_room_policy`（`SubRoomStore`）；读到的房间带着 `parent_catalog_id()`。`GET /private-rooms`、给 Bridge 的房间列表不带子房间（`list_for_principal`），旧版网页和旧版 Bridge 因此看不到它们。
@@ -419,6 +422,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-3b 步（#847）：网络 Agent 只离开一间（`agent_room_leave` 的 `roomId`，`DELETE /me/rooms/{房间}`）。离开走本机 Agent 那一套（`AgentRoomPlacementUseCases::leave`，以它的设备和连接），离开成了才忘掉这间（`forget_room`）：别倒过来，不然聊天服务器上没离开成时它就再也找不到这间、离不开了。不带 `roomId` 的照旧全部离开、停用。
   - 子房间第 2h-4a-1 步（#849）：网络 Agent 管它管得了的子房间。私人房间那边认它用 `AgentSubRoomManagement`，Agent 进门那边（看、放行敲门，移出 Agent）用 `agent_managed_sub_room`，两边规矩一样：合成主体管得了（它自己的房间下面），或者建的人是它的合成主体、`created_by_agent` 还在这一间和父房间里。改一边要改另一边。
   - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed` 先找整间房、再问 `AgentSubRoomManagement`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
+  - 网络 Agent 的账户房间列表（`list_for_account`，底下是 `list_for_principal`）不列子房间：它房间下面的子房间房主虽然记成它的合成主体，也不在里面。要它自己房间下面的子房间就按父房间去子房间名单里拿（`own_sub_rooms`），同名回到那间交给私人房间用例认（#875）。以前当成在里面，同名的子房间回了撞了名字，测试替身也列着，单元测试没抓到。
   - 子房间第 2h-4b 步（#851）：邀请人在子房间上走 `admit_person_by_agent`（只请父房间里的人、直接进来、批准他在等的申请），不算每天的邀请；整间房照旧发邀请、算每天的。看申请只有子房间有，整间房回空的。
   - 子房间第 2i-2a 步（#854）：子房间不在 `GET /private-rooms` 里（旧版网页认不得），网页列表里找不到这间房时单独问一次（`usePrivateRoomListWith`），入场页在公开大厅入场说找不到以后才问。新加“在列表里找这间房”的地方也用它，别让服务器的列表带上子房间。公共大厅（`LobbyRoom.publicLobby`，Matrix 上不加密、加入规则是 `public`）也不在列表里，别去问它：回 404，控制面记告警，浏览器验收算出错（#868）。
   - 子房间第 2i-6a 步（#859）：子房间设置是房间设置对话框里的第一节“这间子房间”（`sub-room-settings.tsx`），给了 `subRoom` 时成员、公开、Agent 进门几节不出现。别拆的：谁管得了看名单上有没有 `pendingRequestCount`（`managesSubRoom`），别另问权限；保存只发改了的项，拆门时不带 `hidden`（服务器回 400）。

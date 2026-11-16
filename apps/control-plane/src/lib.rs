@@ -73,13 +73,13 @@ use agent_room_application::{
         SignInSessionTermination, UniformSourceWeights,
     },
     private_rooms::{
-        PrivateRoomAgentAccessDependencies, PrivateRoomAgentAccessService, PrivateRoomDependencies,
-        PrivateRoomDescriptionDependencies, PrivateRoomDescriptionService,
-        PrivateRoomInviteLinkDependencies, PrivateRoomInviteLinkService,
-        PrivateRoomListingDependencies, PrivateRoomListingService, PrivateRoomNoticeDependencies,
-        PrivateRoomNoticeService, PrivateRoomService, PublicRoomJoinDependencies,
-        PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
-        RoomModerationGrantDependencies, RoomModerationGrantService,
+        OwnerHandoverDependencies, OwnerHandoverService, PrivateRoomAgentAccessDependencies,
+        PrivateRoomAgentAccessService, PrivateRoomDependencies, PrivateRoomDescriptionDependencies,
+        PrivateRoomDescriptionService, PrivateRoomInviteLinkDependencies,
+        PrivateRoomInviteLinkService, PrivateRoomListingDependencies, PrivateRoomListingService,
+        PrivateRoomNoticeDependencies, PrivateRoomNoticeService, PrivateRoomService,
+        PublicRoomJoinDependencies, PublicRoomJoinService, PublicRoomPlatformHoldDependencies,
+        PublicRoomPlatformHoldService, RoomModerationGrantDependencies, RoomModerationGrantService,
     },
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
@@ -473,14 +473,13 @@ async fn build_identity_router(
         desktop_origins: &authentication_config.desktop_origins,
     })
     .await?;
-    let account_lifecycle = build_account_lifecycle_service(
-        &config.account_lifecycle,
-        repositories.clone(),
-        system_runtime.clone(),
+    let (account_lifecycle, account_deletion) = build_account_features(
+        config,
+        request_timeout,
+        &repositories,
+        &matrix_identities,
+        &system_runtime,
     )?;
-    let synapse_accounts = build_synapse_account_gateway(config, request_timeout)?;
-    let account_deletion =
-        build_account_deletion_worker(config, &synapse_accounts, &repositories, &system_runtime)?;
     let operational_metrics = start_operational_metrics(config, &repositories, metrics)?;
     let account_state = build_account_http_state(config, account_lifecycle, service.clone());
     let public_rooms =
@@ -892,19 +891,61 @@ fn computer_grant_routes(
     ))
 }
 
+/// 下载、删除账户的接口，和后台跑删除任务的执行器。
+fn build_account_features(
+    config: &ControlPlaneConfig,
+    request_timeout: Duration,
+    repositories: &Arc<PostgresRepositories>,
+    matrix_identities: &Arc<MatrixApplicationServiceProvisioner>,
+    runtime: &Arc<SystemRuntime>,
+) -> Result<
+    (
+        Arc<AccountLifecycleService>,
+        account_deletion::AccountDeletionRuntime,
+    ),
+    StartupError,
+> {
+    let lifecycle = build_account_lifecycle_service(
+        &config.account_lifecycle,
+        repositories.clone(),
+        runtime.clone(),
+    )?;
+    let synapse_accounts = build_synapse_account_gateway(config, request_timeout)?;
+    let deletion = build_account_deletion_worker(
+        config,
+        &synapse_accounts,
+        matrix_identities,
+        repositories,
+        runtime,
+    )?;
+    Ok((lifecycle, deletion))
+}
+
 fn build_account_deletion_worker(
     config: &ControlPlaneConfig,
     matrix: &Arc<SynapseAccountLifecycleGateway>,
+    matrix_identities: &Arc<MatrixApplicationServiceProvisioner>,
     repositories: &Arc<PostgresRepositories>,
     runtime: &Arc<SystemRuntime>,
 ) -> Result<account_deletion::AccountDeletionRuntime, StartupError> {
     let sign_in = build_sign_in_account_removal(config)?;
     let config = &config.account_lifecycle;
+    // 房主删除账户时他名下的房间交给管理员（R6）。
+    let rooms = Arc::new(OwnerHandoverService::new(OwnerHandoverDependencies {
+        store: repositories.clone(),
+        listings: repositories.clone(),
+        role_changes: repositories.clone(),
+        principals: repositories.clone(),
+        matrix: matrix_identities.clone(),
+        announcements: matrix_identities.clone(),
+        clock: runtime.clone(),
+    }));
     let worker = Arc::new(AccountDeletionWorker::new(
         AccountDeletionWorkerDependencies {
             repository: repositories.clone(),
             matrix: matrix.clone(),
             sign_in,
+            rooms,
             clock: runtime.clone(),
             lease_duration: domain_duration(config.lease_duration)?,
             initial_retry_delay: domain_duration(config.retry_initial)?,

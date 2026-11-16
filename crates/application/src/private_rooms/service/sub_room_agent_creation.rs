@@ -4,9 +4,10 @@
 //! 人，房间的设置得让 Agent 建，Agent 得是主人名下还在用的。只是分类按名字给：Agent 只知道名字，
 //! 没有这个分类就放进“未分类”，回答里说清楚，不替它新建分类（分类是管房间的人排的）。
 //!
-//! 网络 Agent 自己建的（第 2h 步）：父房间是它建的，它的合成主体就是房主，照上面办。它是凭口令或
-//! 敲门进的父房间时（2h-1b），它的合成主体不是里面的人：照 Agent 成员建，子房间里只有房主，它记成
-//! 这一间的 Agent 成员。它在这间房下面建过、没归档的同名子房间，再调一次回到那间。
+//! 网络 Agent 自己建的（第 2h 步）：父房间是它建的，它的合成主体就是房主，照上面办；这间房下面已经
+//! 有没归档的同名子房间（谁建的都算，房间是它的），再调一次回到那间。它是凭口令或敲门进的父房间时
+//! （2h-1b），它的合成主体不是里面的人：照 Agent 成员建，子房间里只有房主，它记成这一间的 Agent
+//! 成员；只回到它自己在这间房下面建过、没归档的同名子房间。
 
 use agent_room_domain::{
     sub_room_categories::sub_room_category_name_key, sub_rooms::sub_room_name_key,
@@ -41,6 +42,15 @@ impl AgentSubRoomCreation for PrivateRoomService {
     }
 }
 
+/// 同名再建时回到哪一间：谁建的才算。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SameNameCreator {
+    /// 只算它自己建的。
+    Itself,
+    /// 谁建的都算。
+    Anyone,
+}
+
 impl PrivateRoomService {
     pub(super) async fn create_agent_sub_room_internal(
         &self,
@@ -48,8 +58,19 @@ impl PrivateRoomService {
     ) -> PrivateRoomResult<AgentSubRoomCreated> {
         const OPERATION: &str = "sub_room.create_by_agent";
         let seat = self.agent_creator_seat(&request, OPERATION).await?;
-        if seat != SubRoomCreatorSeat::Member
-            && let Some(existing) = self.own_sub_room_named(&request, OPERATION).await?
+        // 网络 Agent 回到已有的同名子房间：它的房间里谁建的都算，凭口令进的房间里只算它建的。本机
+        // Agent 替主人建，和人在网页上建一样，撞了名字照实说。
+        let returns_to = match seat {
+            SubRoomCreatorSeat::AgentMember(_) => Some(SameNameCreator::Itself),
+            SubRoomCreatorSeat::Member
+                if matches!(request.actor, PrivateRoomActor::NetworkAgent(_)) =>
+            {
+                Some(SameNameCreator::Anyone)
+            }
+            SubRoomCreatorSeat::Member => None,
+        };
+        if let Some(creator) = returns_to
+            && let Some(existing) = self.sub_room_named(&request, creator, OPERATION).await?
         {
             return Ok(existing);
         }
@@ -115,23 +136,24 @@ impl PrivateRoomService {
         })
     }
 
-    /// 这个 Agent 成员在这间房下面建过、还没归档的同名子房间（不分大小写）。它的合成主体只代表它
-    /// 自己，按建的人认。
-    async fn own_sub_room_named(
+    /// 这间房下面还没归档的同名子房间（不分大小写）。Agent 成员的合成主体只代表它自己，只认它建的；
+    /// 网络 Agent 自己的房间里谁建的都算。
+    async fn sub_room_named(
         &self,
         request: &CreateAgentSubRoom,
+        creator: SameNameCreator,
         operation: &'static str,
     ) -> PrivateRoomResult<Option<AgentSubRoomCreated>> {
-        let creator = request.actor.principal_id();
+        let actor = request.actor.principal_id();
         let wanted = sub_room_name_key(&request.name);
         let entries = self
             .sub_rooms
-            .list_sub_rooms(request.parent_catalog_id, creator)
+            .list_sub_rooms(request.parent_catalog_id, actor)
             .await
             .map_err(|error| repository(operation, PrivateRoomFailureStage::Persistence, &error))?;
         let Some(entry) = entries.into_iter().find(|entry| {
             !entry.archived
-                && entry.created_by == creator
+                && (creator == SameNameCreator::Anyone || entry.created_by == actor)
                 && sub_room_name_key(&entry.name) == wanted
         }) else {
             return Ok(None);

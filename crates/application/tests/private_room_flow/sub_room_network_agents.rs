@@ -109,6 +109,26 @@ async fn 凭口令进来的网络_agent_自己建子房间_子房间里只有房
     assert_eq!(again.category, None);
 }
 
+/// 父房间是网络 Agent 自己建的：它的合成主体就是房主。房间是它的，谁建的同名子房间都回到那间。
+#[tokio::test]
+async fn 网络_agent_自己的房间里_谁建的同名子房间都回到那间() {
+    let rooms = Rooms::new();
+    rooms.agents.own(principal_id(OWNER), network_agent());
+    rooms
+        .create(MEMBER, 20, "Shared")
+        .await
+        .expect("成员建了一间");
+    let mut request = by_network(PARENT, 21, "shared");
+    request.actor =
+        PrivateRoomActor::NetworkAgent(device(principal_id(OWNER), "@user-0123abcd:matrix.test"));
+
+    let again = create(&rooms, request).await.expect("回到那间");
+
+    assert!(!again.created);
+    assert_eq!(again.room.catalog().id(), catalog_id(20));
+    assert!(!has_link(&rooms, 21), "没有另建");
+}
+
 #[tokio::test]
 async fn 别人建的同名子房间不算它的_照规矩说撞了名字() {
     let rooms = with_network_agent();

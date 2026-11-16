@@ -14,6 +14,7 @@ use crate::{
         MatrixAccountLifecycleGateway, MatrixFailure, MatrixFailureKind, MatrixUserId, OidcFailure,
         OidcFailureKind, PortFuture, SecretValue, SignInAccountRemoval,
     },
+    private_rooms::{DeletedOwnerRooms, OwnerHandoverFailure},
 };
 
 const DELETION_CONFIRMATION: &str = "DELETE";
@@ -268,6 +269,8 @@ pub struct AccountDeletionWorkerDependencies {
     pub repository: Arc<dyn AccountDeletionRepository>,
     pub matrix: Arc<dyn MatrixAccountLifecycleGateway>,
     pub sign_in: Arc<dyn SignInAccountRemoval>,
+    /// 他名下的房间交给管理员（R6），在停用外部账户以后、`finalize_local` 以前。
+    pub rooms: Arc<dyn DeletedOwnerRooms>,
     pub clock: Arc<dyn Clock>,
     pub lease_duration: DurationMillis,
     pub initial_retry_delay: DurationMillis,
@@ -278,6 +281,7 @@ pub struct AccountDeletionWorker {
     repository: Arc<dyn AccountDeletionRepository>,
     matrix: Arc<dyn MatrixAccountLifecycleGateway>,
     sign_in: Arc<dyn SignInAccountRemoval>,
+    rooms: Arc<dyn DeletedOwnerRooms>,
     clock: Arc<dyn Clock>,
     lease_duration: DurationMillis,
     initial_retry_delay: DurationMillis,
@@ -290,6 +294,7 @@ impl AccountDeletionWorker {
             repository: dependencies.repository,
             matrix: dependencies.matrix,
             sign_in: dependencies.sign_in,
+            rooms: dependencies.rooms,
             clock: dependencies.clock,
             lease_duration: dependencies.lease_duration,
             initial_retry_delay: dependencies.initial_retry_delay,
@@ -321,7 +326,7 @@ impl AccountDeletionWorker {
             claim.stage,
             crate::ports::AccountDeletionStage::FederatedDeactivation
         ) {
-            if let Err(failure_code) = self.close_external_accounts(&claim).await {
+            if let Err(failure_code) = self.leave_behind(&claim).await {
                 let retry_at = now
                     .checked_add(self.retry_delay(claim.attempt_count))
                     .map_err(|_| {
@@ -350,8 +355,10 @@ impl AccountDeletionWorker {
         Ok(AccountDeletionWorkerOutcome::Completed(claim.job_id))
     }
 
-    /// 先删登录服务里的账户（之后就登录不了），再停用并擦除聊天账户。两步都能重放，失败时返回失败码。
-    async fn close_external_accounts(
+    /// 先删登录服务里的账户（之后就登录不了），再停用并擦除聊天账户，最后把他名下的房间交给管理员、
+    /// 他当管理员的房间记成离开（R6）。三步都能重放，失败时返回失败码。都做完了才进匿名化那一步：
+    /// 那一步只归档房主此刻还是他的房间。
+    async fn leave_behind(
         &self,
         claim: &crate::ports::AccountDeletionClaim,
     ) -> Result<(), &'static str> {
@@ -362,7 +369,12 @@ impl AccountDeletionWorker {
         self.matrix
             .deactivate_and_erase(&claim.matrix_user_id)
             .await
-            .map_err(matrix_failure_code)
+            .map_err(matrix_failure_code)?;
+        self.rooms
+            .hand_over_rooms_of(claim.principal_id, &claim.matrix_user_id)
+            .await
+            .map(|_| ())
+            .map_err(OwnerHandoverFailure::code)
     }
 
     fn retry_delay(&self, completed_attempts: u16) -> DurationMillis {

@@ -11,6 +11,7 @@ use super::{
     ControlPlaneProxy, ProxyResponseHead, decode_request, rejects_session, request_frame,
     request_headers, response_headers, webview_origin,
 };
+use crate::closed_port_test_support::ClosedPort;
 
 fn proxy(base: &str) -> ControlPlaneProxy {
     ControlPlaneProxy::new(Url::parse(base).expect("测试根地址有效")).expect("可建出代理")
@@ -255,11 +256,8 @@ fn 只有_401_而且错误码是登录无效才算登录被拒() {
 
 #[tokio::test]
 async fn 控制面连不上时是可重试的失败() {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("可绑定回环端口");
-    let address = listener.local_addr().expect("可读本机地址");
-    drop(listener);
+    let closed = ClosedPort::reserve();
+    let address = closed.address();
     let request = frame(
         &json!({ "method": "GET", "path": "health/ready", "headers": [] }),
         b"",

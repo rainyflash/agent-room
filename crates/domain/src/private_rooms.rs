@@ -914,6 +914,46 @@ impl PrivateRoom {
         Ok(true)
     }
 
+    /// 房主删除了账户（`specs/redesign/room-roles.md` 的“房主不在了（R6）”）：不经过谁，把房间交给
+    /// `successor`，挑谁见 [`crate::owner_handover::handover_candidates`]。他得是已加入、有“管理”的
+    /// 成员；交出去以后他是房主、权限全有，原房主记成移出、权限清零（人已经不在了，留着“已加入”会让
+    /// 名单和人数都不对）。`successor` 就是房主时什么都不改。
+    ///
+    /// # Errors
+    ///
+    /// 房间已归档、`successor` 不是已加入的管理员，或版本用尽时返回错误。
+    pub fn hand_over_from_deleted_owner(&mut self, successor: PrincipalId) -> DomainResult<bool> {
+        self.ensure_active("ownership_transferred")?;
+        let former = self.owner_principal_id;
+        if successor == former {
+            return Ok(false);
+        }
+        let Some(member) = self.members.get(&successor) else {
+            return Err(invalid_member_transition("absent", "owner"));
+        };
+        if !member.has_joined() || !member.permissions.manage() {
+            return Err(invalid_member_transition(member.status.as_str(), "owner"));
+        }
+        if !self.members.contains_key(&former) {
+            return Err(invariant("private_room", "房主成员事实缺失"));
+        }
+        let next_version = self.next_version()?;
+        self.members
+            .get_mut(&former)
+            .ok_or_else(|| invariant("private_room", "房主成员事实缺失"))?
+            .replace(
+                PrivateRoomMembershipStatus::Removed,
+                PrivateRoomPermissions::NONE,
+            );
+        self.members
+            .get_mut(&successor)
+            .ok_or_else(|| invariant("private_room", "已验证的新房主成员必须存在"))?
+            .permissions = PrivateRoomPermissions::ALL;
+        self.owner_principal_id = successor;
+        self.version = next_version;
+        Ok(true)
+    }
+
     /// 只有房主能给还在使用中的房间改名。
     ///
     /// # Errors
@@ -1656,6 +1696,54 @@ mod tests {
         assert!(room.allows(principal(2), PrivateRoomCapability::Manage));
         assert!(room.leave(principal(2)).is_err());
         assert!(room.leave(principal(1)).expect("原房主现在可以离开"));
+    }
+
+    #[test]
+    fn 房主删除账户_房间交给已加入的管理员_原房主记成移出() {
+        let mut room = room();
+        room.invite(principal(1), principal(2), admin_permissions())
+            .expect("房主能请管理员");
+        room.accept_invitation(principal(2)).expect("接受邀请");
+        let before = room.version();
+
+        assert!(
+            room.hand_over_from_deleted_owner(principal(2))
+                .expect("能交给已加入的管理员")
+        );
+        assert_eq!(room.owner_principal_id(), principal(2));
+        assert_eq!(
+            room.member(principal(2))
+                .map(PrivateRoomMember::permissions),
+            Some(PrivateRoomPermissions::ALL)
+        );
+        let former = room.member(principal(1)).expect("原房主还在名单里");
+        assert_eq!(former.status(), PrivateRoomMembershipStatus::Removed);
+        assert_eq!(former.permissions(), PrivateRoomPermissions::NONE);
+        assert!(room.version() > before);
+        assert!(
+            !room
+                .hand_over_from_deleted_owner(principal(2))
+                .expect("已经是房主")
+        );
+    }
+
+    #[test]
+    fn 房主删除账户_只交给已加入的管理员_归档了的不交() {
+        let mut room = room();
+        join(&mut room, principal(2));
+        room.invite(principal(1), principal(3), admin_permissions())
+            .expect("房主能请管理员");
+        for target in [principal(2), principal(3), principal(4)] {
+            assert!(
+                room.hand_over_from_deleted_owner(target).is_err(),
+                "普通成员、还没进来的管理员、不在名单里的都不行"
+            );
+        }
+        assert_eq!(room.owner_principal_id(), principal(1));
+
+        room.accept_invitation(principal(3)).expect("接受邀请");
+        assert!(room.archive(principal(1)).expect("房主可归档"));
+        assert!(room.hand_over_from_deleted_owner(principal(3)).is_err());
     }
 
     #[test]

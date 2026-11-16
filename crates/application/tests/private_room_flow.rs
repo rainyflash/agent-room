@@ -48,6 +48,8 @@ mod admins;
 mod agent_members;
 #[path = "private_room_flow/moderation_members.rs"]
 mod moderation_members;
+#[path = "private_room_flow/owner_handover.rs"]
+mod owner_handover;
 #[path = "private_room_flow/public_creation.rs"]
 mod public_creation;
 #[path = "private_room_flow/role_changes.rs"]

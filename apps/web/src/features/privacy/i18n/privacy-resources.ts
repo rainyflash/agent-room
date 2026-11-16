@@ -113,7 +113,7 @@ export const privacyResources = {
     'privacy.delete.how':
       'Open Settings → Account. “Download my data” saves your profile, computers, agents, rooms, requests to join, changes to your role in rooms and role changes you made, rooms you handed to an agent and the notes it wrote there, the sub-rooms you made, look after or archived and the categories you made for them, reports, plus a list of your files, as a JSON file. Messages aren’t included. “Delete account” asks you to sign in again if you haven’t in the last few minutes, then to type DELETE.',
     'privacy.delete.removed':
-      'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files, the text of your messages, your requests to join, the rules you gave agents for looking after rooms and the notes they wrote, and the record that you look after a sub-room, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. Private rooms and agents that only you owned are closed.',
+      'Deleting your account signs you out everywhere and removes your computers’ access. It deletes your sign-in account (email address, nickname and password), your files, the text of your messages, your requests to join, the rules you gave agents for looking after rooms and the notes they wrote, and the record that you look after a sub-room, and closes your chat account, so what you said is hidden from anyone who joins your rooms later. A private room you own goes to the person who has been an admin there the longest, and the room says who took over; your private rooms without an admin, and agents that only you owned, are closed. Rooms where you were an admin record that you left.',
     'privacy.delete.kept':
       'Some things stay: copies that people and agents in your rooms already received, copies on other Matrix servers, the records of role changes in rooms and of who made or archived a sub-room or made a category (without your name), backups for up to 30 days, and a short record that the deletion happened, without your name or email, so that it’s applied again if a backup is ever restored.',
     'privacy.contact.title': 'Questions and requests',
@@ -234,7 +234,7 @@ export const privacyResources = {
     'privacy.delete.how':
       '打开“设置 → 账户”。“下载我的数据”把你的资料、电脑、Agent、房间、加入申请、你在房间里的身份变动和你改过的身份、交给 Agent 管的房间和 Agent 在那里写下的理由、你建的、在管的、归档的子房间和你建的分类、举报和文件清单存成一个 JSON 文件，消息不在里面；“删除账户”会先请你重新登录（几分钟内登录过就不用），再输入 DELETE 确认。',
     'privacy.delete.removed':
-      '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件、消息正文、加入申请、交给 Agent 管房间时写的规则和 Agent 写下的理由、你在管哪几间子房间的记录都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。只有你拥有的私人房间和 Agent 会关闭。',
+      '删除账户后，所有设备都会退出登录，电脑的授权失效；登录账户（邮箱、昵称和密码）、你的文件、消息正文、加入申请、交给 Agent 管房间时写的规则和 Agent 写下的理由、你在管哪几间子房间的记录都会删除；聊天账户会关闭，之后加入你房间的人看不到你说过的话。你名下的私人房间交给在那里当管理员最久的人，房间里会写一句交给了谁；没有管理员的私人房间和只有你拥有的 Agent 会关闭。你当管理员的房间里记一笔你离开了。',
     'privacy.delete.kept':
       '仍会留下的：房间里的人和 Agent 已经收到的副本、其他 Matrix 服务器上的副本、房间里的身份变动记录和谁建的、谁归档的子房间、谁建的分类（不再带你的名字）、最多 30 天的备份，以及一条不含名字和邮箱的删除记录，万一从备份恢复，会据此再删一次。',
     'privacy.contact.title': '问题和请求',

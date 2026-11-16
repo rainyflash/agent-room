@@ -7,6 +7,7 @@ use agent_room_application::ports::{
 };
 use agent_room_domain::{
     error::DomainError,
+    owner_handover::AdminTenure,
     room_role_changes::{RoomStanding, standing_changes},
 };
 
@@ -96,6 +97,160 @@ async fn 身份变动跟着房间一起存_读回来新的在前_没存成的不
     assert_eq!(latest, [all[0].clone()]);
 
     assert_exports(&repositories, catalog, owner, member).await;
+
+    database.close().await;
+}
+
+/// 房主删除账户时挑谁接手（R6）：每位已加入的管理员最近一次拿到“管理”的时间。没有记录的（R3 以前
+/// 就是管理员，这里用不记的 `save` 摆出来）为空；撤了又设的算后来那一次；受邀还没进来的、普通成员不在。
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 管理员各当了多久_看最近一次拿到管理_没有记录的为空() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "tenure-owner").await;
+    let veteran = seed_principal(&database.runtime, "tenure-veteran").await;
+    let returning = seed_principal(&database.runtime, "tenure-returning").await;
+    let invited = seed_principal(&database.runtime, "tenure-invited").await;
+    let member = seed_principal(&database.runtime, "tenure-member").await;
+    let catalog = create_room(&repositories, owner).await;
+    let mut clock = 0;
+    for person in [veteran, returning, member] {
+        change(&repositories, catalog, owner, &mut clock, |room| {
+            room.invite(owner, person, ordinary_permissions())
+        })
+        .await;
+        change(&repositories, catalog, person, &mut clock, |room| {
+            room.accept_invitation(person)
+        })
+        .await;
+    }
+
+    // R3 以前设的管理员：只存房间、不记。
+    let before = load(&repositories, catalog).await;
+    let mut promoted = before.clone();
+    promoted
+        .update_permissions(owner, veteran, admin_permissions())
+        .expect("房主能设");
+    clock += 1;
+    PrivateRoomStore::save(&repositories, &promoted, before.version(), time(clock))
+        .await
+        .expect("存得进去");
+
+    // 设、撤、再设：算最后那一次。
+    for permissions in [
+        admin_permissions(),
+        ordinary_permissions(),
+        admin_permissions(),
+    ] {
+        change(&repositories, catalog, owner, &mut clock, |room| {
+            room.update_permissions(owner, returning, permissions)
+        })
+        .await;
+    }
+    let returned_at = time(clock);
+    change(&repositories, catalog, owner, &mut clock, |room| {
+        room.invite(owner, invited, admin_permissions())
+    })
+    .await;
+
+    let tenure = RoomRoleChangeLog::admin_tenure(&repositories, catalog)
+        .await
+        .expect("可读");
+    let of = |principal: PrincipalId| {
+        tenure
+            .iter()
+            .find(|entry| entry.principal_id == principal)
+            .copied()
+    };
+    assert_eq!(tenure.len(), 3, "房主和两位管理员：{tenure:?}");
+    assert!(of(owner).is_some(), "房主也在，挑的时候去掉");
+    assert!(of(invited).is_none() && of(member).is_none());
+    assert!(matches!(
+        of(veteran),
+        Some(AdminTenure {
+            admin_since: None,
+            ..
+        })
+    ));
+    assert_eq!(
+        of(returning).and_then(|entry| entry.admin_since),
+        Some(returned_at)
+    );
+
+    database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房主删除账户时交出去的房间_没有动手的人_目录里的房主跟着换() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "handover-owner").await;
+    let admin = seed_principal(&database.runtime, "handover-admin").await;
+    let catalog = create_room(&repositories, owner).await;
+    let mut clock = 0;
+    change(&repositories, catalog, owner, &mut clock, |room| {
+        room.invite(owner, admin, admin_permissions())
+    })
+    .await;
+    change(&repositories, catalog, admin, &mut clock, |room| {
+        room.accept_invitation(admin)
+    })
+    .await;
+
+    // 照交房间的用例存：不经过谁，身份变动记成没有动手的人。
+    let before = load(&repositories, catalog).await;
+    let mut handed = before.clone();
+    assert!(
+        handed
+            .hand_over_from_deleted_owner(admin)
+            .expect("交得出去")
+    );
+    let unattended: Vec<_> = standing_changes(&before, &handed)
+        .into_iter()
+        .map(|change| RoomRoleChange {
+            actor: None,
+            change,
+        })
+        .collect();
+    assert_eq!(
+        PrivateRoomListingStore::save_transferred_room_recording(
+            &repositories,
+            &handed,
+            before.version(),
+            time(clock + 1),
+            &unattended,
+        )
+        .await
+        .expect("写入不报错"),
+        PrivateRoomListingSaveOutcome::Saved
+    );
+
+    // 删除账户最后一步只归档目录里房主还是他的房间：这一间目录里的房主换了，它不再碰。
+    let catalog_owner: Uuid = sqlx::query_scalar(
+        "SELECT owner_principal_id FROM agent_room.room_catalog_entry WHERE id = $1",
+    )
+    .bind(catalog.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可读");
+    assert_eq!(PrincipalId::from_uuid(catalog_owner), admin);
+    let room = load(&repositories, catalog).await;
+    assert_eq!(room.owner_principal_id(), admin);
+    let records = recent(&repositories, catalog).await;
+    let unattended: Vec<_> = records
+        .iter()
+        .filter(|record| record.actor.is_none())
+        .collect();
+    assert_eq!(unattended.len(), 2, "{records:?}");
+    assert!(unattended.iter().any(|record| record.target == owner
+        && record.next.status == PrivateRoomMembershipStatus::Removed));
+    assert!(
+        unattended
+            .iter()
+            .any(|record| record.target == admin && record.next.owner)
+    );
 
     database.close().await;
 }
