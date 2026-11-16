@@ -1,4 +1,5 @@
 import { Crown, Pin } from 'lucide-react';
+import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -18,8 +19,9 @@ export type RoomNoticeChangeLineProps = {
 };
 
 /**
- * 对话里按时间夹着的一行：“某某更新了公告”“某某撤掉了公告”，或者房主删除了账户、“房间交给了某某”。
- * 公告本身在对话上方那一条里看。
+ * 对话里按时间夹着的一行：“某某改了须知”“某某撤掉了须知”，或者房主删除了账户、“房间交给了某某”。
+ * 改了须知的那一行点开看这一次改成了什么（`specs/redesign/brief-and-pins.md`“记录”）：正文就在那条状态
+ * 事件里，往前那几行就是以前的版本，不另做历史页。当前的须知在对话上方那一条里看。
  */
 export function RoomNoticeChangeLine({
   change,
@@ -28,19 +30,43 @@ export function RoomNoticeChangeLine({
   time,
 }: RoomNoticeChangeLineProps) {
   const { t } = useTranslation();
+  const versionId = useId();
+  const [open, setOpen] = useState(false);
   const handover = change.kind === 'owner_handover';
   const { key, name } = handover
     ? ownerHandoverLabel(change, names, selfMatrixUserId)
     : noticeChangeLabel(change, names, selfMatrixUserId);
   const text = name === undefined ? t(key) : t(key, { name });
+  const version = change.kind === 'updated' && change.text !== '' ? change.text : null;
   return (
-    <p className="room-notice-change">
-      {handover ? <Crown aria-hidden="true" /> : <Pin aria-hidden="true" />}
-      <span>{text}</span>
-      <time dateTime={new Date(change.serverTimestamp).toISOString()}>
-        {time.format(change.serverTimestamp)}
-      </time>
-    </p>
+    <div className="room-notice-change">
+      <p className="room-notice-change__line">
+        {handover ? <Crown aria-hidden="true" /> : <Pin aria-hidden="true" />}
+        <span>{text}</span>
+        <time dateTime={new Date(change.serverTimestamp).toISOString()}>
+          {time.format(change.serverTimestamp)}
+        </time>
+        {version === null ? null : (
+          <button
+            aria-controls={versionId}
+            aria-expanded={open}
+            className="room-notice-change__toggle"
+            onClick={() => {
+              setOpen(!open);
+            }}
+            type="button"
+          >
+            {t(open ? 'roomNotice.change.hideVersion' : 'roomNotice.change.showVersion')}
+          </button>
+        )}
+      </p>
+      {version === null ? null : (
+        <div className="room-notice-change__version" hidden={!open} id={versionId}>
+          <p className="room-notice-change__version-label">{t('roomNotice.change.versionLabel')}</p>
+          <p className="room-notice-change__version-text">{version}</p>
+        </div>
+      )}
+    </div>
   );
 }
 

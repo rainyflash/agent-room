@@ -8,7 +8,13 @@ function message(id: string, serverTimestamp: number): RoomMessageSignal {
 }
 
 function change(id: string, serverTimestamp: number): RoomStateLine {
-  return { kind: 'updated', matrixEventId: id, serverTimestamp, updatedBy: '@owner:matrix.test' };
+  return {
+    kind: 'updated',
+    matrixEventId: id,
+    serverTimestamp,
+    text: 'Be kind.',
+    updatedBy: '@owner:matrix.test',
+  };
 }
 
 function handover(id: string, serverTimestamp: number): RoomStateLine {

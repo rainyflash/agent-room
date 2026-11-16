@@ -22,6 +22,7 @@ import {
 import { PrivateRoomAgentAccess } from '@/features/private-rooms/ui/private-room-agent-access';
 import { PrivateRoomMembers } from '@/features/private-rooms/ui/private-room-members';
 import { PrivateRoomPublicSettings } from '@/features/private-rooms/ui/private-room-public-settings';
+import type { LobbyMemberName } from '@/features/lobby/domain/lobby';
 import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import { RoomNoticeEditor } from '@/features/room-notice/ui/room-notice-editor';
 import type { WebSession } from '@/features/session/domain/session';
@@ -66,8 +67,10 @@ export type RoomSettingsDialogProps = {
   readonly catalogId: string;
   readonly roomName: string;
   readonly principal: WebSession;
-  /** 房间状态里此刻的常驻公告，“公告”一节拿它当底稿。 */
+  /** 房间状态里此刻的须知，“须知”一节拿它当底稿。 */
   readonly notice?: RoomNotice | undefined;
+  /** 房间里的人的昵称，“须知”一节写上次谁改的。 */
+  readonly memberNames?: readonly LobbyMemberName[] | undefined;
   /** 打开时先看哪一节；不给就是第一节。 */
   readonly initialSection?: RoomSettingsSection | undefined;
   readonly onClose: () => void;
@@ -95,6 +98,7 @@ export function RoomSettingsDialog({
   roomName,
   principal,
   notice,
+  memberNames,
   initialSection,
   onClose,
   onExitRoom,
@@ -209,6 +213,7 @@ export function RoomSettingsDialog({
               <RoomSettingsContent
                 canManageRoom={canManageRoom}
                 catalogId={catalogId}
+                memberNames={memberNames}
                 notice={notice}
                 onClose={onClose}
                 onExitRoom={onExitRoom}
@@ -235,6 +240,7 @@ function RoomSettingsContent({
   principal,
   room,
   notice,
+  memberNames,
   onClose,
   onExitRoom,
   parentRoom,
@@ -245,6 +251,7 @@ function RoomSettingsContent({
   readonly catalogId: string;
   readonly roomName: string;
   readonly notice: RoomNotice | undefined;
+  readonly memberNames: readonly LobbyMemberName[] | undefined;
   readonly principal: WebSession;
   readonly room: PrivateRoom | null;
   readonly onClose: () => void;
@@ -330,7 +337,13 @@ function RoomSettingsContent({
       );
     case 'notice':
       return roomNotices === undefined ? null : (
-        <RoomNoticeEditor catalogId={catalogId} gateway={roomNotices} notice={notice} />
+        <RoomNoticeEditor
+          catalogId={catalogId}
+          gateway={roomNotices}
+          memberNames={memberNames}
+          notice={notice}
+          selfMatrixUserId={principal.matrixUserId}
+        />
       );
     case 'agent-code':
       return room === null ? null : (

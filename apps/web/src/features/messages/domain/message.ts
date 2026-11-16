@@ -122,11 +122,15 @@ export type ReadOnlyFederatedEvent = {
   readonly serverTimestamp: number;
 };
 
-/** 房间公告改了一次（`room.notice.v1` 的状态事件），对话里按时间写一行“某某更新了公告”。 */
+/**
+ * 房间须知改了一次（`room.notice.v1` 的状态事件），对话里按时间写一行“某某改了须知”，点开看这一版。
+ */
 export type RoomNoticeChange = {
   readonly kind: 'updated' | 'removed';
   readonly matrixEventId: string;
   readonly serverTimestamp: number;
+  /** 这一次改成的正文；撤掉的是空的。 */
+  readonly text: string;
   /** 改的人在 Matrix 上的 ID。 */
   readonly updatedBy: string;
 };
@@ -143,7 +147,7 @@ export type RoomOwnerHandover = {
   readonly serverTimestamp: number;
 };
 
-/** 对话里按时间夹在消息中间的一行：公告改了，或者房间换了房主。 */
+/** 对话里按时间夹在消息中间的一行：须知改了，或者房间换了房主。 */
 export type RoomStateLine = RoomNoticeChange | RoomOwnerHandover;
 
 /**

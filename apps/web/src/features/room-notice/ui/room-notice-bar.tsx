@@ -3,15 +3,17 @@ import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { LobbyMemberName } from '@/features/lobby/domain/lobby';
-import { markNoticeSeen, seenNoticeAt } from '@/features/room-notice/data/seen-notices';
 import type { RoomNotice } from '@/features/room-notice/domain/room-notice';
 import { formatDateTime } from '@/shared/i18n/formatters';
+
+import { noticeAuthor } from './notice-author';
+import { useBriefSeen } from './use-brief-seen';
 
 import './room-notice-bar.css';
 
 export type RoomNoticeBarProps = {
   readonly notice: RoomNotice;
-  /** Matrix 房间 ID：看过哪一版按它记在本机。换了房间要换一个组件（`key`）。 */
+  /** Matrix 房间 ID：看过哪一版按它记在个人工作区。换了房间要换一个组件（`key`）。 */
   readonly roomId: string;
   readonly memberNames?: readonly LobbyMemberName[] | undefined;
   /** 这台设备上登录的人；自己改的不算没看过。 */
@@ -21,8 +23,8 @@ export type RoomNoticeBarProps = {
 };
 
 /**
- * 对话上方的“公告”一条（`specs/public-rooms/design.md`“常驻公告”）：平时只显示开头两行，点开看全文和
- * 谁什么时候改的。改了以后你还没点开看过的，亮一个点。
+ * 对话上方的“须知”一条（`specs/redesign/brief-and-pins.md`）：平时只显示开头两行，点开看全文和
+ * 谁什么时候改的。改了以后你还没点开看过的，亮一个点；看没看过记在个人工作区里，换设备也算。
  */
 export function RoomNoticeBar({
   notice,
@@ -34,21 +36,16 @@ export function RoomNoticeBar({
   const { t, i18n } = useTranslation();
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
-  const [seenAt, setSeenAt] = useState(() => seenNoticeAt(roomId));
+  const { seenAt, known, markSeen } = useBriefSeen(roomId);
   const unseen =
-    notice.updatedBy !== selfMatrixUserId && (seenAt === null || seenAt < notice.updatedAtUnixMs);
+    known &&
+    notice.updatedBy !== selfMatrixUserId &&
+    (seenAt === null || seenAt < notice.updatedAtUnixMs);
   const toggle = (): void => {
-    if (!expanded) {
-      markNoticeSeen(roomId, notice.updatedAtUnixMs);
-      setSeenAt(notice.updatedAtUnixMs);
-    }
+    if (!expanded) markSeen(notice.updatedAtUnixMs);
     setExpanded(!expanded);
   };
-  const author =
-    notice.updatedBy === selfMatrixUserId
-      ? t('roomNotice.you')
-      : (memberNames?.find((member) => member.matrixUserId === notice.updatedBy)?.displayName ??
-        t('roomNotice.someone'));
+  const author = noticeAuthor(t, notice.updatedBy, memberNames, selfMatrixUserId);
 
   return (
     <section aria-label={t('roomNotice.label')} className="room-notice">

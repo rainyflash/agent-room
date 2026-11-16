@@ -247,7 +247,7 @@ describe('MatrixMessageGateway', () => {
     expect(Object.isFrozen(result.value.readOnlyFederatedEvents)).toBe(true);
   });
 
-  it('公告和换了房主的状态事件各变成一行；我们自己的房间状态不列成看不懂的事件，同类型的普通事件照旧列', () => {
+  it('须知和换了房主的状态事件各变成一行，改了须知的那一行带着这一版；我们自己的房间状态不列成看不懂的事件，同类型的普通事件照旧列', () => {
     const room = snapshot([
       noticeState('$notice', 300, '只在被点名时说话。'),
       handoverState('$handover', 330, '@admin:agent-room.test'),
@@ -273,6 +273,7 @@ describe('MatrixMessageGateway', () => {
         kind: 'updated',
         matrixEventId: '$notice',
         serverTimestamp: 300,
+        text: '只在被点名时说话。',
         updatedBy: '@owner:agent-room.test',
       },
       {
@@ -285,6 +286,7 @@ describe('MatrixMessageGateway', () => {
         kind: 'removed',
         matrixEventId: '$removed',
         serverTimestamp: 400,
+        text: '',
         updatedBy: '@owner:agent-room.test',
       },
     ]);

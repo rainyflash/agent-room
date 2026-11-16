@@ -4,9 +4,10 @@ import type { PrivateRoomFailure } from '@/features/private-rooms/domain/private
 import type { Result } from '@/shared/result';
 
 /**
- * 房间的常驻公告（`specs/public-rooms/design.md`“常驻公告”）：房主和管理员写的一段纯文本，挂在对话上方，
+ * 房间须知（以前叫公告，`specs/redesign/brief-and-pins.md`）：房主和管理员写的一段纯文本，挂在对话上方，
  * 每间房一条，新写的盖掉旧的，清空就是撤掉。由控制面以应用服务写进房间状态；私人房间和公开房间的
- * `state_default` 是管理员那一级，只有应用服务够得着，所以房间状态里有的就是控制面写的。
+ * `state_default` 是管理员那一级，只有应用服务够得着，所以房间状态里有的就是控制面写的。代码里照旧叫 notice，
+ * 房间状态的类型也不改。
  */
 export const roomNoticeEventType = 'io.github.rainyflash.agentroom.room.notice.v1';
 
@@ -65,18 +66,34 @@ export function parseRoomNotice(content: unknown): RoomNotice | undefined {
   });
 }
 
-/** 公告的一次改动：写了新的，或者撤掉了（正文是空的）。 */
+/** 须知的一次改动：写了新的，或者撤掉了（正文是空的）。 */
 export type RoomNoticeChangeKind = 'updated' | 'removed';
 
-/** 状态事件里这次是写还是撤、谁改的。读不出来的、超长的不算一次改动。 */
-export function parseRoomNoticeChange(
-  content: unknown,
-): { readonly kind: RoomNoticeChangeKind; readonly updatedBy: string } | undefined {
+/**
+ * 状态事件里这次是写还是撤、谁改的、改成了什么（撤掉的是空的）。读不出来的、超长的不算一次改动。
+ * 每一版的正文本来就在那条状态事件里，对话里那一行点开看的就是它，不另存。
+ */
+export function parseRoomNoticeChange(content: unknown):
+  | {
+      readonly kind: RoomNoticeChangeKind;
+      readonly text: string;
+      readonly updatedBy: string;
+    }
+  | undefined {
   const parsed = noticeStateSchema.safeParse(content);
   if (!parsed.success) return undefined;
   const text = parsed.data.text.trim();
   if (characterCount(text) > ROOM_NOTICE_MAX_CHARACTERS) return undefined;
-  return { kind: text === '' ? 'removed' : 'updated', updatedBy: parsed.data.updatedBy };
+  return { kind: text === '' ? 'removed' : 'updated', text, updatedBy: parsed.data.updatedBy };
+}
+
+/**
+ * 看过哪一版须知，记在个人工作区的 `acknowledged` 里的键（值是看过的那一版改的时间）。收件箱的键是消息的，
+ * 不会撞。键最长 512，房间 ID 长到放不下时返回 null，只记在这个浏览器里。
+ */
+export function briefSeenKey(roomId: string): string | null {
+  const key = `brief:${roomId}`;
+  return key.length > 512 ? null : key;
 }
 
 export type RoomNoticeProblem = 'control_character' | 'too_long';
