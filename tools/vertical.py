@@ -86,6 +86,9 @@ LOCAL_ROOM_OWNER_SPOKE: Final = VERTICAL_ROOT / "local-agent-room-owner-spoke.js
 ROOM_PEOPLE_JOINED: Final = VERTICAL_ROOT / "room-people-joined.json"
 ROOM_PEOPLE_SPOKE: Final = VERTICAL_ROOT / "room-people-spoke.json"
 ROOM_PEOPLE_CHECKED: Final = VERTICAL_ROOT / "room-people-checked.json"
+SUB_ROOMS_JOINED: Final = VERTICAL_ROOT / "sub-rooms-joined.json"
+SUB_ROOMS_SPOKE: Final = VERTICAL_ROOT / "sub-rooms-spoke.json"
+SUB_ROOMS_CHECKED: Final = VERTICAL_ROOT / "sub-rooms-checked.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 # 公开房间那一轮：网页上走完了，记下是哪间房。
 PUBLIC_ROOM_RESULT: Final = VERTICAL_ROOT / "public-room.json"
@@ -3786,6 +3789,77 @@ def verify_room_people(
         )
     browser.finish(timeout_seconds=120)
     return {"roomPeopleAgentEventId": event_id}
+
+
+SUB_ROOMS_WEB_PARENT: Final = "Vertical Sub-room Studio"
+SUB_ROOMS_WEB_OPEN: Final = "Plans"
+SUB_ROOMS_WEB_REQUEST: Final = "Reviews"
+SUB_ROOMS_WEB_CATEGORY: Final = "Ops"
+SUB_ROOMS_WEB_AGENT: Final = "Vertical Sub-room Agent"
+
+
+def verify_sub_rooms_in_web(
+    *,
+    person_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """子房间在网页上（specs/redesign/sub-rooms.md 第 2k-2a 步）：第二个账号在真实网页上建房间、建分类，在下面
+    开一间直接能进的、一间要申请的；验收账号凭邀请链接进来。他的本机 Agent 按“父房间名/子房间名”进直接能进的
+    那间说一句，他自己也就跟着进去了，两边网页都解开；他申请另一间，房主在子房间设置里批准，他进去说话。
+    网页和这边靠三个文件对步子（sub-rooms.e2e.ts）。"""
+    for path in (SUB_ROOMS_JOINED, SUB_ROOMS_SPOKE, SUB_ROOMS_CHECKED):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_USERNAME": "collaborator",
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_PASSWORD": required_value(
+                environment, "SEED_MEMBER_PASSWORD"
+            ),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_PARENT": SUB_ROOMS_WEB_PARENT,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_OPEN": SUB_ROOMS_WEB_OPEN,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_REQUEST": SUB_ROOMS_WEB_REQUEST,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_CATEGORY": SUB_ROOMS_WEB_CATEGORY,
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_JOINED": str(SUB_ROOMS_JOINED),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_SPOKE": str(SUB_ROOMS_SPOKE),
+            "AGENT_ROOM_VERTICAL_SUB_ROOMS_CHECKED": str(SUB_ROOMS_CHECKED),
+        }
+    )
+    browser = BrowserRun("sub-rooms.e2e.ts", playwright_environment)
+    joined = wait_for_browser_step(
+        SUB_ROOMS_JOINED, browser, timeout_seconds=600, failure="子房间那一轮 10 分钟内没建好房间、没凭链接加入。"
+    )
+    open_catalog = require_text(joined.get("openCatalogId"), "直接能进的子房间号")
+    with bridge_mcp_client(person_bridge, redactor) as transport:
+        entered = transport.call_tool(
+            "agent_room_join",
+            {
+                "room": f"{SUB_ROOMS_WEB_PARENT}/{SUB_ROOMS_WEB_OPEN}",
+                "displayName": SUB_ROOMS_WEB_AGENT,
+            },
+        )
+        room = require_object(entered.get("room"), "他的 Agent 进的子房间")
+        if room.get("catalogId") != open_catalog:
+            raise VerticalFailure("他的 Agent 按“父房间名/子房间名”进了别的房间。")
+        agent = transport.bind_session(require_text(entered.get("sessionId"), "他的 Agent 的会话"))
+        room_id = wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"]
+        text = f"Hello from the sub-room agent ({new_uuid_v7()[-8:]})."
+        event_id = say_in_room(agent, room_id, text)
+        SUB_ROOMS_SPOKE.write_text(
+            json.dumps({"agentName": SUB_ROOMS_WEB_AGENT, "text": text}) + "\n", encoding="utf-8"
+        )
+        wait_for_browser_step(
+            SUB_ROOMS_CHECKED,
+            browser,
+            timeout_seconds=600,
+            failure="子房间那一轮 10 分钟内没看到 Agent 说的话，或者没批准进另一间。",
+        )
+    browser.finish(timeout_seconds=120)
+    return {"subRoomsWebOpenCatalogId": open_catalog, "subRoomsWebAgentEventId": event_id}
 
 
 PUBLIC_ROOM_NAME: Final = "Vertical Public Room"
