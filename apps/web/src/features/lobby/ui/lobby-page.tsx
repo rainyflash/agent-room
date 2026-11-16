@@ -1008,6 +1008,7 @@ function ReadyLobby({
                         <SubRoomBrowser
                           list={family}
                           onCreate={createSubRoom}
+                          onOpenSettings={subRoomMenu?.onOpenSettings ?? null}
                           onOpenDoor={(subRoomId) => {
                             pageFocus.current = 'opened';
                             onOpenDoor(subRoomId);

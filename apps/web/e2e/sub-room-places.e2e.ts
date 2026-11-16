@@ -690,6 +690,42 @@ test('左栏那一行的“⋯”：不是房主的人能退出一间，退了�
   expect(failures).toEqual([]);
 });
 
+test('浏览子房间：管得了的那几行后面有齿轮，你没进的那一间也能改名字、换分类', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${parentRoom}&view=sub-rooms`);
+  const browser = page.locator('.sub-room-browser');
+  // 你是整间房的房主：每一间都管得了，你没进去的也一样。
+  await expect(browser.getByRole('button', { name: /^Settings for /u })).toHaveCount(6);
+  const gear = browser.getByRole('button', { name: 'Settings for Not mine' });
+  await gear.click();
+  const settings = page.getByRole('dialog', { name: 'Sub-room settings' });
+  await expect(settings).toHaveAccessibleDescription('Not mine · Builders Exchange');
+  await expect(settings.getByRole('radiogroup', { name: 'Room settings sections' })).toHaveCount(0);
+  const section = settings.getByRole('region', { name: 'This sub-room' });
+  await expect(section.getByRole('textbox', { name: 'Name' })).toHaveValue('Not mine');
+  await expectAccessible(page);
+
+  await section.getByRole('textbox', { name: 'Name' }).fill('Drafts');
+  await section.getByRole('combobox', { name: 'Category' }).selectOption({ label: 'Ops' });
+  await section.getByRole('button', { name: 'Save' }).click();
+  await expect(section.getByRole('status')).toHaveText('Saved');
+  expect((await fixtureSubRoomActions(page)).revisions.at(-1)).toMatchObject({
+    subRoomId: '01990d9e-8400-7000-8000-000000000454',
+    name: 'Drafts',
+    categoryId: '01990d9e-8400-7000-8000-000000000461',
+  });
+  await settings.getByRole('button', { name: 'Close room settings' }).click();
+  await expect(settings).toHaveCount(0);
+  // 名单跟着重问：换了名字，挪到 Ops 下面。
+  const ops = browser
+    .locator('.sub-room-browser__group')
+    .filter({ has: page.getByRole('heading', { name: /^Ops/u }) });
+  await expect(ops.getByText('Drafts', { exact: true })).toBeVisible();
+  await expect(browser.getByRole('button', { name: 'Settings for Drafts' })).toBeVisible();
+  expect(failures).toEqual([]);
+});
+
 test('浏览子房间在手机上：一行拆成两层，不横向滚动', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.setViewportSize({ width: 390, height: 844 });

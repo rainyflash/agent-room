@@ -136,11 +136,19 @@ afterEach(() => {
 function renderBrowser(
   onCreate: (() => void) | null = null,
   onOpenDoor: (subRoomId: string) => void = vi.fn(),
+  onOpenSettings: ((room: SubRoom) => void) | null = null,
+  list: SubRoomList = LIST,
 ) {
   render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
-        <SubRoomBrowser list={LIST} onCreate={onCreate} onOpenDoor={onOpenDoor} principalId={ME} />
+        <SubRoomBrowser
+          list={list}
+          onCreate={onCreate}
+          onOpenDoor={onOpenDoor}
+          onOpenSettings={onOpenSettings}
+          principalId={ME}
+        />
       </QueryClientProvider>
     </I18nextProvider>,
   );
@@ -192,6 +200,26 @@ describe('浏览子房间', () => {
 
     renderBrowser();
     expect(screen.queryByRole('button', { name: 'New sub-room' })).not.toBeInTheDocument();
+  });
+
+  it('管得了的那几行后面有齿轮，没进去的也能打开它的设置；管不了的没有', () => {
+    const onOpenSettings = vi.fn();
+    // 名单带着在等的申请有几个，就是你管得了这一间。
+    const managed: SubRoomList = {
+      ...LIST,
+      subRooms: [RELEASE, { ...DRAFTS, pendingRequestCount: 0 }, ALERTS, SECURITY],
+    };
+    renderBrowser(null, vi.fn(), onOpenSettings, managed);
+    expect(screen.getAllByRole('button', { name: /^Settings for /u })).toHaveLength(1);
+    fireEvent.click(within(row('Drafts')).getByRole('button', { name: 'Settings for Drafts' }));
+    expect(onOpenSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ catalogId: DRAFTS.catalogId }),
+    );
+    cleanup();
+
+    // 没登录、打不开设置时不放齿轮。
+    renderBrowser(null, vi.fn(), null, managed);
+    expect(screen.queryByRole('button', { name: /^Settings for /u })).not.toBeInTheDocument();
   });
 
   it('还没进的名字点了展开它的卡片', () => {

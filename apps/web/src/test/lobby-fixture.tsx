@@ -1221,19 +1221,16 @@ function fixtureSubRoom(suffix: string, name: string, extra: Partial<SubRoom> = 
     ...extra,
   };
 }
-// 左栏“⋯”对眼前这一间以外的子房间做的：退出（父房间的房主退不出去）、归档、移到分类。
-const fixtureSubRoomChanges = new Map<
-  string,
-  { readonly left?: boolean; readonly archived?: boolean; readonly categoryId?: string | null }
->();
-function changeFixtureSubRoom(
-  catalogId: string,
-  change: {
-    readonly left?: boolean;
-    readonly archived?: boolean;
-    readonly categoryId?: string | null;
-  },
-): void {
+// 对眼前这一间以外的子房间做的：左栏“⋯”里退出（父房间的房主退不出去）、归档、移到分类，
+// “浏览子房间”的齿轮打开的设置里改名字、用途、门。
+type FixtureSubRoomChange = {
+  readonly left?: boolean;
+  readonly archived?: boolean;
+  readonly categoryId?: string | null;
+  readonly revision?: Partial<Pick<SubRoom, 'name' | 'description' | 'access' | 'hidden'>>;
+};
+const fixtureSubRoomChanges = new Map<string, FixtureSubRoomChange>();
+function changeFixtureSubRoom(catalogId: string, change: FixtureSubRoomChange): void {
   fixtureSubRoomChanges.set(catalogId, { ...fixtureSubRoomChanges.get(catalogId), ...change });
 }
 function applyFixtureSubRoomChanges(entries: readonly SubRoom[]): SubRoom[] {
@@ -1243,6 +1240,7 @@ function applyFixtureSubRoomChanges(entries: readonly SubRoom[]): SubRoom[] {
     if (change.archived === true) return [];
     const next: SubRoom = {
       ...entry,
+      ...change.revision,
       ...(change.left === true ? { joined: false } : {}),
       ...(typeof change.categoryId === 'string' ? { categoryId: change.categoryId } : {}),
     };
@@ -1435,16 +1433,25 @@ function reviseFixtureSubRoom(
   input: ReviseSubRoomInput,
 ): Result<PrivateRoom, PrivateRoomFailure> {
   fixtureSubRoomActions.revisions.push({ subRoomId, ...input });
-  if (subRoomId !== fixturePrivateRoom.catalogId) {
-    if (input.categoryId === undefined)
-      return err({ code: 'sub_room.unavailable', retryable: false });
-    changeFixtureSubRoom(subRoomId, { categoryId: input.categoryId });
-    return ok(fixturePrivateRoom);
-  }
   const taken = fixtureSubRoomList().subRooms.some(
     (entry) => entry.catalogId !== subRoomId && entry.name === input.name,
   );
   if (taken) return err({ code: 'sub_room.name_taken', retryable: false });
+  if (subRoomId !== fixturePrivateRoom.catalogId) {
+    const previous = fixtureSubRoomChanges.get(subRoomId)?.revision;
+    changeFixtureSubRoom(subRoomId, {
+      ...(input.categoryId === undefined ? {} : { categoryId: input.categoryId }),
+      revision: {
+        ...previous,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.description === undefined ? {} : { description: input.description }),
+        ...(input.access === undefined ? {} : { access: input.access }),
+        ...(input.hidden === undefined ? {} : { hidden: input.hidden }),
+        ...(input.access === 'open' ? { hidden: false } : {}),
+      },
+    });
+    return ok(fixturePrivateRoom);
+  }
   const next: Partial<SubRoom> = {
     ...fixtureCurrentSubRoom,
     ...(input.name === undefined ? {} : { name: input.name }),

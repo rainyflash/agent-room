@@ -1,6 +1,6 @@
 import { Button, RoomGlyph } from '@agent-room/ui-system';
 import type { TFunction } from 'i18next';
-import { Check, LoaderCircle, Plus, RotateCcw, Search } from 'lucide-react';
+import { Check, LoaderCircle, Plus, RotateCcw, Search, Settings } from 'lucide-react';
 import { useDeferredValue, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -9,7 +9,11 @@ import { useCatalogUnread } from '@/features/inbox/ui/room-unread-mark';
 import { usePrivateRoomPeople } from '@/features/private-rooms/data/private-room-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import { JOIN_REQUEST_MESSAGE_MAX_LENGTH } from '@/features/private-rooms/domain/public-room-join';
-import type { SubRoom, SubRoomList } from '@/features/private-rooms/domain/sub-rooms';
+import {
+  managesSubRoom,
+  type SubRoom,
+  type SubRoomList,
+} from '@/features/private-rooms/domain/sub-rooms';
 import {
   searchSubRooms,
   subRoomBrowseGroups,
@@ -37,13 +41,21 @@ export type SubRoomBrowserProps = {
   readonly onCreate: (() => void) | null;
   /** 点一间你还没进的名字：在这一页的位置上展开它的卡片（谁在管、门是什么样）。 */
   readonly onOpenDoor: (subRoomId: string) => void;
+  /** 管得了的那几行后面的齿轮：打开那一间的设置，你没进去的也行。没登录时为空。 */
+  readonly onOpenSettings?: ((room: SubRoom) => void) | null | undefined;
 };
 
 /**
  * “浏览子房间”一页（`specs/redesign/sub-rooms.md`“网页”）：这间房下面你看得到的子房间，按分类排着，
  * 能搜名字和用途；三个标签：全部、我在的、已归档。没进的在这里加入或者申请，归档的在这里打开、恢复。
  */
-export function SubRoomBrowser({ list, onCreate, onOpenDoor, principalId }: SubRoomBrowserProps) {
+export function SubRoomBrowser({
+  list,
+  onCreate,
+  onOpenDoor,
+  onOpenSettings = null,
+  principalId,
+}: SubRoomBrowserProps) {
   const { t } = useTranslation();
   const { subRooms } = useAppServices();
   const headingId = useId();
@@ -118,6 +130,7 @@ export function SubRoomBrowser({ list, onCreate, onOpenDoor, principalId }: SubR
             actions={actions}
             list={list}
             onOpenDoor={onOpenDoor}
+            onOpenSettings={onOpenSettings}
             query={deferredQuery}
             tab={tab}
           />
@@ -131,12 +144,14 @@ function ActiveRooms({
   actions,
   list,
   onOpenDoor,
+  onOpenSettings,
   query,
   tab,
 }: {
   readonly actions: SubRoomActions;
   readonly list: SubRoomList;
   readonly onOpenDoor: (subRoomId: string) => void;
+  readonly onOpenSettings: ((room: SubRoom) => void) | null;
   readonly query: string;
   readonly tab: Exclude<SubRoomBrowseTab, 'archived'>;
 }) {
@@ -172,6 +187,7 @@ function ActiveRooms({
                     setRequesting(null);
                   }}
                   onOpenDoor={onOpenDoor}
+                  onOpenSettings={onOpenSettings}
                   onRequest={() => {
                     setRequesting(room.catalogId);
                   }}
@@ -191,6 +207,7 @@ function ActiveRoom({
   actions,
   onCancelRequest,
   onOpenDoor,
+  onOpenSettings,
   onRequest,
   requesting,
   room,
@@ -198,6 +215,7 @@ function ActiveRoom({
   readonly actions: SubRoomActions;
   readonly onCancelRequest: () => void;
   readonly onOpenDoor: (subRoomId: string) => void;
+  readonly onOpenSettings: ((room: SubRoom) => void) | null;
   readonly onRequest: () => void;
   readonly requesting: boolean;
   readonly room: SubRoom;
@@ -249,6 +267,21 @@ function ActiveRoom({
             requesting={requesting}
             room={room}
           />
+          {/* 管得了这一间（这一间的管理员、整间房的房主和管理员）：你没进去也能改它的设置。 */}
+          {onOpenSettings !== null && managesSubRoom(room) ? (
+            <button
+              aria-haspopup="dialog"
+              aria-label={t('subRooms.browse.settings', { name: room.name })}
+              className="sub-room-browser__settings"
+              onClick={() => {
+                onOpenSettings(room);
+              }}
+              title={t('subRooms.settings.title')}
+              type="button"
+            >
+              <Settings aria-hidden="true" />
+            </button>
+          ) : null}
         </span>
       </div>
       {requesting && action === 'request' ? (
