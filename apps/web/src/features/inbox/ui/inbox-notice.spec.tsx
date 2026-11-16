@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { InboxNotice } from './inbox-notice';
+import { WebNotificationsProvider } from './web-notifications-provider';
+import type { WebNotificationState } from '../adapters/web-notifications';
 import type { InboxItem } from '../domain/inbox';
 import { systemNotificationSummary } from '../domain/inbox';
 import {
@@ -22,6 +24,7 @@ const inbox = vi.hoisted(() => ({
     status: 'ready' as const,
   },
 }));
+const navigate = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 const desktop = vi.hoisted(() => ({
   notify: vi.fn(() => Promise.resolve()),
   available: true,
@@ -49,6 +52,7 @@ vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children }: { readonly children: React.ReactNode }) => <a href="/inbox">{children}</a>,
   useLocation: () => '/lobby',
+  useNavigate: () => navigate,
 }));
 
 function item(id: string, overrides: Partial<InboxItem> = {}): InboxItem {
@@ -74,6 +78,8 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   desktop.notify.mockClear();
+  desktop.available = true;
+  navigate.mockClear();
   inbox.current = { ...inbox.current, items: [] };
 });
 
@@ -142,5 +148,136 @@ describe('新内容提醒', () => {
     expect(long.sender).toBe('astra');
     expect(Array.from(long.text)).toHaveLength(140);
     expect(long.text.endsWith('…')).toBe(true);
+  });
+});
+
+function fakeNotifications(initial: Partial<WebNotificationState> = {}) {
+  let state: WebNotificationState = {
+    offered: false,
+    permission: 'default',
+    wanted: false,
+    ...initial,
+  };
+  return {
+    markOffered: vi.fn(() => {
+      state = { ...state, offered: true };
+    }),
+    refresh: vi.fn(),
+    setWanted: vi.fn((wanted: boolean) => {
+      state = { ...state, permission: 'granted', wanted };
+      return Promise.resolve(state);
+    }),
+    show: vi.fn((note: { readonly onClick: () => void }) => {
+      void note;
+      return true;
+    }),
+    state: () => state,
+    subscribe: () => () => undefined,
+  };
+}
+
+function webTree(notifications: ReturnType<typeof fakeNotifications>) {
+  return (
+    <I18nextProvider i18n={i18n}>
+      <WebNotificationsProvider value={notifications}>
+        <InboxNotice />
+      </WebNotificationsProvider>
+    </I18nextProvider>
+  );
+}
+
+describe('网页通知（4R-2）', () => {
+  it('网页上标签页在后台时弹浏览器通知，点了回到那一条', async () => {
+    desktop.available = false;
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => undefined);
+    const notifications = fakeNotifications({ offered: true, permission: 'granted', wanted: true });
+    const rendered = render(webTree(notifications));
+    inbox.current = { ...inbox.current, items: [item('m1')] };
+    rendered.rerender(webTree(notifications));
+    await waitFor(() => {
+      expect(notifications.show).toHaveBeenCalledTimes(1);
+    });
+    const note = notifications.show.mock.calls[0]?.[0] as {
+      readonly title: string;
+      readonly body: string;
+      readonly tag: string;
+      readonly onClick: () => void;
+    };
+    expect(note).toMatchObject({
+      body: 'astra: can you review the patch?',
+      tag: 'agent-room-room:game dev',
+      title: 'game dev',
+    });
+    note.onClick();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith({
+      params: { catalogId: 'catalog', roomId: '!room:test' },
+      search: { message: 'm1', view: 'conversation' },
+      to: '/lobby/$catalogId/instance/$roomId',
+    });
+    expect(desktop.notify).not.toHaveBeenCalled();
+    // 已经开着，不再问。
+    expect(screen.queryByText('Get these in the background too?')).not.toBeInTheDocument();
+  });
+
+  it('标签页在前面时不弹，只有页面里的提示', async () => {
+    desktop.available = false;
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const notifications = fakeNotifications({ offered: true, permission: 'granted', wanted: true });
+    const rendered = render(webTree(notifications));
+    inbox.current = { ...inbox.current, items: [item('m1')] };
+    rendered.rerender(webTree(notifications));
+    await screen.findByText(/1 new item/u);
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
+
+  it('第一次有人找你、还没开过网页通知时问一句；打开以后记下问过了', async () => {
+    desktop.available = false;
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const notifications = fakeNotifications();
+    const rendered = render(webTree(notifications));
+    inbox.current = { ...inbox.current, items: [item('m1')] };
+    rendered.rerender(webTree(notifications));
+    await screen.findByText('Get these in the background too?');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on web notifications' }));
+    await waitFor(() => {
+      expect(notifications.markOffered).toHaveBeenCalledTimes(1);
+    });
+    expect(notifications.setWanted).toHaveBeenCalledWith(true);
+    expect(screen.queryByText('Get these in the background too?')).not.toBeInTheDocument();
+  });
+
+  it('“不用了”也算答过；浏览器拒过的、桌面端都不问', async () => {
+    desktop.available = false;
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    const notifications = fakeNotifications();
+    const rendered = render(webTree(notifications));
+    inbox.current = { ...inbox.current, items: [item('m1')] };
+    rendered.rerender(webTree(notifications));
+    fireEvent.click(await screen.findByRole('button', { name: 'No thanks' }));
+    expect(notifications.markOffered).toHaveBeenCalledTimes(1);
+    expect(notifications.setWanted).not.toHaveBeenCalled();
+    cleanup();
+
+    const denied = fakeNotifications({ permission: 'denied' });
+    inbox.current = { ...inbox.current, items: [] };
+    const again = render(webTree(denied));
+    inbox.current = { ...inbox.current, items: [item('m2')] };
+    again.rerender(webTree(denied));
+    await screen.findByText(/1 new item/u);
+    expect(screen.queryByText('Get these in the background too?')).not.toBeInTheDocument();
+    cleanup();
+
+    desktop.available = true;
+    const onDesktop = fakeNotifications();
+    inbox.current = { ...inbox.current, items: [] };
+    const desk = render(webTree(onDesktop));
+    inbox.current = { ...inbox.current, items: [item('m3')] };
+    desk.rerender(webTree(onDesktop));
+    await screen.findByText(/1 new item/u);
+    expect(screen.queryByText('Get these in the background too?')).not.toBeInTheDocument();
+    expect(onDesktop.show).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
+import type { WebNotificationState } from '@/features/inbox/adapters/web-notifications';
+import { WebNotificationsProvider } from '@/features/inbox/ui/web-notifications-provider';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -201,6 +203,51 @@ describe('设置', () => {
       value: Date.UTC(2026, 8, 30, 9, 0, 0),
     });
     vi.useRealTimers();
+  });
+
+  it('通用：网页上“提醒”一组有网页通知，打开时交给浏览器问；拒了照实说；桌面端没有这一行', async () => {
+    let state: WebNotificationState = { offered: false, permission: 'default', wanted: false };
+    const listeners = new Set<() => void>();
+    const notifications = {
+      markOffered: vi.fn(),
+      refresh: vi.fn(),
+      setWanted: vi.fn((wanted: boolean) => {
+        state = { ...state, permission: 'denied', wanted };
+        for (const listener of listeners) listener();
+        return Promise.resolve(state);
+      }),
+      show: vi.fn(() => false),
+      state: () => state,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    };
+    const general = (
+      <WebNotificationsProvider value={notifications}>
+        <SettingsSectionContent section="general" />
+      </WebNotificationsProvider>
+    );
+    renderSettings(general);
+    expect(screen.getByRole('heading', { level: 3, name: 'Reminders' })).toBeVisible();
+    const toggle = screen.getByRole('switch', { name: 'Web notifications' });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAccessibleDescription(/Only in this browser\./u);
+
+    fireEvent.click(toggle);
+    expect(notifications.setWanted).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Web notifications' })).toBeDisabled();
+    });
+    expect(screen.getByText(/won’t let the site send notifications/u)).toBeVisible();
+    cleanup();
+
+    renderSettings(general, desktopGateway(false));
+    expect(await screen.findByRole('heading', { level: 3, name: 'Reminders' })).toBeVisible();
+    expect(screen.queryByRole('switch', { name: 'Web notifications' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pause for an hour' })).toBeVisible();
   });
 
   it('暂停着时说到几点，可以现在恢复；保存不了时如实说', async () => {

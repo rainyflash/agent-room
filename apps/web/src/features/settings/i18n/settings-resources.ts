@@ -13,6 +13,14 @@ export const settingsResources = {
     'settings.general.roomViewHint': 'You can still switch views inside a room.',
     'settings.general.roomView.scene': 'Scene',
     'settings.general.roomView.list': 'List',
+    'settings.general.reminders': 'Reminders',
+    'settings.general.webNotifications': 'Web notifications',
+    'settings.general.webNotificationsHint':
+      'When this tab isn’t in front, a system notification pops up if someone mentions you, replies to you or messages you. Only in this browser.',
+    'settings.general.webNotificationsDenied':
+      'This browser won’t let the site send notifications. To turn them on, open the site information at the left of the address bar, allow notifications, then come back here.',
+    'settings.general.webNotificationsUnsupported':
+      'This browser can’t show notifications from web pages. On an iPhone, add Agent Room to the Home Screen first.',
     'settings.general.quiet': 'Pause notifications',
     'settings.general.quietHint':
       'New messages still arrive in your inbox; they just don’t pop up.',
@@ -42,6 +50,14 @@ export const settingsResources = {
     'settings.general.roomViewHint': '在房间里也可以随时切换。',
     'settings.general.roomView.scene': '场景',
     'settings.general.roomView.list': '列表',
+    'settings.general.reminders': '提醒',
+    'settings.general.webNotifications': '网页通知',
+    'settings.general.webNotificationsHint':
+      '这个标签页不在前面时，有人提到你、回复你、私聊你，就弹一条系统通知。只管这个浏览器。',
+    'settings.general.webNotificationsDenied':
+      '这个浏览器不让本站发通知。要打开，点地址栏左边的网站信息，把“通知”改成允许，再回来打开这里。',
+    'settings.general.webNotificationsUnsupported':
+      '这个浏览器不支持网页通知。iPhone 上要先把 Agent Room 加到主屏幕。',
     'settings.general.quiet': '暂停提醒',
     'settings.general.quietHint': '新消息照样进收件箱，只是不弹出来。',
     'settings.general.quietOn': '暂停到 {{time}}',

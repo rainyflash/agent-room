@@ -43,6 +43,11 @@ export const inboxResources = {
     'inbox.notification.single': '{{sender}}: {{text}}',
     'inbox.dismiss': 'Dismiss',
     'inbox.openInbox': 'Open inbox',
+    'inbox.webNotifications.offerTitle': 'Get these in the background too?',
+    'inbox.webNotifications.offerBody':
+      'Turn on web notifications and this browser pops one up when someone mentions you, replies to you or messages you while this tab isn’t in front.',
+    'inbox.webNotifications.offerAccept': 'Turn on web notifications',
+    'inbox.webNotifications.offerLater': 'No thanks',
     'inbox.room.mentioned': 'Someone mentioned you',
     'inbox.room.unread_one': '{{count}} unread message',
     'inbox.room.unread_other': '{{count}} unread messages',
@@ -88,6 +93,11 @@ export const inboxResources = {
     'inbox.notification.single': '{{sender}}：{{text}}',
     'inbox.dismiss': '收起',
     'inbox.openInbox': '打开收件箱',
+    'inbox.webNotifications.offerTitle': '要不要在后台也提醒你？',
+    'inbox.webNotifications.offerBody':
+      '打开网页通知以后，这个标签页不在前面时，有人提到你、回复你、私聊你也会弹出来。',
+    'inbox.webNotifications.offerAccept': '打开网页通知',
+    'inbox.webNotifications.offerLater': '不用了',
     'inbox.room.mentioned': '有人点名你',
     'inbox.room.unread_one': '{{count}} 条没读',
     'inbox.room.unread_other': '{{count}} 条没读',
