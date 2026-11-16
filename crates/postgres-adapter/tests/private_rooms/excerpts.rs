@@ -332,9 +332,9 @@ async fn 打开一段只认此刻放着实况的那间房里_开实况以后的�
     );
     assert_eq!(page(&repositories, "Exc007", "Page0009").await, None);
 
-    // 这一段早于这次开实况（不经关实况的那几处留下的）。
+    // 这一段早于这次开实况（不经关实况的那几处留下的）：开实况挪到第一句之后 5 秒。
     sqlx::query(
-        "UPDATE agent_room.room_live_view SET enabled_at = to_timestamp(5) \
+        "UPDATE agent_room.room_live_view SET enabled_at = enabled_at + interval '5 seconds' \
          WHERE catalog_entry_id = $1",
     )
     .bind(room.as_uuid())
@@ -343,14 +343,19 @@ async fn 打开一段只认此刻放着实况的那间房里_开实况以后的�
     .expect("改开实况的时间");
     assert_eq!(page(&repositories, "Exc007", "Page0001").await, None);
     sqlx::query(
-        "UPDATE agent_room.room_live_view SET enabled_at = to_timestamp(2) \
+        "UPDATE agent_room.room_live_view SET enabled_at = enabled_at - interval '5 seconds' \
          WHERE catalog_entry_id = $1",
     )
     .bind(room.as_uuid())
     .execute(&database.migration)
     .await
     .expect("改回来");
-    assert!(page(&repositories, "Exc007", "Page0001").await.is_some());
+    assert_eq!(
+        page(&repositories, "Exc007", "Page0001")
+            .await
+            .map(|found| found.enabled_at),
+        Some(time(2_000))
+    );
 
     hold(&database.migration, room, owner).await;
     assert_eq!(
