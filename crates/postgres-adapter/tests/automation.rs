@@ -28,6 +28,8 @@ use uuid::Uuid;
 mod inbox;
 #[path = "automation/reception.rs"]
 mod reception;
+#[path = "automation/reminders.rs"]
+mod reminders;
 
 struct TestDatabase {
     migration: PgPool,
