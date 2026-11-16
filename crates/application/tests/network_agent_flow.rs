@@ -38,21 +38,22 @@ use agent_room_application::{
         PublicRoomRecord, PublicRoomSearch, PublicRoomViewerState, RateWindowBucket,
         RateWindowDecision, RateWindowPolicy, RegisteredAgent, RoomDirectory, RoomDirectoryQuery,
         SealedSecret, SecretDigest, SecretFactory, SecretGenerationFailure, SecretSealingFailure,
-        SecretValue, StoredAgentInstanceRegistration, UniformSourceWeights,
+        SecretValue, StoredAgentInstanceRegistration, SubRoomEntry, UniformSourceWeights,
     },
     private_rooms::{
         AdmitPersonByAgent, AdmittedKnock, AgentAccessFailure, AgentAccessFailureKind,
         AgentAccessResult, AgentAccessView, AgentSubRoomArchival, AgentSubRoomCreated,
-        AgentSubRoomCreation, AgentSubRoomListing, AgentSubRoomManagement, AgentSubRooms,
-        AnswerKnock, ArchiveAgentSubRoom, ArchivePrivateRoom, ChangePrivateRoomPermissions,
-        CreateAgentSubRoom, CreatePrivateRoom, FindAgentManagedSubRoom, GeneratedJoinCode,
-        GovernPrivateRoomMember, InspectAgentAccess, InspectPrivateRoom, InvitePrivateRoomMember,
-        JoinCodeCaller, KnockEntry, KnockOnRoom, KnockResult, ListAgentSubRooms, ListPrivateRooms,
-        ListPrivateRoomsForAccount, ManageJoinCode, PrivateRoomActor,
-        PrivateRoomAgentAccessUseCases, PrivateRoomFailure, PrivateRoomFailureKind,
-        PrivateRoomFailureStage, PrivateRoomMembershipAction, PrivateRoomOrigin, PrivateRoomResult,
-        PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom, RemoveAgentMember, RenamePrivateRoom,
-        ResolveJoinCode, SubRoomRefusal, TransferPrivateRoomOwnership,
+        AgentSubRoomCreation, AgentSubRoomItem, AgentSubRoomListing, AgentSubRoomManagement,
+        AgentSubRooms, AnswerKnock, ArchiveAgentSubRoom, ArchivePrivateRoom,
+        ChangePrivateRoomPermissions, CreateAgentSubRoom, CreatePrivateRoom,
+        FindAgentManagedSubRoom, GeneratedJoinCode, GovernPrivateRoomMember, InspectAgentAccess,
+        InspectPrivateRoom, InvitePrivateRoomMember, JoinCodeCaller, KnockEntry, KnockOnRoom,
+        KnockResult, ListAgentSubRooms, ListPrivateRooms, ListPrivateRoomsForAccount,
+        ManageJoinCode, PrivateRoomActor, PrivateRoomAgentAccessUseCases, PrivateRoomFailure,
+        PrivateRoomFailureKind, PrivateRoomFailureStage, PrivateRoomMembershipAction,
+        PrivateRoomOrigin, PrivateRoomResult, PrivateRoomUseCases, RedeemJoinCode, RedeemedRoom,
+        RemoveAgentMember, RenamePrivateRoom, ResolveJoinCode, SubRoomRefusal,
+        TransferPrivateRoomOwnership,
     },
     rooms::{EnterLobbyOutcome, LobbyJoinKind},
 };
@@ -1472,8 +1473,8 @@ struct FakeRooms {
 /// 父房间里有的分类：要别的名字就放进“未分类”。
 const SUB_ROOM_CATEGORY: &str = "进行中";
 
-/// 子房间建在父房间下面，房主照父房间的记。同一个 Agent 在同一间房下面建过、没归档的同名子房间
-/// （不分大小写）回到那间，和私人房间用例对 Agent 成员一样。
+/// 子房间建在父房间下面，房主照父房间的记。没归档的同名子房间（不分大小写）回到那间，和私人房间
+/// 用例一样：它自己的房间里谁建的都算，凭口令进的房间里只算它建的。
 impl AgentSubRoomCreation for FakeRooms {
     fn create_agent_sub_room(
         &self,
@@ -1489,10 +1490,12 @@ impl AgentSubRoomCreation for FakeRooms {
                     .find(|snapshot| snapshot.catalog().id() == request.parent_catalog_id)
                     .expect("父房间在")
                     .clone();
+                let its_room = parent.room().owner_principal_id() == request.actor.principal_id();
                 if let Some(existing) = rooms.iter().find(|snapshot| {
                     snapshot.parent_catalog_id() == Some(request.parent_catalog_id)
                         && snapshot.catalog().status() == RoomCatalogStatus::Active
-                        && snapshot.room().created_by_agent() == Some(request.created_by_agent)
+                        && (its_room
+                            || snapshot.room().created_by_agent() == Some(request.created_by_agent))
                         && snapshot.catalog().name().to_lowercase() == request.name.to_lowercase()
                 }) {
                     return Ok(AgentSubRoomCreated {
@@ -1528,20 +1531,71 @@ impl AgentSubRoomCreation for FakeRooms {
     }
 }
 
-/// 照测试给的名单回答。
+/// 测试给了名单就照它回答；没给的照存着的房间回答：这间房（或者它上面那间）下面归不归档对得上的
+/// 子房间。没有这间房说找不到。
 impl AgentSubRoomListing for FakeRooms {
     fn agent_sub_rooms(
         &self,
         request: ListAgentSubRooms,
     ) -> PortFuture<'_, PrivateRoomResult<AgentSubRooms>> {
+        let given = self.sub_room_list.lock().unwrap().clone();
+        let result = given.unwrap_or_else(|| self.stored_sub_rooms(&request));
         self.sub_rooms_listed.lock().unwrap().push(request);
-        let result = self
-            .sub_room_list
-            .lock()
-            .unwrap()
-            .clone()
-            .unwrap_or_else(|| Err(room_failure(PrivateRoomFailureKind::NotFound)));
         Box::pin(async move { result })
+    }
+}
+
+impl FakeRooms {
+    fn stored_sub_rooms(&self, request: &ListAgentSubRooms) -> PrivateRoomResult<AgentSubRooms> {
+        let rooms = self.rooms.lock().unwrap();
+        let find = |catalog_id| {
+            rooms
+                .iter()
+                .find(|snapshot| snapshot.catalog().id() == catalog_id)
+                .cloned()
+                .ok_or_else(|| room_failure(PrivateRoomFailureKind::NotFound))
+        };
+        let room = find(request.catalog_id)?;
+        let parent = match room.parent_catalog_id() {
+            Some(parent) => find(parent)?,
+            None => room,
+        };
+        let listed = rooms
+            .iter()
+            .filter(|snapshot| {
+                snapshot.parent_catalog_id() == Some(parent.catalog().id())
+                    && (snapshot.catalog().status() == RoomCatalogStatus::Archived)
+                        == request.archived
+            })
+            .map(|snapshot| AgentSubRoomItem {
+                entry: SubRoomEntry {
+                    catalog_id: snapshot.catalog().id(),
+                    matrix_room: snapshot.instance().matrix_room_id().clone(),
+                    name: snapshot.catalog().name().to_owned(),
+                    description: String::new(),
+                    access: RoomJoinMode::Open,
+                    hidden: false,
+                    category_id: None,
+                    archived: request.archived,
+                    archive_record: None,
+                    created_by: snapshot.room().owner_principal_id(),
+                    created_at: UtcMillis::new(START).unwrap(),
+                    managers: Vec::new(),
+                    viewer_status: None,
+                    member_count: 1,
+                    agent_count: 0,
+                    last_message_at: None,
+                    viewer_requested_at: None,
+                    pending_requests: 0,
+                },
+                category: None,
+            })
+            .collect();
+        Ok(AgentSubRooms {
+            parent,
+            categories: Vec::new(),
+            rooms: listed,
+        })
     }
 }
 
@@ -1780,7 +1834,11 @@ impl PrivateRoomUseCases for FakeRooms {
             .lock()
             .unwrap()
             .iter()
-            .filter(|snapshot| snapshot.room().admits_agent_of(request.principal_id))
+            // 和真实存储一样，账户的房间列表里没有子房间。
+            .filter(|snapshot| {
+                snapshot.parent_catalog_id().is_none()
+                    && snapshot.room().admits_agent_of(request.principal_id)
+            })
             .cloned()
             .collect();
         Box::pin(async move { Ok(rooms) })

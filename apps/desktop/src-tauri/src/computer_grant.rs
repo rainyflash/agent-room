@@ -320,6 +320,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::closed_port_test_support::ClosedPort;
 
     /// 只接一个连接的 HTTP 服务：把收到的原始请求交回，再回一段写好的回答。
     async fn serve_once(response: String) -> (Url, JoinHandle<String>) {
@@ -432,11 +433,8 @@ mod tests {
 
     #[tokio::test]
     async fn 控制面连不上时过一会儿再要() {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("可绑定回环端口");
-        let address = listener.local_addr().expect("可读本机地址");
-        drop(listener);
+        let closed = ClosedPort::reserve();
+        let address = closed.address();
         let failure =
             ComputerGrantClient::new(Url::parse(&format!("http://{address}/")).expect("地址有效"))
                 .expect("可建出客户端")
