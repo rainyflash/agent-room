@@ -33,6 +33,8 @@ mod description;
 mod join_requests;
 #[path = "private_rooms/listing.rs"]
 mod listing;
+#[path = "private_rooms/live_views.rs"]
+mod live_views;
 #[path = "private_rooms/moderation_grants.rs"]
 mod moderation_grants;
 #[path = "private_rooms/public_directory.rs"]

@@ -116,7 +116,7 @@ fn copy_from(content: &Value) -> Option<ParentNoticeCopy> {
 }
 
 /// 以应用服务读一条 `state_key` 为空的房间状态；房间里还没有这一条时为空。
-async fn read_room_state(
+pub(crate) async fn read_room_state(
     provisioner: &MatrixApplicationServiceProvisioner,
     room_id: &MatrixRoomId,
     event_type: &str,

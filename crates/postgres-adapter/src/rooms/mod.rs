@@ -7,6 +7,7 @@ mod directory;
 mod invite_links;
 mod join_requests;
 mod listing;
+mod live_views;
 mod moderation_grants;
 mod parent_notice_sync;
 mod people;

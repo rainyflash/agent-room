@@ -1,6 +1,7 @@
 //! 公开房间的设置（`specs/public-rooms/design.md`）。房间第一次公开时才有一行；每个账户最多 1 间
 //! 不绑仓库的公开房间（绑着仓库的不算，`specs/redesign/project-rooms.md` 的“限额”），公开时（包括新建
-//! 时就公开）和转让房主时，在同一个事务里锁住房主再数一遍。改回私密时同一个事务里解绑仓库。
+//! 时就公开）和转让房主时，在同一个事务里锁住房主再数一遍。改回私密时同一个事务里解绑仓库；改回私密、
+//! 改成要申请或只能邀请时关掉分享页上的实况（`live_views.rs`）。
 
 use agent_room_application::{
     persistence::{RepositoryError, RepositoryErrorKind, RepositoryResult},
@@ -27,6 +28,7 @@ use crate::{
 
 use super::{
     decode::corrupt_data,
+    live_views::{enable_for_project_room, turn_off_live_view},
     private_room_agents::permissions,
     private_rooms::{create_private_room, ensure_creatable, save_private_room},
     repository_bindings::{repository_bound, unbind_repository, write_binding},
@@ -154,6 +156,10 @@ impl PrivateRoomListingStore for PostgresRepositories {
                     // 改回私密就解绑：再公开时它是一间不绑仓库的，要重新认领才绑得回去。先改设置那一行、
                     // 再删绑定，和绑上时的先后一样。
                     unbind_repository(&mut transaction, record.catalog_id, operation).await?;
+                }
+                if !record.settings.listed() || record.settings.join_mode() != RoomJoinMode::Open {
+                    // 改回私密、改成要申请或只能邀请，分享页上的实况一起关掉；再开就是新的一刻。
+                    turn_off_live_view(&mut transaction, record.catalog_id, operation).await?;
                 }
                 transaction
                     .commit()
@@ -289,6 +295,11 @@ impl PrivateRoomListingStore for PostgresRepositories {
     ) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "private_room.listing.mark_encrypted";
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
             sqlx::query(
                 "UPDATE agent_room.room_catalog_entry
                     SET end_to_end_encrypted = true,
@@ -296,9 +307,15 @@ impl PrivateRoomListingStore for PostgresRepositories {
                   WHERE id = $1 AND kind = 'private_room' AND NOT end_to_end_encrypted",
             )
             .bind(catalog_id.as_uuid())
-            .execute(self.pool())
+            .execute(&mut *transaction)
             .await
             .map_err(|error| map_sqlx_error(operation, &error))?;
+            // 加密的房间不放实况。改回私密时 `save_listing` 已经关了，这里再兜一次。
+            turn_off_live_view(&mut transaction, catalog_id, operation).await?;
+            transaction
+                .commit()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(())
         })
     }
@@ -449,6 +466,15 @@ async fn create_project_room(
         BindRepositoryOutcome::RoomNotEligible => ProjectRoomSaveOutcome::Stale,
     };
     if outcome == ProjectRoomSaveOutcome::Saved {
+        // 项目房间建好就开着分享页上的实况：房间是新的，没有以前的话。
+        enable_for_project_room(
+            &mut transaction,
+            listing.catalog_id,
+            snapshot.room().owner_principal_id(),
+            created_at,
+            operation,
+        )
+        .await?;
         transaction
             .commit()
             .await

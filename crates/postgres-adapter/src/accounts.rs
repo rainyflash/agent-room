@@ -380,6 +380,15 @@ async fn export_account(
                 FROM agent_room.room_repository_binding AS binding
                 WHERE binding.verified_by = principal.id
             ), '[]'::jsonb),
+            -- 他打开、还开着的分享页实况：哪间房、什么时候开的。
+            'liveViews', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object(
+                    'roomId', live.catalog_entry_id,
+                    'enabledAt', live.enabled_at
+                ) ORDER BY live.enabled_at, live.catalog_entry_id)
+                FROM agent_room.room_live_view AS live
+                WHERE live.enabled_by = principal.id
+            ), '[]'::jsonb),
             'externalData', jsonb_build_object(
                 'matrixTimeline', 'export_with_matrix_client_before_deletion',
                 'federatedCopies', 'controlled_by_receiving_homeservers_and_recipients',
@@ -854,6 +863,17 @@ async fn archive_private_rooms(
         r"DELETE FROM agent_room.room_repository_binding AS binding
           USING agent_room.room_catalog_entry AS room
           WHERE binding.catalog_entry_id = room.id
+            AND room.owner_principal_id = $1 AND room.kind = 'private_room'",
+    )
+    .bind(principal_id.as_uuid())
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| map_sqlx_error(operation, &error))?;
+    // 分享页上的实况也关掉（specs/redesign/project-rooms.md“分享页放实况”），和房主自己归档一样。
+    sqlx::query(
+        r"DELETE FROM agent_room.room_live_view AS live
+          USING agent_room.room_catalog_entry AS room
+          WHERE live.catalog_entry_id = room.id
             AND room.owner_principal_id = $1 AND room.kind = 'private_room'",
     )
     .bind(principal_id.as_uuid())

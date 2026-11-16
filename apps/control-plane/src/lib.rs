@@ -93,6 +93,7 @@ use agent_room_application::{
         ReminderDependencies, ReminderDryRun, ReminderPlanner, ReminderPlannerDependencies,
         ReminderService,
     },
+    room_live::{RoomLiveViewDependencies, RoomLiveViewService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
@@ -191,6 +192,7 @@ struct AgentFeatureHttpStates {
     room_role_changes: features::room_role_changes::RoomRoleChangeHttpState,
     room_invites: features::private_room_invites::PrivateRoomInviteHttpState,
     room_listing: features::private_room_listing::PrivateRoomListingHttpState,
+    room_live_views: features::room_live_view::RoomLiveViewHttpState,
     room_descriptions: features::private_room_description::PrivateRoomDescriptionHttpState,
     room_state: RoomStateHttpStates,
     room_moderation_grants: features::room_moderation_grants::RoomModerationGrantHttpState,
@@ -755,6 +757,7 @@ fn compose_identity_routes(
         ))
         .merge(features::private_room_invites::router(agents.room_invites))
         .merge(features::private_room_listing::router(agents.room_listing))
+        .merge(features::room_live_view::router(agents.room_live_views))
         .merge(features::private_room_description::router(
             agents.room_descriptions,
         ))
@@ -1194,6 +1197,7 @@ fn build_agent_feature_states(
         room_role_changes: build_room_role_change_http_state(dependencies),
         room_invites: build_room_invite_http_state(config, dependencies)?,
         room_listing: build_room_listing_http_state(config, dependencies),
+        room_live_views: build_room_live_view_http_state(config, dependencies),
         room_descriptions: build_room_description_http_state(config, dependencies),
         room_state: build_room_state_http_states(config, dependencies),
         room_moderation_grants: build_room_moderation_grant_http_state(config, dependencies),
@@ -1479,6 +1483,26 @@ fn build_agent_moderation_http_state(
             ),
         },
     ))
+}
+
+/// 分享页放实况的开关（`specs/redesign/project-rooms.md`“分享页放实况”）：房主和管理员开关，打开前
+/// 以应用服务问一遍聊天服务器房间加没加密。
+fn build_room_live_view_http_state(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> features::room_live_view::RoomLiveViewHttpState {
+    let live_views = Arc::new(RoomLiveViewService::new(RoomLiveViewDependencies {
+        rooms: dependencies.repositories.clone(),
+        live_views: dependencies.repositories.clone(),
+        encryption: dependencies.matrix_identities.clone(),
+        clock: dependencies.system_runtime.clone(),
+    }));
+    features::room_live_view::RoomLiveViewHttpState::new(
+        live_views,
+        dependencies.authentication.clone(),
+        &config.authentication.frontend_origin,
+        &config.authentication.desktop_origins,
+    )
 }
 
 /// 平台把公开房间从目录里拿掉（`specs/public-rooms/design.md`）：平台治理的人，按 `moderation_operator`。
