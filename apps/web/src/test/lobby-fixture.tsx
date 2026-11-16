@@ -126,6 +126,12 @@ import type {
   PrivateRoomListing,
   PrivateRoomListingGateway,
 } from '@/features/private-rooms/domain/private-room-listing';
+import type {
+  ProjectRoomGateway,
+  RepositoryClaim,
+  RoomRepositoryBinding,
+} from '@/features/private-rooms/domain/project-rooms';
+import { forgetClaim, rememberClaim } from '@/features/private-rooms/data/project-room-queries';
 import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
 import { ROOM_PINS_MAX, type RoomPinsGateway } from '@/features/room-pins/domain/room-pins';
 import type {
@@ -198,6 +204,14 @@ const listedFixture = privateFixture && new URLSearchParams(window.location.sear
 // `?private&listed&requests` 里房间要申请才能进，有两个人在等批准：齿轮上亮点，“成员”一节列出申请。
 const requestsFixture =
   listedFixture && new URLSearchParams(window.location.search).has('requests');
+// `?private&listed&repository=none|pending|bound`：“公开”一节里的“GitHub 仓库”一组还没绑、在等核对、绑上了
+// （绑上了的房间名旁边有勾）。`&repositoryLimit` 时解绑回 409 `private_room.public_limit_reached`。
+// 在等的和绑着的“现在核对”“再核对一次”一分钟只给一次，再点回 429。
+const repositoryFixture = privateFixture
+  ? new URLSearchParams(window.location.search).get('repository')
+  : null;
+const repositoryLimitFixture =
+  repositoryFixture !== null && new URLSearchParams(window.location.search).has('repositoryLimit');
 // `?private&notice` 里房间有一条 Grace 写的三行须知（时间固定，重新打开还是同一版）；不带时没有须知，
 // 房主能在设置的“须知”里写。加 `&seenElsewhere` 是你在别的设备上看过这一版：个人工作区里记着，这个浏览器
 // 里没有。
@@ -2350,6 +2364,112 @@ const roomPins: RoomPinsGateway = {
     return Promise.resolve(ok(next));
   },
 };
+const fixtureRepository = 'rainyflash/agent-room';
+const fixtureClaimId = '0198b601-77a1-7bb8-83eb-a8fe68c97e60';
+/** 服务器照部署的站点拼好的那几行（夹具的站点是 `https://agentroom.test`）。 */
+function fixtureRepositoryLines(repository: string, shareCode: string) {
+  const shareUrl = `https://agentroom.test/r/${shareCode}`;
+  return {
+    agentsLine: `Agent Room: this project's room is ${shareUrl}. Agents join with \`agent-room join ${shareUrl}\`, or over the network via https://agentroom.test/agents.txt`,
+    badgeMarkdown: `[![Agent Room](https://agentroom.test/gh/${repository}/badge.svg)](${shareUrl})`,
+    shareUrl,
+  };
+}
+function fixturePendingClaim(repository: string): RepositoryClaim {
+  const shareCode = fixtureListing.shareCode ?? 'aB3xYz';
+  return {
+    catalogId: fixturePrivateRoom.catalogId,
+    claimId: fixtureClaimId,
+    claimedAtUnixMs: Date.now() - 3_600_000,
+    lastCheck: null,
+    repository,
+    shareCode,
+    status: 'pending',
+    ...fixtureRepositoryLines(repository, shareCode),
+  };
+}
+let fixtureClaim: RepositoryClaim | null =
+  repositoryFixture === 'pending'
+    ? {
+        ...fixturePendingClaim(fixtureRepository),
+        lastCheck: { atUnixMs: Date.now() - 600_000, result: 'not_in_repository' },
+      }
+    : null;
+let fixtureBinding: RoomRepositoryBinding | null =
+  repositoryFixture === 'bound'
+    ? {
+        repository: fixtureRepository,
+        repositoryUrl: `https://github.com/${fixtureRepository}`,
+        verifiedAtUnixMs: Date.now() - 86_400_000,
+        verifiedByAccountId: fixtureOwner,
+        verifiedFile: 'AGENTS.md',
+        ...fixtureRepositoryLines(fixtureRepository, fixtureListing.shareCode ?? 'aB3xYz'),
+        shareCode: fixtureListing.shareCode ?? 'aB3xYz',
+      }
+    : null;
+// 在等的认领只记在浏览器里：夹具替“以前点过绑上”的这个人记上，没在等的清掉。
+if (repositoryFixture === 'pending') {
+  rememberClaim(fixtureOwner, fixturePrivateRoom.catalogId, fixtureClaimId);
+} else if (repositoryFixture !== null) {
+  forgetClaim(fixtureOwner, fixturePrivateRoom.catalogId);
+}
+let fixtureLastRepositoryCheck = 0;
+/** 和服务器一样一分钟只核对一次：太快了回 429 带还要等几秒。 */
+function fixtureCheckTooSoon() {
+  const waited = Date.now() - fixtureLastRepositoryCheck;
+  if (waited >= 60_000) {
+    fixtureLastRepositoryCheck = Date.now();
+    return null;
+  }
+  return err({
+    code: 'project_room.check_too_soon',
+    retryable: true,
+    retryAfterSeconds: Math.ceil((60_000 - waited) / 1_000),
+  });
+}
+const claimGone = { code: 'project_room.not_found', retryable: false } as const;
+const projectRooms: ProjectRoomGateway = {
+  claim: ({ repository }) => {
+    fixtureClaim = fixturePendingClaim(repository);
+    fixtureClaim = { ...fixtureClaim, claimedAtUnixMs: Date.now() };
+    return Promise.resolve(ok(fixtureClaim));
+  },
+  inspectClaim: (claimId) =>
+    Promise.resolve(fixtureClaim?.claimId === claimId ? ok(fixtureClaim) : err(claimGone)),
+  checkClaim: (claimId) => {
+    if (fixtureClaim?.claimId !== claimId) return Promise.resolve(err(claimGone));
+    const tooSoon = fixtureCheckTooSoon();
+    if (tooSoon !== null) return Promise.resolve(tooSoon);
+    fixtureClaim = {
+      ...fixtureClaim,
+      lastCheck: { atUnixMs: Date.now(), result: 'not_in_repository' },
+    };
+    return Promise.resolve(ok(fixtureClaim));
+  },
+  cancelClaim: () => {
+    fixtureClaim = null;
+    return Promise.resolve(ok(undefined));
+  },
+  binding: () => Promise.resolve(ok(fixtureBinding)),
+  unbind: () => {
+    if (repositoryLimitFixture) {
+      return Promise.resolve(err({ code: 'private_room.public_limit_reached', retryable: false }));
+    }
+    fixtureBinding = null;
+    return Promise.resolve(ok(undefined));
+  },
+  checkBinding: () => {
+    if (fixtureBinding === null) {
+      return Promise.resolve(err({ code: 'project_room.not_found', retryable: false }));
+    }
+    const tooSoon = fixtureCheckTooSoon();
+    if (tooSoon !== null) return Promise.resolve(tooSoon);
+    fixtureBinding = { ...fixtureBinding, verifiedAtUnixMs: Date.now() };
+    return Promise.resolve(
+      ok({ binding: fixtureBinding, lastCheck: { atUnixMs: Date.now(), result: 'found' } }),
+    );
+  },
+};
 const privateRoomListings: PrivateRoomListingGateway = {
   listing: () => Promise.resolve(ok(fixtureListing)),
   updateListing: (_catalogId, settings) => {
@@ -2367,6 +2487,9 @@ const privateRoomListings: PrivateRoomListingGateway = {
     return Promise.resolve(ok(fixtureListing));
   },
   changeShareCode: () => {
+    if (fixtureBinding !== null) {
+      return Promise.resolve(err({ code: 'room_listing.repository_bound', retryable: false }));
+    }
     if (fixtureListing.shareCode === null) {
       return Promise.resolve(err({ code: 'room_listing.never_listed', retryable: false }));
     }
@@ -2531,6 +2654,7 @@ const services: AppServices = {
         agentModeration,
         privateRoomInvites,
         privateRoomListings,
+        ...(repositoryFixture === null ? {} : { projectRooms }),
         publicRoomJoins,
         roomNotices,
         roomPins,

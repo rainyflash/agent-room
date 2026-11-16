@@ -20,6 +20,7 @@ import { AgentAvatar } from './avatars';
 import { RoomDeskMenu } from './room-desk-menu';
 import { RoomKindLabel, roomKindWarns, type RoomKind } from './room-kind-label';
 import { RoomUnreadCount } from './room-unread-count';
+import { RoomTitle, type RoomRepositoryMark } from './repository-mark';
 import './room-desk.css';
 
 /**
@@ -96,6 +97,8 @@ export type RoomDeskProps = {
    * 在下拉里点了一项要把下拉关上，所以画的时候给它一个 `onNavigate`。
    */
   readonly rail: ((onNavigate: () => void) => ReactNode) | null;
+  /** 房间绑着的 GitHub 仓库：房间名旁边一个勾。没绑、问不到（只有房主问得到）是 `null`。 */
+  readonly repository?: RoomRepositoryMark | null;
   readonly roomName: string;
   readonly share: DialogAction;
   /** 右栏：房间里的 Agent 和人。 */
@@ -136,6 +139,7 @@ export function RoomDesk({
   peopleCount,
   pendingJoinRequests,
   rail,
+  repository = null,
   roomName,
   share,
   side,
@@ -235,7 +239,7 @@ export function RoomDesk({
           <div className="room-desk__titles" data-warns={roomKindWarns(kind) ? 'true' : undefined}>
             {page === null ? (
               parent === null ? (
-                <h1>{roomName}</h1>
+                <RoomTitle name={roomName} repository={repository} />
               ) : (
                 <h1 className="room-desk__crumbs room-desk__crumbs--parent">
                   <ParentRoomLink parent={parent}>{parent.name}</ParentRoomLink>

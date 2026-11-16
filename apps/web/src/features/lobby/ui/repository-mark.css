@@ -1,0 +1,35 @@
+/* 房间名后面跟着勾（specs/redesign/project-rooms.md“网页”）：名字放不下时截名字，勾一直在。 */
+:is(.room-desk__identity, .workspace-header__identity) h1.room-name--verified {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25em;
+  overflow: visible;
+}
+
+:is(.room-desk__identity, .workspace-header__identity) h1.room-name--verified > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-repository-mark {
+  display: inline-flex;
+  min-width: 24px;
+  min-height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ar-control-radius);
+  color: var(--ar-accent);
+}
+
+.room-repository-mark:hover {
+  background: var(--ar-surface-muted);
+}
+
+.room-repository-mark svg {
+  width: 16px;
+  height: 16px;
+}
