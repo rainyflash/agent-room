@@ -258,6 +258,18 @@ describe('MatrixLobbyGateway', () => {
     expect(read(snapshot([]))).toBeUndefined();
   });
 
+  it('公共大厅照源里说的标出来，别的房间不标', () => {
+    const read = (value: MatrixLobbyRoomSnapshot) => {
+      const result = new MatrixLobbyGateway(source({ kind: 'ready', room: value }), () => NOW).read(
+        value.roomId,
+      );
+      return result.ok ? result.value.publicLobby : 'failed';
+    };
+
+    expect(read({ ...snapshot([]), publicLobby: true })).toBe(true);
+    expect(read(snapshot([]))).toBeUndefined();
+  });
+
   it('共享归档期限生效且同一身份重新接入后恢复', () => {
     const old = statusState({
       instanceSuffix: '1',

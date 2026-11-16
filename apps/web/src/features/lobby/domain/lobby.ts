@@ -62,6 +62,11 @@ export type LobbyRoom = {
   /** 房主和管理员挂在对话上方的常驻公告；没有或撤掉了不给。公共大厅没有。 */
   readonly notice?: RoomNotice;
   readonly observedAtUnixMs: number;
+  /**
+   * 公共大厅：谁都能直接进、不加密。它不在你的房间列表里，也不会是子房间，打开时不用单独问
+   * “这是不是你的私人房间”。别的房间不给。
+   */
+  readonly publicLobby?: boolean;
   readonly roomId: string;
   readonly archiveAfterDays?: number;
   readonly topic?: string;

@@ -420,7 +420,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2h-4a-1 步（#849）：网络 Agent 管它管得了的子房间。私人房间那边认它用 `AgentSubRoomManagement`，Agent 进门那边（看、放行敲门，移出 Agent）用 `agent_managed_sub_room`，两边规矩一样：合成主体管得了（它自己的房间下面），或者建的人是它的合成主体、`created_by_agent` 还在这一间和父房间里。改一边要改另一边。
   - 子房间第 2h-4a-2 步（#850）：网络 Agent 看口令、敲门、移出 Agent 也认它管的子房间（`managed` 先找整间房、再问 `AgentSubRoomManagement`）。子房间没有口令：看口令回 `sub_room`，换、停用回 409 `sub_room_has_no_code`，别让 `agent_room_room_access` 替子房间生成口令。
   - 子房间第 2h-4b 步（#851）：邀请人在子房间上走 `admit_person_by_agent`（只请父房间里的人、直接进来、批准他在等的申请），不算每天的邀请；整间房照旧发邀请、算每天的。看申请只有子房间有，整间房回空的。
-  - 子房间第 2i-2a 步（#854）：子房间不在 `GET /private-rooms` 里（旧版网页认不得），网页列表里找不到这间房时单独问一次（`usePrivateRoomListWith`），入场页在公开大厅入场说找不到以后才问。新加“在列表里找这间房”的地方也用它，别让服务器的列表带上子房间。
+  - 子房间第 2i-2a 步（#854）：子房间不在 `GET /private-rooms` 里（旧版网页认不得），网页列表里找不到这间房时单独问一次（`usePrivateRoomListWith`），入场页在公开大厅入场说找不到以后才问。新加“在列表里找这间房”的地方也用它，别让服务器的列表带上子房间。公共大厅（`LobbyRoom.publicLobby`，Matrix 上不加密、加入规则是 `public`）也不在列表里，别去问它：回 404，控制面记告警，浏览器验收算出错（#868）。
   - 子房间第 2i-6a 步（#859）：子房间设置是房间设置对话框里的第一节“这间子房间”（`sub-room-settings.tsx`），给了 `subRoom` 时成员、公开、Agent 进门几节不出现。别拆的：谁管得了看名单上有没有 `pendingRequestCount`（`managesSubRoom`），别另问权限；保存只发改了的项，拆门时不带 `hidden`（服务器回 400）。
   - 子房间第 2i-6b 步（#860）：子房间设置最上面“在等的”（`sub-room-waiting.tsx`），申请下面接着现成的敲门列表；左栏、齿轮上的点靠名单上的 `pendingRequestCount`，管着子房间时名单每 30 秒重读（`managingIntervalMs`），别改成人人都轮询。
   - 子房间第 2i-6c 步（#861）：子房间设置里“管这一间的”（`sub-room-managers.tsx`）。别拆的：房主和父房间的管理员那一条不给按钮、不进候选（`runsEverySubRoom`，父房间从房间列表里拿）；撤别人只有房主和管理员能做，子房间管理员只能自己不当了；设别人、撤别人照 `recentlyAuthenticated` 先请人重新登录，自己不当了不用。

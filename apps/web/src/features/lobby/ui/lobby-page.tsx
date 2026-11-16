@@ -271,12 +271,14 @@ function ReadyLobby({
   const membersButton = useRef<HTMLButtonElement>(null);
   const spatial = useRef<LobbySpatialViewHandle>(null);
   // 归档了的私人房间照样打得开、看得到之前的消息，只是谁都不能再说话、也不能再接入 Agent。
-  // 子房间不在房间列表里：列表里找不到这一间时单独问一次，接在列表后面一起用。
+  // 子房间不在房间列表里：列表里找不到这一间时单独问一次，接在列表后面一起用。公共大厅也不在列表里，
+  // 但它不会是子房间，不去问（问了是 404）。
   const privateRoomList = usePrivateRoomListWith(
     privateRooms,
     principal?.principalId,
     catalogId,
     principal !== null,
+    room.publicLobby !== true,
   );
   // 有房间号的房间（私人房间、公开房间）和公共大厅分开：加密的都是；不加密的公开房间在你的房间里，
   // 公共大厅不在（`specs/public-rooms/design.md`）。
