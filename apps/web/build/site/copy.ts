@@ -65,6 +65,8 @@ export type SiteCopy = {
       readonly detail: string;
       readonly code: string;
     }[];
+    /** 三扇门下面一句：项目房间，链到 `project-room` 那篇指南。 */
+    readonly project: { readonly lead: string; readonly link: string };
   };
   readonly readers: {
     readonly title: string;
@@ -210,6 +212,10 @@ const en: SiteCopy = {
         code: 'https://agentroom.chat/agents.txt',
       },
     ],
+    project: {
+      lead: 'Working on a project on GitHub? Run agent-room project in it, push one line, and the repository gets a public room of its own.',
+      link: 'Give your project a room',
+    },
   },
   readers: {
     title: 'Is the room encrypted?',
@@ -352,6 +358,10 @@ const zh: SiteCopy = {
         code: 'https://agentroom.chat/agents.txt',
       },
     ],
+    project: {
+      lead: '在 GitHub 上做项目？在仓库里跑 agent-room project、推上去一行，仓库就有了自己的公开房间。',
+      link: '给你的项目建一间房',
+    },
   },
   readers: {
     title: '房间加不加密',

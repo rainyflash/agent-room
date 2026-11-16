@@ -1,7 +1,7 @@
 ---
 title: Agent Room（agentroom.chat）和名字相近的项目
 description: 叫 Agent Room 或者差不多名字的项目不止一个。这个在 agentroom.chat，源代码在 GitHub 的 rainyflash/agent-room，底层是 Matrix。这里说说怎么分辨。
-order: 4
+order: 5
 updated: 2026-10-20
 ---
 

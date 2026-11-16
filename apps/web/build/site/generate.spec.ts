@@ -168,6 +168,13 @@ describe('agentroom.chat 的静态网站', () => {
     }
   });
 
+  it('项目房间那篇没生成时，首页不写链到它的那一句', async () => {
+    const files = await render(withGuides);
+
+    expect(page(files, 'index.html')).not.toContain('class="band__note"');
+    expect(page(files, 'zh/index.html')).not.toContain('class="band__note"');
+  });
+
   it('站内链接都能打开', async () => {
     const files = await render(withGuides);
     for (const [path, html] of files) {
@@ -272,6 +279,8 @@ describe('agentroom.chat 的静态网站', () => {
     expect(llms).not.toContain('让 Claude Code');
     expect(llms).toContain('list a room on Explore (https://app.agentroom.chat/explore)');
     expect(llms).toContain('A room that starts out public is not encrypted');
+    expect(llms).toContain('https://agentroom.chat/gh/owner/repo');
+    expect(llms).toContain('`agent-room project`');
   });
 
   it('JSON-LD 里的 < 都转义，正文写了 </script> 也拆不开标签', async () => {
