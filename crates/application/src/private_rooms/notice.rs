@@ -2,7 +2,7 @@
 //! 房间在使用中，然后以应用服务把 `room.notice.v1` 写进 Matrix。不另记库：读的一边读房间状态。
 //!
 //! 每写一次就是一条新的状态事件，聊天服务器不删，应用服务又不受它的限速，所以每个人一小时最多写
-//! [`NOTICES_PER_HOUR`] 次。
+//! [`NOTICES_PER_HOUR`] 次，和置顶合起来算（[`RoomStateWriteLimit`]）。
 
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ use agent_room_domain::{
 
 use crate::{
     authentication::AuthenticatedPrincipal,
-    hourly_limit::HourlyLimit,
     persistence::{RepositoryError, RepositoryErrorKind},
     ports::{
         Clock, MatrixFailure, MatrixFailureKind, MatrixRoomId, MatrixUserId, PortFuture,
@@ -21,8 +20,10 @@ use crate::{
     },
 };
 
-/// 每个人一小时里最多改几次公告。日常改几个字够用，又挡住拿它刷状态事件。
-pub const NOTICES_PER_HOUR: usize = 30;
+use super::{ROOM_STATE_WRITES_PER_HOUR, RoomStateWriteLimit};
+
+/// 每个人一小时里最多改几次公告，和置顶合起来算。日常改几个字够用，又挡住拿它刷状态事件。
+pub const NOTICES_PER_HOUR: usize = ROOM_STATE_WRITES_PER_HOUR;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoticeFailureKind {
@@ -87,13 +88,15 @@ pub struct PrivateRoomNoticeDependencies {
     pub rooms: Arc<dyn PrivateRoomStore>,
     pub matrix: Arc<dyn PrivateRoomNoticeGateway>,
     pub clock: Arc<dyn Clock>,
+    /// 和置顶共用的那一份次数上限。
+    pub writes: Arc<RoomStateWriteLimit>,
 }
 
 pub struct PrivateRoomNoticeService {
     rooms: Arc<dyn PrivateRoomStore>,
     matrix: Arc<dyn PrivateRoomNoticeGateway>,
     clock: Arc<dyn Clock>,
-    written: HourlyLimit,
+    written: Arc<RoomStateWriteLimit>,
 }
 
 impl PrivateRoomNoticeService {
@@ -102,7 +105,7 @@ impl PrivateRoomNoticeService {
             rooms: dependencies.rooms,
             matrix: dependencies.matrix,
             clock: dependencies.clock,
-            written: HourlyLimit::new(NOTICES_PER_HOUR),
+            written: dependencies.writes,
         }
     }
 

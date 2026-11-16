@@ -29,6 +29,7 @@ mod provisioning;
 mod public_room_directory;
 mod role_changes;
 mod room_moderation_grants;
+mod room_pins;
 mod sub_room_activity;
 mod sub_room_archive;
 mod sub_room_categories;
@@ -87,6 +88,7 @@ pub use role_changes::{
 pub use room_moderation_grants::{
     ActiveRoomModerationGrant, RoomModerationGrant, RoomModerationGrantStore,
 };
+pub use room_pins::{PinTarget, PrivateRoomPinsGateway, RoomPinsChange, RoomPinsWriteFailure};
 pub use sub_room_activity::{QuietSubRoom, SubRoomActivityStore};
 pub use sub_room_archive::{
     SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord, SubRoomArchiveStore,
