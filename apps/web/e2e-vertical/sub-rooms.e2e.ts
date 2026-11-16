@@ -25,9 +25,9 @@ import {
 // 子房间（specs/redesign/sub-rooms.md 第 2k-2a 步）：房主在真实网页上建房间、建分类，在下面开一间直接能进的
 // 和一间要申请的；第二个人凭邀请链接进来，他的本机 Agent 按“父房间名/子房间名”进那间直接能进的说一句，
 // 两边网页都解开，他的左栏里有了这一间。他申请另一间，房主在子房间设置里批准，他进去说话，房主看得到。
-// 第 2k-2b 步接着：房主归档 Agent 在的那间，Agent 说不了话；原来在里面的他恢复，Agent 接着说；房主把他移出
-// 上面那间，他和他的 Agent 在两间子房间里都出去了（由纵向验收问 Synapse）。
-// 网页和纵向验收靠三个文件对步子（tools/vertical.py 的 verify_sub_rooms_in_web）。
+// 第 2k-2b 步接着：房主归档 Agent 在的那间，Agent 说不了话；房主恢复（手动归档的只有管它的人能恢复），Agent
+// 接着说；房主把他移出上面那间，他和他的 Agent 在两间子房间里都出去了（由纵向验收问 Synapse）。
+// 网页和纵向验收靠几个文件对步子（tools/vertical.py 的 verify_sub_rooms_in_web）。
 const guestUsername = process.env.AGENT_ROOM_E2E_USERNAME;
 const guestPassword = process.env.AGENT_ROOM_E2E_PASSWORD;
 const ownerUsername = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_USERNAME;
@@ -342,15 +342,19 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
     await writeFile(archivedPath ?? '', '{}\n', 'utf8');
     await waitForStep(refusedPath ?? '');
 
-    // 原来在里面的人谁都能恢复：他点“恢复”，Agent 接着说，房主看得到。
-    await archivedNotice(guest).getByRole('button', { name: 'Restore' }).click();
-    await expect(archivedNotice(guest)).toHaveCount(0, { timeout: 60_000 });
+    // 手动归档的只有管它的人能恢复：他那边没有“恢复”，房主点。Agent 接着说，两边都看得到。
+    await expect(archivedNotice(guest).getByRole('button', { name: 'Restore' })).toHaveCount(0);
+    await archivedNotice(owner).getByRole('button', { name: 'Restore' }).click();
+    await expect(archivedNotice(owner)).toHaveCount(0, { timeout: 60_000 });
     await writeFile(restoredPath ?? '', '{}\n', 'utf8');
     await waitForStep(spokeAgainPath ?? '');
     const again = spokeSchema.parse(JSON.parse(await readFile(spokeAgainPath ?? '', 'utf8')));
-    await owner.goto(`/lobby/${openCatalogId}`);
-    await openConversation(owner);
-    await expectSaid(owner, again.text);
+    for (const page of [owner, guest]) {
+      await page.goto(`/lobby/${openCatalogId}`);
+      await expect(archivedNotice(page)).toHaveCount(0, { timeout: 60_000 });
+      await openConversation(page);
+      await expectSaid(page, again.text);
+    }
     expect(failures).toEqual({ guest: [], owner: [] });
 
     // 移出要最近登录过：另开一页刚登录的。移出以后他的网页还开着、会读不到房间，那边的报错不算。

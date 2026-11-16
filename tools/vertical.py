@@ -3812,8 +3812,9 @@ def verify_sub_rooms_in_web(
     """子房间在网页上（specs/redesign/sub-rooms.md 第 2k-2a 步）：第二个账号在真实网页上建房间、建分类，在下面
     开一间直接能进的、一间要申请的；验收账号凭邀请链接进来。他的本机 Agent 按“父房间名/子房间名”进直接能进的
     那间说一句，他自己也就跟着进去了，两边网页都解开；他申请另一间，房主在子房间设置里批准，他进去说话。
-    接着（2k-2b）房主归档 Agent 在的那间，Agent 发不出去；他恢复，Agent 接着说；房主把他移出上面那间，
-    他和他的 Agent 在两间子房间里都是 leave。网页和这边靠几个文件对步子（sub-rooms.e2e.ts）。"""
+    接着（2k-2b）房主归档 Agent 在的那间，Agent 发不出去；房主恢复（手动归档的他恢复不了），Agent 接着说；
+    房主把他移出上面那间，他和他的 Agent 在两间子房间里都是 leave。网页和这边靠几个文件对步子
+    （sub-rooms.e2e.ts）。"""
     steps = (
         SUB_ROOMS_JOINED,
         SUB_ROOMS_SPOKE,
