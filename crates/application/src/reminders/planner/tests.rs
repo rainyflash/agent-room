@@ -73,10 +73,10 @@ struct Matrix {
 }
 
 impl ReminderMatrixReader for Matrix {
-    fn personal_workspace(
-        &self,
-        _user: &MatrixUserId,
-    ) -> PortFuture<'_, MatrixResult<Option<Value>>> {
+    fn personal_workspace<'a>(
+        &'a self,
+        _user: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>> {
         let result = if self.workspace_unavailable {
             Err(MatrixFailure::new(
                 MatrixOperation::ReadAccountData,
@@ -88,13 +88,13 @@ impl ReminderMatrixReader for Matrix {
         Box::pin(async move { result })
     }
 
-    fn messages_since(
-        &self,
-        _user: &MatrixUserId,
-        room: &MatrixRoomId,
+    fn messages_since<'a>(
+        &'a self,
+        _user: &'a MatrixUserId,
+        room: &'a MatrixRoomId,
         _end_to_end_encrypted: bool,
         since: UtcMillis,
-    ) -> PortFuture<'_, MatrixResult<ReminderMessagePage>> {
+    ) -> PortFuture<'a, MatrixResult<ReminderMessagePage>> {
         self.asked
             .lock()
             .unwrap()

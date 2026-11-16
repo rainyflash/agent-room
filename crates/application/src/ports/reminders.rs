@@ -110,18 +110,18 @@ pub struct ReminderMessagePage {
 pub trait ReminderMatrixReader: Send + Sync {
     /// 他的个人工作区（`io.github.rainyflash.agentroom.personal-workspace.v1`），原样交回；没写过是
     /// `None`。
-    fn personal_workspace(
-        &self,
-        user: &MatrixUserId,
-    ) -> PortFuture<'_, MatrixResult<Option<Value>>>;
+    fn personal_workspace<'a>(
+        &'a self,
+        user: &'a MatrixUserId,
+    ) -> PortFuture<'a, MatrixResult<Option<Value>>>;
 
     /// 这间房里 `since`（含）以后的消息：加密的房间是 `m.room.encrypted`，不加密的是消息预览事件。
     /// 包括他自己发的，挑出来是用例的事。
-    fn messages_since(
-        &self,
-        user: &MatrixUserId,
-        room: &MatrixRoomId,
+    fn messages_since<'a>(
+        &'a self,
+        user: &'a MatrixUserId,
+        room: &'a MatrixRoomId,
         end_to_end_encrypted: bool,
         since: UtcMillis,
-    ) -> PortFuture<'_, MatrixResult<ReminderMessagePage>>;
+    ) -> PortFuture<'a, MatrixResult<ReminderMessagePage>>;
 }
