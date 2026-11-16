@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+import type { PrivateRoomFailure } from '@/features/private-rooms/domain/private-room';
+import type { Result } from '@/shared/result';
+
 /**
  * 房间的置顶（`specs/redesign/brief-and-pins.md`“置顶”）：房主和管理员把房间里已经有的一句挂到对话上方，
  * 放当前的事，一间房最多 5 条，新的在最前面。存在 Matrix 标准的 `m.room.pinned_events` 里，由控制面以
@@ -27,6 +30,30 @@ export type RoomPins = {
   readonly updatedAtUnixMs: number;
   readonly updatedBy: string;
 };
+
+export type RoomPinsGateway = {
+  /**
+   * 置顶或取消置顶一句（Matrix 事件 ID），回改完以后的整份，新的在最前面。只有房主和管理员能改，
+   * 房间要在使用中；满了回 `room_pins.full`。
+   */
+  updatePins(
+    catalogId: string,
+    eventId: string,
+    pinned: boolean,
+  ): Promise<Result<readonly RoomPin[], PrivateRoomFailure>>;
+};
+
+export const roomPinsResponseSchema = z.object({
+  pinned: z
+    .array(
+      z.object({
+        eventId: z.string(),
+        pinnedBy: z.string(),
+        pinnedAtUnixMs: z.number().int().nonnegative(),
+      }),
+    )
+    .max(ROOM_PINS_MAX),
+});
 
 /** 置顶改了一次：置顶了一句，或者取消了一条。对话里按时间写一行，点了跳到那一句。 */
 export type RoomPinsChangeKind = 'pinned' | 'unpinned';

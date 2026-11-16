@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Pin } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pin, PinOff, X } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -8,18 +8,24 @@ import { useRoomMessages } from '@/features/messages/ui/room-messages-context';
 import type { RoomPin, RoomPins } from '@/features/room-pins/domain/room-pins';
 import { formatDateTime } from '@/shared/i18n/formatters';
 
+import type { RoomPinsActions, RoomPinsFailureKind } from './room-pins-actions';
 import { usePinsSeen } from './use-pins-seen';
 
 import './room-pins-bar.css';
 
 export type RoomPinsBarProps = {
-  readonly pins: RoomPins;
+  /** 没有置顶时只在置顶没成时出来，说为什么。 */
+  readonly pins: RoomPins | undefined;
   /** Matrix 房间 ID：读这间房加载了的消息，看过哪一次按它记在个人工作区。换了房间要换一个组件（`key`）。 */
   readonly roomId: string;
   /** 这台设备上登录的人；自己改的不算没看过。 */
   readonly selfMatrixUserId: string | null;
   /** 点一条跳到对话里那一句（按 Matrix 事件 ID；没加载到就往前补）。 */
   readonly onJump: (eventId: string) => void;
+  /** 房主和管理员：列表里每条能取消置顶。 */
+  readonly actions?: RoomPinsActions | null;
+  readonly failure?: RoomPinsFailureKind | null;
+  readonly onDismissFailure?: () => void;
 };
 
 const emptyMessages: readonly RoomMessageSignal[] = [];
@@ -27,9 +33,18 @@ const emptyMessages: readonly RoomMessageSignal[] = [];
 /**
  * 须知下面那一行“置顶 N 条”（`specs/redesign/brief-and-pins.md`“置顶”）：平时一行，写最新那一条是谁说的、
  * 开头；点开列出每一句，点一句跳到对话里那一句。那一句写了什么、谁说的，照这台设备上已经加载、解开的
- * 那一条：服务器上只记事件 ID。改了以后你还没点开看过的，亮一个点；看没看过记在个人工作区里。
+ * 那一条：服务器上只记事件 ID。改了以后你还没点开看过的，亮一个点；看过没看过记在个人工作区里。
+ * 房主和管理员在列表里能取消置顶；置顶、取消没成时在这一行下面说为什么。
  */
-export function RoomPinsBar({ pins, roomId, selfMatrixUserId, onJump }: RoomPinsBarProps) {
+export function RoomPinsBar({
+  pins,
+  roomId,
+  selfMatrixUserId,
+  onJump,
+  actions = null,
+  failure = null,
+  onDismissFailure,
+}: RoomPinsBarProps) {
   const { t, i18n } = useTranslation();
   const listId = useId();
   const [expanded, setExpanded] = useState(false);
@@ -49,15 +64,17 @@ export function RoomPinsBar({ pins, roomId, selfMatrixUserId, onJump }: RoomPins
       ),
     [loaded],
   );
+  if (pins === undefined && failure === null) return null;
   const unseen =
+    pins !== undefined &&
     known &&
     pins.updatedBy !== selfMatrixUserId &&
     (seenAt === null || seenAt < pins.updatedAtUnixMs);
-  const toggle = (): void => {
-    if (!expanded) markSeen(pins.updatedAtUnixMs);
-    setExpanded(!expanded);
+  const open = (): void => {
+    if (pins !== undefined) markSeen(pins.updatedAtUnixMs);
+    setExpanded(true);
   };
-  const [first] = pins.entries;
+  const [first] = pins?.entries ?? [];
   const firstMessage = first === undefined ? undefined : byEvent.get(first.eventId);
   const summary =
     firstMessage?.lifecycle === 'active'
@@ -66,42 +83,84 @@ export function RoomPinsBar({ pins, roomId, selfMatrixUserId, onJump }: RoomPins
 
   return (
     <section aria-label={t('roomPins.label')} className="room-pins">
-      <button
-        aria-controls={listId}
-        aria-expanded={expanded}
-        className="room-pins__toggle"
-        onClick={toggle}
-        type="button"
-      >
-        <Pin aria-hidden="true" />
-        <strong>{t('roomPins.title')}</strong>
-        <span className="room-pins__count">{pins.entries.length}</span>
-        {unseen ? (
-          <span className="room-pins__dot">
-            <span className="sr-only">{t('roomPins.unseen')}</span>
-          </span>
-        ) : null}
-        {expanded || summary === null ? null : (
-          <span className="room-pins__summary">{summary}</span>
-        )}
-        <span className="sr-only">{t(expanded ? 'roomPins.collapse' : 'roomPins.expand')}</span>
-        {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-      </button>
-      <div hidden={!expanded} id={listId}>
-        <ol className="room-pins__list">
-          {pins.entries.map((pin) => (
-            <li key={pin.eventId}>
-              <PinnedItem
-                language={i18n.language}
-                message={byEvent.get(pin.eventId)}
-                onJump={onJump}
-                pin={pin}
-              />
-            </li>
-          ))}
-        </ol>
-        <p className="room-pins__footer">{t('roomPins.footer')}</p>
-      </div>
+      {pins === undefined ? null : (
+        <>
+          <button
+            aria-controls={listId}
+            aria-expanded={expanded}
+            className="room-pins__toggle"
+            onClick={() => {
+              if (expanded) setExpanded(false);
+              else open();
+            }}
+            type="button"
+          >
+            <Pin aria-hidden="true" />
+            <strong>{t('roomPins.title')}</strong>
+            <span className="room-pins__count">{pins.entries.length}</span>
+            {unseen ? (
+              <span className="room-pins__dot">
+                <span className="sr-only">{t('roomPins.unseen')}</span>
+              </span>
+            ) : null}
+            {expanded || summary === null ? null : (
+              <span className="room-pins__summary">{summary}</span>
+            )}
+            <span className="sr-only">{t(expanded ? 'roomPins.collapse' : 'roomPins.expand')}</span>
+            {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+          </button>
+          <div hidden={!expanded} id={listId}>
+            <ol className="room-pins__list">
+              {pins.entries.map((pin) => (
+                <li key={pin.eventId}>
+                  <PinnedItem
+                    language={i18n.language}
+                    message={byEvent.get(pin.eventId)}
+                    onJump={onJump}
+                    pin={pin}
+                  />
+                  {actions === null ? null : (
+                    <button
+                      aria-label={t('roomPins.action.unpin')}
+                      className="room-pins__unpin"
+                      disabled={actions.pending.has(pin.eventId)}
+                      onClick={() => {
+                        actions.toggle(pin.eventId, false);
+                      }}
+                      title={t('roomPins.action.unpin')}
+                      type="button"
+                    >
+                      <PinOff aria-hidden="true" />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ol>
+            <p className="room-pins__footer">{t('roomPins.footer')}</p>
+          </div>
+        </>
+      )}
+      {failure === null ? null : (
+        <div className="room-pins__failure" role="alert">
+          <span>{t(failureKey(failure))}</span>
+          {failure === 'full' && pins !== undefined && !expanded ? (
+            <button className="room-pins__failure-action" onClick={open} type="button">
+              {t('roomPins.failure.open')}
+            </button>
+          ) : null}
+          {onDismissFailure === undefined ? null : (
+            <button
+              aria-label={t('roomPins.failure.dismiss')}
+              className="room-pins__dismiss"
+              onClick={onDismissFailure}
+              title={t('roomPins.failure.dismiss')}
+              type="button"
+            >
+              <X aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -150,4 +209,29 @@ function PinnedItem({
 
 function textOf(message: RoomMessageSignal): string {
   return message.preview?.conversation?.text ?? '';
+}
+
+type FailureKey =
+  | 'roomPins.failure.full'
+  | 'roomPins.failure.rateLimited'
+  | 'roomPins.failure.forbidden'
+  | 'roomPins.failure.archived'
+  | 'roomPins.failure.notMessage'
+  | 'roomPins.failure.other';
+
+function failureKey(failure: RoomPinsFailureKind): FailureKey {
+  switch (failure) {
+    case 'full':
+      return 'roomPins.failure.full';
+    case 'rate_limited':
+      return 'roomPins.failure.rateLimited';
+    case 'forbidden':
+      return 'roomPins.failure.forbidden';
+    case 'archived':
+      return 'roomPins.failure.archived';
+    case 'not_a_message':
+      return 'roomPins.failure.notMessage';
+    case 'other':
+      return 'roomPins.failure.other';
+  }
 }
