@@ -8,6 +8,7 @@ const errorEnvelopeSchema = z.looseObject({
   code: z.string().min(1),
   correlationId: z.string().optional(),
   retryable: z.boolean().optional(),
+  retryAfterSeconds: z.number().int().nonnegative().optional(),
 });
 
 export type PrivateRoomHttpOptions = {
@@ -96,14 +97,17 @@ export class PrivateRoomHttp {
 
 async function readFailure(response: Response): Promise<PrivateRoomFailure> {
   const correlationId = response.headers.get('x-correlation-id') ?? undefined;
+  const headerRetryAfter = parseRetryAfter(response.headers.get('retry-after'));
   try {
     const parsed = errorEnvelopeSchema.safeParse(await response.json());
     if (parsed.success) {
       const responseCorrelationId = parsed.data.correlationId ?? correlationId;
+      const retryAfterSeconds = parsed.data.retryAfterSeconds ?? headerRetryAfter;
       return {
         code: parsed.data.code,
         retryable: parsed.data.retryable ?? response.status >= 500,
         ...(responseCorrelationId === undefined ? {} : { correlationId: responseCorrelationId }),
+        ...(retryAfterSeconds === undefined ? {} : { retryAfterSeconds }),
       };
     }
   } catch {
@@ -113,5 +117,13 @@ async function readFailure(response: Response): Promise<PrivateRoomFailure> {
     code: `private_room.http_${String(response.status)}`,
     retryable: response.status >= 500,
     ...(correlationId === undefined ? {} : { correlationId }),
+    ...(headerRetryAfter === undefined ? {} : { retryAfterSeconds: headerRetryAfter }),
   };
+}
+
+/** `Retry-After` 只认秒数；写成日期的不认。 */
+function parseRetryAfter(value: string | null): number | undefined {
+  if (value === null || !/^\d{1,9}$/u.test(value.trim())) return undefined;
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
 }

@@ -19,8 +19,11 @@ import {
   type PrivateRoomListingGateway,
   type PrivateRoomListingSettings,
 } from '@/features/private-rooms/domain/private-room-listing';
+import type { ProjectRoomGateway } from '@/features/private-rooms/domain/project-rooms';
+import { useRoomRepository } from '@/features/private-rooms/data/project-room-queries';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
+import { ProjectRoomRepository } from '@/features/private-rooms/ui/project-room-repository';
 import { RoomListingChoices } from '@/features/private-rooms/ui/room-listing-choices';
 import type { Result } from '@/shared/result';
 
@@ -29,6 +32,8 @@ import './private-room-public-settings.css';
 export type PrivateRoomPublicSettingsProps = {
   readonly listings: PrivateRoomListingGateway;
   readonly principalId: string;
+  /** 绑 GitHub 仓库（specs/redesign/project-rooms.md）；没有这项服务时不出“GitHub 仓库”一组。 */
+  readonly projects?: ProjectRoomGateway | undefined;
   readonly room: PrivateRoom;
 };
 
@@ -36,12 +41,14 @@ type ListingResult = Result<PrivateRoomListing, PrivateRoomFailure>;
 
 /**
  * 房间设置的“公开”一节（`specs/public-rooms/design.md`“网页”）：公开还是私密、别人怎么进、新成员
- * 拿到什么、没有账号的网络 Agent 进不进得来，以及分享链接。房主能改，别的成员只看得到。公开和
+ * 拿到什么、没有账号的网络 Agent 进不进得来，以及分享链接。公开着的房间，房主还看得到“GitHub 仓库”
+ * 一组（`specs/redesign/project-rooms.md`）。房主能改，别的成员只看得到。公开和
  * 私密之间切换先在这一节里确认一次，说清楚加密怎么变、不登录的人看得到哪些。
  */
 export function PrivateRoomPublicSettings({
   listings,
   principalId,
+  projects,
   room,
 }: PrivateRoomPublicSettingsProps) {
   const { t } = useTranslation();
@@ -80,7 +87,13 @@ export function PrivateRoomPublicSettings({
         </Banner>
       )}
       {room.ownerPrincipalId === principalId ? (
-        <OwnerSettings current={current} listings={listings} room={room} />
+        <OwnerSettings
+          current={current}
+          listings={listings}
+          principalId={principalId}
+          projects={projects}
+          room={room}
+        />
       ) : (
         <ListingSummary current={current} />
       )}
@@ -91,14 +104,21 @@ export function PrivateRoomPublicSettings({
 function OwnerSettings({
   current,
   listings,
+  principalId,
+  projects,
   room,
 }: {
   readonly current: PrivateRoomListing;
   readonly listings: PrivateRoomListingGateway;
+  readonly principalId: string;
+  readonly projects: ProjectRoomGateway | undefined;
   readonly room: PrivateRoom;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // 绑着仓库的房间不能换分享码：链接写在仓库里。和“GitHub 仓库”一组读同一份。
+  const repository = useRoomRepository(projects, room.catalogId, current.listed);
+  const repositoryBound = repository.data?.ok === true && repository.data.value !== null;
   // 改了才记下；没改时跟着服务器上的。
   const [draft, setDraft] = useState<PrivateRoomListingSettings | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -221,7 +241,17 @@ function OwnerSettings({
         <PrivateRoomFailureNotice failure={failure} />
       )}
       {saved.listed ? (
-        <ShareLink current={current} owner={{ catalogId: room.catalogId, listings }} />
+        <ShareLink
+          current={current}
+          owner={{ catalogId: room.catalogId, listings, repositoryBound }}
+        />
+      ) : null}
+      {saved.listed && projects !== undefined ? (
+        <ProjectRoomRepository
+          catalogId={room.catalogId}
+          gateway={projects}
+          principalId={principalId}
+        />
       ) : null}
     </>
   );
@@ -328,13 +358,17 @@ function ListingSummary({ current }: { readonly current: PrivateRoomListing }) {
   );
 }
 
-/** 分享链接；给了 `owner` 才有“换一个分享码”。 */
+/** 分享链接；给了 `owner` 才有“换一个分享码”，绑着仓库时没有（链接写在仓库里）。 */
 function ShareLink({
   current,
   owner,
 }: {
   readonly current: PrivateRoomListing;
-  readonly owner?: { readonly catalogId: string; readonly listings: PrivateRoomListingGateway };
+  readonly owner?: {
+    readonly catalogId: string;
+    readonly listings: PrivateRoomListingGateway;
+    readonly repositoryBound: boolean;
+  };
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -370,7 +404,9 @@ function ShareLink({
           {t('privateRooms.listing.share.replaced')}
         </p>
       ) : null}
-      {owner === undefined ? null : confirming ? (
+      {owner?.repositoryBound === true || failure?.code === 'room_listing.repository_bound' ? (
+        <p className="room-listing__note">{t('projectRooms.shareCodeBound')}</p>
+      ) : owner === undefined ? null : confirming ? (
         <Banner
           action={
             <div className="room-listing__actions">
@@ -413,7 +449,9 @@ function ShareLink({
           {t('privateRooms.listing.share.replace')}
         </Button>
       )}
-      {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}
+      {failure === null || failure.code === 'room_listing.repository_bound' ? null : (
+        <PrivateRoomFailureNotice failure={failure} />
+      )}
     </section>
   );
 }

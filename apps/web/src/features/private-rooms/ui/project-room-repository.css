@@ -1,0 +1,97 @@
+/* 房间设置“公开”一节里的“GitHub 仓库”一组（specs/redesign/project-rooms.md，3P-5）：和分享链接一样一条线隔开。 */
+.room-repository {
+  display: grid;
+  min-width: 0;
+  gap: 0.6rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--ar-line);
+}
+
+.room-repository h3 {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+}
+
+.room-repository__body {
+  display: grid;
+  min-width: 0;
+  gap: 0.6rem;
+}
+
+.room-repository__form {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.5rem;
+}
+
+/* 按钮和输入框对齐：标签那一行的高度空出来。 */
+.room-repository__form > .ar-button {
+  margin-top: 1.55rem;
+}
+
+.room-repository__state {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.room-repository__state a {
+  color: var(--color-ink);
+  text-underline-offset: 3px;
+}
+
+.room-repository__mark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--ar-accent);
+}
+
+.room-repository__line {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+}
+
+.room-repository__label {
+  color: var(--ar-ink-72);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 那两行很长：在框里折行，别把对话框撑宽。 */
+.room-repository__line .ar-copy-block__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.room-repository__result {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.room-repository__retry {
+  justify-self: start;
+}
+
+@media (max-width: 640px) {
+  .room-repository__form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .room-repository__form > .ar-button {
+    margin-top: 0;
+    justify-self: start;
+  }
+}
