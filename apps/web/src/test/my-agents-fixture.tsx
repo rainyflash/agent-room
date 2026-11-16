@@ -368,17 +368,23 @@ const signInIntents: string[] = [];
 const openedLinks: string[] = [];
 
 const fixtureControls: MyAgentsFixtureControls = {
-  arriveAgent: () => {
+  arriveAgent: (options) => {
     const sessionKey = parkedInvitation?.sessionKey ?? null;
     parkedInvitation = null;
+    // 登记了后台回复的：用后台回复夹具认得的那个连接和 Agent，绑定才对得上。
+    const registers = options?.registers === true;
     arrivedSessions.push({
       displayName: 'Scout',
-      sessionKey,
+      ...(registers
+        ? { sessionKey: reception.sessionKey, receptionOffer: reception.offer }
+        : { sessionKey }),
       roomId: '!fixture:matrix.test',
       session: {
-        sessionId: `0198b601-77a6-7bb8-83eb-a8fe68c97e${String(50 + arrivedSessions.length)}`,
+        sessionId: registers
+          ? '0198b601-77a1-7bb8-83eb-a8fe68c97e48'
+          : `0198b601-77a6-7bb8-83eb-a8fe68c97e${String(50 + arrivedSessions.length)}`,
         state: 'ready',
-        agentId: '0198b601-77a6-7bb8-83eb-a8fe68c97e49',
+        agentId: registers ? agent.agentId : '0198b601-77a6-7bb8-83eb-a8fe68c97e49',
         errorCode: null,
       },
       lastInboxReadAgoMs: 1_000,

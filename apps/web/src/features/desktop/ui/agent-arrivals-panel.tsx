@@ -5,7 +5,9 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { MessageGateway } from '@/features/messages/domain/message';
+import { RECEPTION_AUTHORIZATION_DAYS } from '../application/enable-reception';
 import type { AgentArrival } from '../domain/agent-arrivals';
+import type { InviteBackgroundState } from '../domain/invite-background';
 import { InviteReplyProgress } from './invite-reply-progress';
 
 /** 复制后这么久还没人进来，提示去问问 Agent。 */
@@ -24,6 +26,7 @@ type FirstReply = {
  */
 export function AgentArrivalsPanel({
   arrivals,
+  background = null,
   copiedAt,
   observable,
   unavailable,
@@ -32,6 +35,8 @@ export function AgentArrivalsPanel({
   onDone,
 }: {
   readonly arrivals: readonly AgentArrival[];
+  /** 勾着“你不在时也让它回话”时，每个新来的 Agent 后台回复开到哪了（按到达的 key）。 */
+  readonly background?: ReadonlyMap<string, InviteBackgroundState> | null;
   readonly copiedAt: number | null;
   /** 能不能看到它进来：网络方式又不在房间里时看不到。 */
   readonly observable: boolean;
@@ -78,6 +83,7 @@ export function AgentArrivalsPanel({
               {arrival.state === 'ready' && arrival.active && !arrival.elsewhere ? (
                 <span>{t('agentInvite.arrival.active')}</span>
               ) : null}
+              <BackgroundStatus state={background?.get(arrival.key)} />
               {arrival.state === 'failed' && arrival.errorCode !== null ? (
                 <code>{t('agentInvite.arrival.code', { code: arrival.errorCode })}</code>
               ) : null}
@@ -103,6 +109,31 @@ export function AgentArrivalsPanel({
       )}
     </section>
   );
+}
+
+/** 一行说后台回复开到哪了；没开成时带上错误码，方便排查。 */
+function BackgroundStatus({ state }: { readonly state: InviteBackgroundState | undefined }) {
+  const { t } = useTranslation();
+  if (state === undefined) return null;
+  switch (state.kind) {
+    case 'waiting':
+      return <span data-background="waiting">{t('agentInvite.background.waiting')}</span>;
+    case 'enabling':
+      return <span data-background="enabling">{t('agentInvite.background.enabling')}</span>;
+    case 'on':
+      return (
+        <span data-background="on">
+          {t('agentInvite.background.on', { days: RECEPTION_AUTHORIZATION_DAYS })}
+        </span>
+      );
+    case 'failed':
+      return (
+        <>
+          <span data-background="failed">{t('agentInvite.background.failed')}</span>
+          <code>{t('agentInvite.arrival.code', { code: state.code })}</code>
+        </>
+      );
+  }
 }
 
 function ArrivalIcon({ arrival }: { readonly arrival: AgentArrival }): ReactNode {
