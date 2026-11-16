@@ -292,3 +292,4 @@
   - 和设计不一样的：接手的人原来不能说话时要补发言级别。设计以为管理员都能说话，可领域规则里“管理”不带着“发言”。
 - 2026-11-16 R6-3 做完（#878）：网页认 `room.owner_handover.v1`，对话里按时间写一行房间交给了谁（`RoomNoticeChangeLine`，图标是王冠）。读的规则在 `private-rooms/domain/owner-handover.ts`，和公告一样只认 `state_key` 为空的状态事件，私聊里不显示。浏览器验收用 `lobby-scene.html?private&handover`。
   - 和设计不一样的：没有把换房主塞进 `RoomNoticeChange`，另加了 `RoomOwnerHandover`，两种合起来叫 `RoomStateLine`；投影上的 `noticeChanges` 跟着改名 `stateLines`，对话里的一项从 `notice` 改成 `state`。
+- 2026-11-16 R6-4 做完（#PR）：真实 Synapse 的测试（`matrix-adapter` 的 `real_synapse/owner_handover.rs`，只在派发 `suite=all` 时跑）：应用服务写得进 `room.owner_handover.v1`，写两遍一样的不出错，房间里的人读得到；还多查了一样：房间里能说话的人自己写这一类状态被拒（`Forbidden`），网页只认状态事件靠的就是它。
