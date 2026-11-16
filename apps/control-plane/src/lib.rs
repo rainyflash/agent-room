@@ -1269,13 +1269,14 @@ fn build_room_join_http_state(
     ))
 }
 
-/// 发现页的“最近有人说话”由应用服务读时间、写进公开设置那一行。
+/// 发现页的“最近有人说话”由应用服务读时间、写进公开设置那一行；子房间的同一轮读，写进父子关系那一行。
 fn start_public_room_activity(
     dependencies: &AgentFeatureDependencies,
 ) -> public_room_activity::PublicRoomActivityWorker {
     public_room_activity::PublicRoomActivityWorker::start(Arc::new(PublicRoomActivityService::new(
         PublicRoomActivityDependencies {
             store: dependencies.repositories.clone(),
+            sub_rooms: dependencies.repositories.clone(),
             matrix: dependencies.matrix_identities.clone(),
             clock: dependencies.system_runtime.clone(),
         },

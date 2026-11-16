@@ -19,7 +19,7 @@ use super::{
     *,
 };
 
-async fn archive_now(
+pub(super) async fn archive_now(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     sub_room: RoomCatalogId,

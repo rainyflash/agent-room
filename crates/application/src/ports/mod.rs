@@ -183,8 +183,8 @@ pub use rooms::{
     SubRoomCategoryRemoval, SubRoomCategoryRevision, SubRoomCategoryStore,
 };
 pub use rooms::{
-    SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord, SubRoomArchiveStore,
-    SubRoomRestoration,
+    SubRoomActivityStore, SubRoomArchival, SubRoomArchiveOutcome, SubRoomArchiveRecord,
+    SubRoomArchiveStore, SubRoomRestoration,
 };
 pub use runtime::{Clock, IdentifierFactory};
 

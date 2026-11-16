@@ -1,5 +1,6 @@
 //! 发现页的“最近有人说话”（`specs/public-rooms/design.md`）：每 5 分钟以应用服务读一次每间公开房间
-//! 最新一条消息事件的时间。与 HTTP 服务共同存活、共同关闭，启动时读一次。
+//! 最新一条消息事件的时间，子房间的在同一轮里读（`specs/redesign/sub-rooms.md` 第 2j-1 步）。与 HTTP
+//! 服务共同存活、共同关闭，启动时读一次。
 
 use std::{sync::Arc, time::Duration};
 
@@ -59,19 +60,19 @@ async fn run_worker(
                 Ok(round) if round.unreadable == 0 => tracing::debug!(
                     checked = round.checked,
                     recorded = round.recorded,
-                    "读了一轮公开房间最近说话的时间"
+                    "读了一轮公开房间和子房间最近说话的时间"
                 ),
                 // 单间读不了多半是房间刚关、正在归档，下一轮就不在名单里了。
                 Ok(round) => tracing::info!(
                     checked = round.checked,
                     recorded = round.recorded,
                     unreadable = round.unreadable,
-                    "有几间公开房间这一轮没读到最近说话的时间"
+                    "有几间公开房间或子房间这一轮没读到最近说话的时间"
                 ),
                 Err(error) => tracing::warn!(
                     operation = error.operation(),
                     kind = ?error.kind(),
-                    "这一轮没读成公开房间最近说话的时间，5 分钟后再来"
+                    "这一轮没读成公开房间和子房间最近说话的时间，5 分钟后再来"
                 ),
             },
             _ = &mut stop_requested => break,
