@@ -24,6 +24,7 @@ mod human_sessions;
 mod moderation;
 mod owner_handover;
 mod public_lobby;
+mod reminders;
 mod room_listing;
 mod room_notices;
 mod rooms;

@@ -16,6 +16,11 @@ mod observability;
 mod operational_metrics;
 mod public_room_activity;
 mod public_watch;
+/// 提醒那一轮的后台任务随 4R-4c 加在这里；先放真实 Synapse 上读的验收。
+#[cfg(test)]
+mod reminders {
+    mod real_dependency_tests;
+}
 mod request_regions;
 mod runtime;
 mod shutdown;
