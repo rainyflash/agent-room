@@ -105,7 +105,15 @@ async fn 同名的没归档子房间回到那间_不分大小写_子房间不算
     assert!(!again.created);
     assert_eq!(again.room, first.room);
     assert_eq!(again.category, None, "回到已有的那间不说分类");
-    assert_eq!(harness.rooms.sub_rooms_created.lock().unwrap().len(), 1);
+    let under = harness
+        .rooms
+        .rooms
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|snapshot| snapshot.parent_catalog_id() == Some(room.room.catalog_id))
+        .count();
+    assert_eq!(under, 1, "没有另建");
 
     let whole = parent(&harness, &token, "Design").await;
     assert!(whole.created, "同名的子房间不算它没关的整间房，整间房照建");
@@ -483,6 +491,8 @@ async fn 看不了名单时说父房间用不了_别的照管房间的说() {
         NetworkAgentFailureKind::SubRoomParentUnavailable,
         "不是房间号、也不是它进过的房间"
     );
+    *harness.rooms.sub_room_list.lock().unwrap() =
+        Some(Err(room_failure(PrivateRoomFailureKind::NotFound)));
     assert_eq!(
         kind(list(&harness, &token, &other, false).await),
         NetworkAgentFailureKind::SubRoomParentUnavailable,
