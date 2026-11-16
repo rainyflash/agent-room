@@ -45,7 +45,7 @@ pub(super) async fn archive_now(
     .expect("写入不报错")
 }
 
-async fn restore_now(
+pub(super) async fn restore_now(
     repositories: &PostgresRepositories,
     parent: RoomCatalogId,
     sub_room: RoomCatalogId,
