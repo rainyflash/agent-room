@@ -378,7 +378,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
         room: Option<&'a MatrixRoomId>,
         limit: u16,
     ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomNotice>>> {
-        Box::pin(network_agent_notices::take(self.pool(), id, room, limit))
+        Box::pin(async move { network_agent_notices::take(self.pool(), id, room, limit).await })
     }
 
     fn give_room_notice<'a>(

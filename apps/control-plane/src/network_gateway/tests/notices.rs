@@ -7,7 +7,7 @@ use agent_room_application::ports::{
     MatrixEventId, MatrixEventType, MatrixRoomId, MatrixRoomSync, MatrixRoomSyncKind,
     MatrixSyncBatch, MatrixSyncToken, MatrixTimelineEvent, MatrixUserId, NetworkAgentRoomNotice,
 };
-use agent_room_bridge_core::messages::ROOM_NOTICE_EVENT_TYPE;
+use agent_room_bridge_core::messages::{ROOM_NOTICE_EVENT_TYPE, ROOM_PARENT_NOTICE_EVENT_TYPE};
 use agent_room_domain::time::UtcMillis;
 use serde_json::{Value, json};
 
@@ -71,6 +71,7 @@ fn notice_event(event_id: &str, text: &str, second: u32) -> MatrixTimelineEvent 
 fn notice(text: Option<&str>, second: u32) -> NetworkAgentRoomNotice {
     NetworkAgentRoomNotice {
         room_id: MatrixRoomId::new(PRIVATE_ROOM).unwrap(),
+        in_sub_room: None,
         text: text.map(str::to_owned),
         updated_by: OWNER.to_owned(),
         updated_at_ms: 1_793_692_800_000 + i64::from(second) * 1_000,
@@ -124,8 +125,8 @@ async fn 进房间时交了现在的_之后同步到同一版不再交_改了再
         .unwrap()
         .insert(PRIVATE_ROOM.to_owned(), content("回复要短。", 1));
     assert_eq!(
-        harness.gateway.current_notice(TOKEN, PRIVATE_ROOM).await,
-        Some(notice(Some("回复要短。"), 1))
+        harness.gateway.current_notices(TOKEN, PRIVATE_ROOM).await,
+        [notice(Some("回复要短。"), 1)]
     );
     assert!(take(&harness).await.notices.is_empty(), "进房间时交过了");
     assert_eq!(
@@ -141,18 +142,117 @@ async fn 进房间时交了现在的_之后同步到同一版不再交_改了再
         .unwrap()
         .insert(PRIVATE_ROOM.to_owned(), content("", 3));
     assert_eq!(
-        harness.gateway.current_notice(TOKEN, PRIVATE_ROOM).await,
-        None
+        harness.gateway.current_notices(TOKEN, PRIVATE_ROOM).await,
+        []
     );
     assert_eq!(
         harness
             .gateway
-            .current_notice(TOKEN, "!elsewhere:matrix.test")
+            .current_notices(TOKEN, "!elsewhere:matrix.test")
             .await,
-        None
+        []
     );
     assert!(
         take(&harness).await.notices.is_empty(),
         "撤掉的那一版进房间时交过了"
+    );
+}
+
+const PARENT: &str = "!project:matrix.test";
+
+/// 子房间里父房间须知的副本的内容；正文是空的就是父房间撤掉了。
+fn copy_content(text: &str, second: u32) -> Value {
+    json!({
+        "schemaVersion": "1.0",
+        "eventType": ROOM_PARENT_NOTICE_EVENT_TYPE,
+        "text": text,
+        "updatedBy": OWNER,
+        "updatedAt": format!("2026-11-16T08:00:{second:02}Z"),
+        "parentRoomId": PARENT,
+    })
+}
+
+fn copy_event(event_id: &str, text: &str, second: u32) -> MatrixTimelineEvent {
+    MatrixTimelineEvent::new(
+        Some(MatrixEventId::new(event_id).unwrap()),
+        Some(MatrixUserId::new("@agent-room:matrix.test").unwrap()),
+        MatrixEventType::new(ROOM_PARENT_NOTICE_EVENT_TYPE).unwrap(),
+        Some(String::new()),
+        None,
+        Some(1_794_819_600_000),
+        copy_content(text, second),
+    )
+    .unwrap()
+}
+
+/// 父房间那一段：`roomId` 是父房间的，记在它在的子房间上。
+fn parent(text: Option<&str>, second: u32) -> NetworkAgentRoomNotice {
+    NetworkAgentRoomNotice {
+        room_id: MatrixRoomId::new(PARENT).unwrap(),
+        in_sub_room: Some(MatrixRoomId::new(PRIVATE_ROOM).unwrap()),
+        text: text.map(str::to_owned),
+        updated_by: OWNER.to_owned(),
+        updated_at_ms: 1_794_816_000_000 + i64::from(second) * 1_000,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn 子房间里父房间那一段按父房间号交_和这一间的分开记交过哪一版() {
+    let harness = in_private(vec![
+        // 进子房间以后，同步又给了进房间时交过的那两版。
+        batch(
+            "e1",
+            vec![
+                notice_event("$n1:matrix.test", "只改前端。", 1),
+                copy_event("$c1:matrix.test", "先说要做什么。", 1),
+            ],
+        ),
+        batch(
+            "e2",
+            vec![copy_event("$c2:matrix.test", "做完告诉主人。", 2)],
+        ),
+        batch("e3", vec![copy_event("$c3:matrix.test", "", 3)]),
+    ]);
+    harness
+        .matrix
+        .notices
+        .lock()
+        .unwrap()
+        .insert(PRIVATE_ROOM.to_owned(), content("只改前端。", 1));
+    harness
+        .matrix
+        .parent_notices
+        .lock()
+        .unwrap()
+        .insert(PRIVATE_ROOM.to_owned(), copy_content("先说要做什么。", 1));
+    assert_eq!(
+        harness.gateway.current_notices(TOKEN, PRIVATE_ROOM).await,
+        [
+            notice(Some("只改前端。"), 1),
+            parent(Some("先说要做什么。"), 1)
+        ],
+        "这一间的在前"
+    );
+    assert!(
+        take(&harness).await.notices.is_empty(),
+        "进房间时两段都交过了"
+    );
+    assert_eq!(
+        take(&harness).await.notices,
+        [parent(Some("做完告诉主人。"), 2)],
+        "父房间改了只交父房间那一段"
+    );
+    assert_eq!(take(&harness).await.notices, [parent(None, 3)], "撤掉也说");
+
+    // 父房间撤掉了：进房间时只有这一间的。
+    harness
+        .matrix
+        .parent_notices
+        .lock()
+        .unwrap()
+        .insert(PRIVATE_ROOM.to_owned(), copy_content("", 3));
+    assert_eq!(
+        harness.gateway.current_notices(TOKEN, PRIVATE_ROOM).await,
+        [notice(Some("只改前端。"), 1)]
     );
 }

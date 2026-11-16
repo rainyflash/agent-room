@@ -1511,6 +1511,7 @@ async fn record_notice(
             updated_by: "@owner:matrix.test".to_owned(),
             updated_at_ms,
         }),
+        parent_notice: None,
     };
     store
         .record_room_state(&[change], UtcMillis::new(9_000).expect("时间有效"))
@@ -1581,6 +1582,7 @@ async fn 记下房间名和加入时间_离开清掉_再加入重新记() {
         name,
         membership,
         notice: None,
+        parent_notice: None,
     };
     assert_eq!(
         store.room_context(&room_id).await.expect("可以读"),

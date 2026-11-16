@@ -231,13 +231,13 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         source_digest: [u8; 32],
     ) -> PortFuture<'a, Result<NetworkAgentEntry, NetworkGatewayFailure>>;
 
-    /// 进房间以后，这个房间现在的公告（`specs/public-rooms/design.md`“常驻公告”），记成交过了。
-    /// 没有公告、撤掉了或者读不到都是没有。
-    fn current_notice<'a>(
+    /// 进房间以后，这个房间现在的公告（`specs/public-rooms/design.md`“常驻公告”），子房间里还有父房间
+    /// 那一段（`in_sub_room` 有值），记成交过了。没有公告、撤掉了或者读不到都是没有。
+    fn current_notices<'a>(
         &'a self,
         token: &'a str,
         room_id: &'a str,
-    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>>;
+    ) -> PortFuture<'a, Vec<NetworkAgentRoomNotice>>;
 
     /// 等消息：按 `request` 的规则等到有事，防抖后交出去；等满时间就空手返回。
     fn wait_for_messages<'a>(
@@ -1156,12 +1156,12 @@ impl NetworkAgentMessaging for NetworkGateway {
         Box::pin(self.enter_room_internal(token, room, source_digest))
     }
 
-    fn current_notice<'a>(
+    fn current_notices<'a>(
         &'a self,
         token: &'a str,
         room_id: &'a str,
-    ) -> PortFuture<'a, Option<NetworkAgentRoomNotice>> {
-        Box::pin(self.current_notice_internal(token, room_id))
+    ) -> PortFuture<'a, Vec<NetworkAgentRoomNotice>> {
+        Box::pin(self.current_notices_internal(token, room_id))
     }
 
     fn wait_for_messages<'a>(

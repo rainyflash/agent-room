@@ -1155,6 +1155,7 @@ async fn in_two_rooms(
 fn room_notice(room: &MatrixRoomId, text: Option<&str>, at_ms: i64) -> NetworkAgentRoomNotice {
     NetworkAgentRoomNotice {
         room_id: room.clone(),
+        in_sub_room: None,
         text: text.map(str::to_owned),
         updated_by: "@owner:matrix.test".to_owned(),
         updated_at_ms: at_ms,
@@ -1291,6 +1292,87 @@ async fn 进房间时交了的那一版之后同步到不再交_改了再交_一
     let mut both: Vec<_> = first.into_iter().chain(second).collect();
     both.sort_by(|left, right| left.room_id.as_str().cmp(right.room_id.as_str()));
     assert_eq!(both, [changed, lobby_rule], "剩下的下次再交");
+    database.close().await;
+}
+
+/// 子房间（这里是 den）里父房间须知的副本：`roomId` 是父房间的。
+fn parent_notice(text: Option<&str>, at_ms: i64) -> NetworkAgentRoomNotice {
+    NetworkAgentRoomNotice {
+        room_id: MatrixRoomId::new("!project:matrix.test").expect("房间 ID 有效"),
+        in_sub_room: Some(den()),
+        ..room_notice(&den(), text, at_ms)
+    }
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 子房间里父房间那一段和这一间的分开记交过哪一版_排在后面_满了下次再交() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let id = in_two_rooms(&database, &repositories).await;
+    let own = room_notice(&den(), Some("只改前端。"), 100);
+    let first = parent_notice(Some("先说要做什么。"), 100);
+    // 进房间时交了这一间的和父房间那一段，同步到同一版都不再交。
+    for notice in [&own, &first] {
+        repositories
+            .give_room_notice(id, notice)
+            .await
+            .expect("写入");
+    }
+    sync_notices(
+        &repositories,
+        id,
+        (None, "s1"),
+        vec![
+            own.clone(),
+            first.clone(),
+            parent_notice(Some("更旧的"), 50),
+        ],
+    )
+    .await;
+    assert!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读")
+            .is_empty()
+    );
+
+    // 两段都改了：这一间的在前；只给一个位置时父房间那一段下次再交。
+    let changed = room_notice(&den(), Some("只改前端，别动接口。"), 200);
+    let later = parent_notice(Some("做完告诉主人。"), 200);
+    sync_notices(
+        &repositories,
+        id,
+        (Some("s1"), "s2"),
+        vec![later.clone(), changed.clone()],
+    )
+    .await;
+    assert_eq!(
+        repositories
+            .take_room_notices(id, None, 1)
+            .await
+            .expect("读"),
+        [changed]
+    );
+    assert_eq!(
+        repositories
+            .take_room_notices(id, Some(&den()), 4)
+            .await
+            .expect("读"),
+        [later]
+    );
+
+    // 父房间撤掉了也交一次。
+    let removed = parent_notice(None, 300);
+    sync_notices(&repositories, id, (Some("s2"), "s3"), vec![removed.clone()]).await;
+    assert_eq!(
+        repositories
+            .take_room_notices(id, None, 4)
+            .await
+            .expect("读"),
+        [removed]
+    );
     database.close().await;
 }
 

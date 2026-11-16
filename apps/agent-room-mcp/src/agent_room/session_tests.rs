@@ -992,9 +992,12 @@ impl JoinBridge {
                     .clone()
                     .unwrap_or_else(|| self.connected_room.lock().unwrap().clone());
                 self.notice_rooms.lock().unwrap().push(request.room_id);
-                Ok(IpcResponse::RoomNotices {
-                    notices: vec![notice(&room_id, "只在被点名时说话。")],
-                })
+                let mut notices = vec![notice(&room_id, "只在被点名时说话。")];
+                // 周报当成子房间：父房间那一段排在后面，`roomId` 是父房间的。
+                if room_id == "!weekly:test.invalid" {
+                    notices.push(notice("!project:test.invalid", "先说要做什么。"));
+                }
+                Ok(IpcResponse::RoomNotices { notices })
             }
             IpcMethod::EnterRoom(request) => {
                 let room_id = self
@@ -1627,7 +1630,7 @@ async fn 凭口令接入_先查看房间再按任务选人物_开会话之前兑
 const JOIN_CODE: &str = "K7P3-Q9XW-2DMA";
 
 #[tokio::test]
-async fn 接入时带上这次进的房间现在的公告() {
+async fn 接入时带上这次进的房间现在的公告_子房间连父房间那一段() {
     let weekly = IpcRoomSummary {
         kind: IpcRoomKind::PrivateRoom,
         catalog_id: uuid::Uuid::now_v7().to_string(),
@@ -1663,9 +1666,16 @@ async fn 接入时带上这次进的房间现在的公告() {
         second["notice"]["roomId"], "!weekly:test.invalid",
         "{second}"
     );
+    assert_eq!(second["parentNotice"]["roomId"], "!project:test.invalid");
+    assert_eq!(second["parentNotice"]["text"], "先说要做什么。");
+    assert!(first.get("parentNotice").is_none(), "{first}");
+    // 按房间问，会话开在的那个也写明。
     assert_eq!(
         *bridge.notice_rooms.lock().unwrap(),
-        [None, Some("!weekly:test.invalid".to_owned())]
+        [
+            Some("!game:test.invalid".to_owned()),
+            Some("!weekly:test.invalid".to_owned())
+        ]
     );
     harness.stop().await;
 }

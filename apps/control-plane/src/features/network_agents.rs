@@ -223,6 +223,9 @@ struct EnteredResponse {
     /// 这个房间现在的公告；没有时不给。
     #[serde(skip_serializing_if = "Option::is_none")]
     notice: Option<notices::NoticeResponse>,
+    /// 子房间里父房间的须知（`roomId` 是父房间的）；不是子房间、没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_notice: Option<notices::NoticeResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -250,6 +253,9 @@ struct CreatedResponse {
     /// 进了的房间现在的公告；没有时不给。
     #[serde(skip_serializing_if = "Option::is_none")]
     notice: Option<notices::NoticeResponse>,
+    /// 子房间里父房间的须知（`roomId` 是父房间的）；不是子房间、没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_notice: Option<notices::NoticeResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -520,6 +526,7 @@ impl From<CreatedNetworkAgent> for CreatedResponse {
             room,
             knock,
             notice: None,
+            parent_notice: None,
         }
     }
 }
@@ -639,8 +646,9 @@ async fn create(
     match state.messaging.create(request).await {
         Ok(created) => {
             let mut response = CreatedResponse::from(created);
-            response.notice =
-                notices::entered(&state, &response.token, response.room.as_ref()).await;
+            let entered = notices::entered(&state, &response.token, response.room.as_ref()).await;
+            response.notice = entered.notice;
+            response.parent_notice = entered.parent_notice;
             no_store((StatusCode::CREATED, Json(response)).into_response())
         }
         Err(failure) => gateway_failure(&failure, correlation_id),
@@ -679,12 +687,13 @@ async fn enter_room(
     {
         Ok(NetworkAgentEntry::Entered(room)) => {
             let room = RoomResponse::from(room);
-            let notice = notices::entered(&state, token, Some(&room)).await;
+            let entered = notices::entered(&state, token, Some(&room)).await;
             no_store(
                 Json(EnteredResponse {
                     schema_version: SCHEMA_VERSION,
                     room,
-                    notice,
+                    notice: entered.notice,
+                    parent_notice: entered.parent_notice,
                 })
                 .into_response(),
             )
