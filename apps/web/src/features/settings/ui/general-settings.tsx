@@ -1,15 +1,18 @@
 import { Banner, Button, Segmented } from '@agent-room/ui-system';
 import { BellOff, BellRing, LayoutGrid, List } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
+import { webNotificationsActive } from '@/features/inbox/adapters/web-notifications';
+import { useWebNotificationState } from '@/features/inbox/ui/web-notifications-provider';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import { useOptionalAccountPreferences } from '@/features/preferences/ui/account-preferences-provider';
 import { LanguageControl } from '@/features/preferences/ui/language-control';
 
 const HOUR_MS = 3_600_000;
 
-/** 通用：语言、进房间时的视图、暂停提醒。原来散在顶栏、房间和收件箱里。 */
+/** 通用：语言、进房间时的视图，和“提醒”一组（网页通知、暂停提醒）。原来散在顶栏、房间和收件箱里。 */
 export function GeneralSettings() {
   const { t } = useTranslation();
   const preferences = useOptionalAccountPreferences();
@@ -45,7 +48,55 @@ export function GeneralSettings() {
           />
         </div>
       )}
+      <h3 className="settings-group">{t('settings.general.reminders')}</h3>
+      <WebNotificationSetting />
       <QuietSetting />
+    </div>
+  );
+}
+
+/**
+ * 网页通知（specs/redesign/reminders.md 4R-2）：只在这个浏览器里，打开时浏览器还没问过就先问。
+ * 桌面端没有这一行：应用自己会弹系统通知。
+ */
+function WebNotificationSetting() {
+  const { t } = useTranslation();
+  const desktop = useOptionalDesktopRuntimeController();
+  const { notifications, state } = useWebNotificationState();
+  const [busy, setBusy] = useState(false);
+  const label = useId();
+  const hint = useId();
+  if (desktop?.available === true) return null;
+  const blocked = state.permission === 'denied' || state.permission === 'unsupported';
+  const status =
+    state.permission === 'denied'
+      ? t('settings.general.webNotificationsDenied')
+      : state.permission === 'unsupported'
+        ? t('settings.general.webNotificationsUnsupported')
+        : t('settings.general.webNotificationsHint');
+  return (
+    <div className="settings-row">
+      <div>
+        <strong id={label}>{t('settings.general.webNotifications')}</strong>
+        <p className={blocked ? 'settings-row__blocked' : undefined} id={hint}>
+          {status}
+        </p>
+      </div>
+      <input
+        aria-describedby={hint}
+        aria-labelledby={label}
+        checked={webNotificationsActive(state)}
+        className="settings-switch"
+        disabled={blocked || busy}
+        onChange={(event) => {
+          setBusy(true);
+          void notifications.setWanted(event.target.checked).finally(() => {
+            setBusy(false);
+          });
+        }}
+        role="switch"
+        type="checkbox"
+      />
     </div>
   );
 }
