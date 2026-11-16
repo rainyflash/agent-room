@@ -444,7 +444,7 @@
     - 项目房间建好还没有实况：实况是 3P-6 的事。这一步没有入口（命令行、网页都没有），生产上不会有人建出项目房间；3P-6a 定“上线以前就公开的房间默认关”时，项目房间按“建好就开”算。
     - “下载我的数据”加了 `repositoryClaims`（他在等的认领）和 `repositoryBindings`（他核对上、还绑着的）。
   - 测试：读取器的单元测试（跳转、512 KB、地址检查、匹配规则、每分钟的次数和停 10 分钟，另起一个本机的 TCP 服务真连一次），应用层的流程测试（`application/tests/project_room_flow.rs`，假的库、GitHub、建房），接口测试，后台任务的测试。真实数据库的测试（`postgres-adapter` 的 `private_rooms/repository_claims.rs`，`real_database.rs` 导出那一条）只在派发 `suite=all` 时跑。
-- 2026-11-16 3P-3（只有控制面和 Caddy，`/gh/` 页上教人跑的命令要等 3P-4 才有，所以 3P-3、3P-4、3P-5 同一版发）：
+- 2026-11-16 3P-3（#904，只有控制面和 Caddy，`/gh/` 页上教人跑的命令要等 3P-4 才有，所以 3P-3、3P-4、3P-5 同一版发）：
   - `GET /gh/{owner}/{repo}` 和 `GET /gh/{owner}/{repo}/badge.svg` 在控制面的 `features/share_page.rs` 里（`share_page/unclaimed.rs` 是“还没人认领”那一页，`share_page/badge.rs` 是徽章），和分享页共用页头、样式、脚本、语言规则和转义。Caddy 在裸域上把 `/gh/*` 和 `/r/*` 一样转给控制面（`render.py`），`APP_PAGE_PATHS` 不加它。
   - 认房间的是 `application` 的 `project_rooms/pages.rs`（`RepositoryRoomPageService`）：先按仓库（不论大小写）找绑定（`ProjectRoomStore::bound_room`，3P-2b 就有），平台冻结、拿掉的、没有分享码的当成没有；再拿分享码问发现页的目录（`detail`，公开着、没关、没拿掉由它再查一遍，在线数也是它那个，`PublicRoomPresenceMatrix`）；两次读之间码换给了别的房间也当成没有。没加 SQL、没加迁移。
   - 页面：名字先照 GitHub 的规矩验，不合的直接 404、不查库。绑着、公开着的出和 `/r/<分享码>` 一字不差的分享页（实况等 3P-6）；别的出同一页“还没人认领”，回 404。和 `/r/` 合起来按来源限流（`AnonymousLimiter`，每个来源每分钟 120 次）、`noindex`、`Cache-Control: public, max-age=60`；语言照分享页：先看 `Accept-Language`，绑着的房间再看房间名里有没有中文，“还没人认领”默认英文。不读 GitHub。
