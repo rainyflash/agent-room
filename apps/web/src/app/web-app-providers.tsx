@@ -36,6 +36,7 @@ import { MatrixMessageGateway } from '@/features/messages/adapters/matrix-messag
 import { MatrixSdkMessageSource } from '@/features/messages/adapters/matrix-message-source';
 import { MatrixRoomKeyRecovery } from '@/features/messages/adapters/matrix-room-key-recovery';
 import { MatrixRoomKeyResponder } from '@/features/messages/adapters/matrix-room-key-responder';
+import { MatrixSenderTrustRetry } from '@/features/messages/adapters/matrix-sender-trust-retry';
 import { RoomKeyRecoveryProvider } from '@/features/messages/ui/room-key-recovery-context';
 import { HumanMessagePublisher } from '@/features/messages/application/human-message-publisher';
 import { ControlPlaneModerationClient } from '@/features/moderation/adapters/control-plane-moderation-client';
@@ -204,6 +205,8 @@ export function createCloudRuntime(
   const roomKeyRecovery = new MatrixRoomKeyRecovery(matrixClients);
   // 新请进房间的 Agent 请这台设备重发它加入前的消息的密钥时回答（pre-join-history.md）。
   const roomKeyResponder = new MatrixRoomKeyResponder(matrixClients);
+  // 新 Agent 头一句被判成“发送的设备没签名”时，它的设备列表一更新就再解一次。
+  const senderTrustRetry = new MatrixSenderTrustRetry(matrixClients);
   const inbox = new InboxStore(
     new ControlPlaneInboxGateway(businessApi),
     new MatrixInboxSource(matrixClients),
@@ -297,6 +300,7 @@ export function createCloudRuntime(
     queryClient,
     roomKeyRecovery,
     roomKeyResponder,
+    senderTrustRetry,
     services,
   };
 }
@@ -312,6 +316,8 @@ export type CloudRuntimeComposition = {
   readonly roomKeyRecovery: MatrixRoomKeyRecovery;
   /** 没有界面，跟着运行时活着：在后台回答 Agent 的房间密钥请求。 */
   readonly roomKeyResponder: MatrixRoomKeyResponder;
+  /** 没有界面，跟着运行时活着：设备列表过时时判成没签名的消息，更新以后再解一次。 */
+  readonly senderTrustRetry: MatrixSenderTrustRetry;
   readonly services: AppServices;
 };
 

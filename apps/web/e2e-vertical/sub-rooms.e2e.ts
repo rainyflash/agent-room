@@ -29,6 +29,26 @@ import {
 // 接着说；房主把他移出上面那间，他和他的 Agent 在两间子房间里都出去了（由纵向验收问 Synapse）。
 // 网页和纵向验收靠几个文件对步子（tools/vertical.py 的 verify_sub_rooms_in_web）。
 const guestUsername = process.env.AGENT_ROOM_E2E_USERNAME;
+const subRoomEntryMiss = /^HTTP 404 \S+\/lobbies\/([^/]+)\/entry$/u;
+
+/**
+ * 子房间不在房间列表里：打开 `/lobby/<子房间>` 时网页先走公开大厅入场，拿到“找不到”再单独问这一间
+ * （`public-lobby-entry-boundary.tsx`），这一个 404 是设计如此。只放过这两间子房间的，别的照旧算报错。
+ */
+function unexpected<Key extends string>(
+  failures: Readonly<Record<Key, readonly string[]>>,
+  subRooms: readonly string[],
+): Record<Key, string[]> {
+  return Object.fromEntries(
+    Object.entries<readonly string[]>(failures).map(([who, list]) => [
+      who,
+      list.filter((failure) => {
+        const catalogId = subRoomEntryMiss.exec(failure)?.[1];
+        return catalogId === undefined || !subRooms.includes(catalogId);
+      }),
+    ]),
+  ) as Record<Key, string[]>;
+}
 const guestPassword = process.env.AGENT_ROOM_E2E_PASSWORD;
 const ownerUsername = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_USERNAME;
 const ownerPassword = process.env.AGENT_ROOM_VERTICAL_SUB_ROOMS_OWNER_PASSWORD;
@@ -295,6 +315,7 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
       null,
     );
     const link = await inviteLink(owner, parentCatalogId);
+    const subRooms = [openCatalogId, requestCatalogId];
 
     await connectLiveSession(guest, {
       expectedDisplayName: 'Local Developer',
@@ -328,7 +349,7 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
     await expectSaid(owner, approved);
     const requestRoomId = matrixRoomOf(owner);
     const guestMatrix = matrixSessionSchema.parse(await readMatrixSession(guest));
-    expect(failures).toEqual({ guest: [], owner: [] });
+    expect(unexpected(failures, subRooms)).toEqual({ guest: [], owner: [] });
     await writeFile(
       checkedPath ?? '',
       `${JSON.stringify({ guestMatrixUserId: guestMatrix.userId, requestCatalogId, requestRoomId })}\n`,
@@ -355,7 +376,7 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
       await openConversation(page);
       await expectSaid(page, again.text);
     }
-    expect(failures).toEqual({ guest: [], owner: [] });
+    expect(unexpected(failures, subRooms)).toEqual({ guest: [], owner: [] });
 
     // 移出要最近登录过：另开一页刚登录的。移出以后他的网页还开着、会读不到房间，那边的报错不算。
     const remover = await openIsolatedPage(browser, contexts);
@@ -363,7 +384,10 @@ test('子房间：建分类和两间子房间，第二个人的 Agent 按名字�
     await connectLiveSession(remover, ownerCredentials);
     await waitUntilDeviceReady(remover);
     await removeFromRoom(remover, parentCatalogId, 'Local Developer');
-    expect({ owner: failures.owner, remover: removerFailures }).toEqual({ owner: [], remover: [] });
+    expect(unexpected({ owner: failures.owner, remover: removerFailures }, subRooms)).toEqual({
+      owner: [],
+      remover: [],
+    });
     await writeFile(removedPath ?? '', '{}\n', 'utf8');
   } finally {
     await Promise.all(
