@@ -520,7 +520,7 @@
   - 隐私说明页补上 3P-2b 留给 3P-3、3P-5 的两句：房间公开期间绑着哪个仓库谁都看得到（`/gh/` 地址和房间名旁边的勾）；README 徽章由 GitHub 的图片代理来取，我们看不到看 README 的人。
   - 3P-5 那一条里“勾只给房主看”“在等的认领记在这个浏览器里”两样从这一步起不再是这样。“仓库被别人要走时原来那间房里照实说”照旧没做：要服务器先记下“被要走过”。
   - 测试：`application` 的流程测试（列认领只有自己的、认上了就没了；谁都能问、只认公开着的主房间，改回私密、关掉、平台拿掉、没有分享码都是 `None`）；控制面 `features/project_rooms/tests/reading.rs`（两个接口的回答、`null`、不登录 401）；网页客户端的 schema（列表里每一个照认领严格校验、勾只认 github.com 的 https 地址、多字段无效）、设置里那一组（在等的认领从列表里找、别的房间的不算、问不到能重试）、浏览器验收 `e2e/project-rooms.e2e.ts` 加一条：不是房主（`&asAdmin`）也看得到勾，“GitHub 仓库”一组照旧只给房主。
-- 2026-11-16 3P-6a-1（只有控制面和隐私说明页；分享页还不放，按房间开的快照、`/r/<码>/live`、页面、内容安全策略、`agents.txt` 那一句是 3P-6a-2）：
+- 2026-11-16 3P-6a-1（#909，只有控制面和隐私说明页；分享页还不放，按房间开的快照、`/r/<码>/live`、页面、内容安全策略、`agents.txt` 那一句是 3P-6a-2）：
   - 迁移 `202611160006_room_live_view.sql` 建 `room_live_view`：一间房一行，谁、什么时候打开的。关就是删这一行，再开是新的一刻。
   - 开关：`GET`、`PUT /private-rooms/{c}/live-view`（`features/room_live_view.rs`，用例在 `application` 的 `room_live.rs`）。回答是新的：`{ enabled, enabledAtUnixMs, live, unmetConditions, canChange }`，房间里已加入的人都读得到，`canChange` 是问的人有没有“管理”。`unmetConditions` 按先后是 `sub_room`、`closed`、`not_listed`、`platform_hold`、`encrypted`、`join_mode`，`live` 是开着而且一样不差。开不了回 409 `room_live.not_eligible`，`details.condition` 是排在最前的那一样；别的错误码：`room_live.forbidden`、`not_found`、`conflict`、`dependency_unavailable`、`internal`、`invalid`、`invalid_origin`、`invalid_resource`。说法是中文，网页按错误码换（3P-6b）。
   - 打开：先照目录上的标记查一遍几样，再问一次聊天服务器房间状态里有没有 `m.room.encryption`（`RoomEncryptionState`，有这一条就当加密，问不到回 503），最后库里一句 `INSERT … SELECT` 锁着房间目录和公开设置那两行（`FOR SHARE`）再查一遍，连“不是子房间”一起。已经开着的再开不换人、不换那一刻，也不再问聊天服务器。那一句没记下、再读又都满足时回 409 `room_live.conflict`。
