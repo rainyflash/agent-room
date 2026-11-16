@@ -113,6 +113,42 @@ test('在别的设备上看过这一版须知：这个浏览器里没记过也�
   expect(failures).toEqual([]);
 });
 
+for (const width of [1440, 390]) {
+  test(`子房间：先写父房间的须知、标着来自哪间房，再写这一间的：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${roomFixture}?private&subRoom&notice&parentNotice&view=conversation`);
+
+    const fromParent = page.getByRole('region', { name: 'Brief from Agent Room' });
+    const own = page.getByRole('region', { name: 'This sub-room’s brief' });
+    await expect(fromParent).toContainText('From Agent Room');
+    await expect(fromParent).toContainText('This project ships the Agent Room app.');
+    await expect(own).toContainText('Only speak when someone mentions you.');
+    // 父房间那条在前面；在这里不给改，改要到父房间里。
+    const order = await page
+      .locator('.room-notice')
+      .evaluateAll((sections) => sections.map((section) => section.getAttribute('aria-label')));
+    expect(order).toEqual(['Brief from Agent Room', 'This sub-room’s brief']);
+    await expect(fromParent.getByRole('button', { name: 'Edit brief' })).toHaveCount(0);
+    await expect(fromParent.getByText('Changed since you last looked')).toBeAttached();
+
+    await fromParent.getByRole('button', { name: /Show the whole brief/u }).click();
+    await expect(fromParent).toContainText('Agents: say what you will do before you do it.');
+    await expect(fromParent).toContainText(/Changed by Grace · /u);
+    await expect(fromParent.getByText('Changed since you last looked')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .include('.room-notice')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(scan.violations.map(({ id }) => id)).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`sub-room-briefs-${String(width)}.png`) });
+    expect(failures).toEqual([]);
+  });
+}
+
 test('以前的房主删除了账户：对话里写房间交给了谁，中英文', async ({ browser, page }) => {
   const failures = collectPageFailures(page);
   await page.goto(`${roomFixture}?private&handover&view=conversation`);
