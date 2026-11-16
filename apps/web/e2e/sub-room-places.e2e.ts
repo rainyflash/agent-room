@@ -23,6 +23,7 @@ type FixtureSubRoomActions = {
   readonly managers: readonly { readonly kind: string; readonly principalId: string }[];
   readonly policies: readonly Record<string, unknown>[];
   readonly left: readonly string[];
+  readonly inspected: readonly string[];
 };
 
 async function fixtureSubRoomActions(page: Page): Promise<FixtureSubRoomActions> {
@@ -713,5 +714,17 @@ test('浏览子房间在手机上：一行拆成两层，不横向滚动', async
   await expect(door.getByRole('button', { name: 'Withdraw request' })).toBeInViewport();
   await expectNoHorizontalOverflow(page);
   await expectAccessible(page);
+  expect(failures).toEqual([]);
+});
+
+test('公共大厅不在你的房间列表里，但它不会是子房间：打开时不单独去问它（问了是 404）', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.goto('/e2e/fixtures/lobby-scene.html?layout=conversation');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Builders Exchange');
+  // 房间列表一回来就会去问；等它一会儿，确认没问。
+  await page.waitForTimeout(500);
+  expect((await fixtureSubRoomActions(page)).inspected).toEqual([]);
   expect(failures).toEqual([]);
 });
