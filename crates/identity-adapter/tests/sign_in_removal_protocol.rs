@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 
 use agent_room_application::ports::{
     OidcFailure, OidcFailureKind, SecretValue, SignInAccount, SignInAccountRemoval,
@@ -15,7 +19,11 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::json;
-use tokio::{net::TcpListener, sync::Mutex, task::JoinHandle};
+use tokio::{
+    net::{TcpListener, TcpSocket},
+    sync::Mutex,
+    task::JoinHandle,
+};
 
 const CLIENT_ID: &str = "agent-room-account-admin";
 const CLIENT_SECRET: &str = "删除账户专用的测试密钥";
@@ -292,11 +300,12 @@ async fn 用户号里的斜杠拼不出别的地址() {
 
 #[tokio::test]
 async fn 连不上_keycloak_时下次再试() {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("应能绑定本地测试端口");
-    let internal_url = format!("http://{}", listener.local_addr().expect("测试地址可读"));
-    drop(listener);
+    // 占着端口但不听。别改回“绑定再放掉”：放掉的端口会被并行的别的用例拿去起服务。
+    let closed = TcpSocket::new_v4().expect("应能建出 TCP 套接字");
+    closed
+        .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .expect("应能占住本地测试端口");
+    let internal_url = format!("http://{}", closed.local_addr().expect("测试地址可读"));
     let removal = KeycloakSignInAccountRemoval::new(KeycloakAccountRemovalConfig {
         internal_url,
         issuer_url: ISSUER.to_owned(),
