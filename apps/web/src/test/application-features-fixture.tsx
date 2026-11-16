@@ -33,6 +33,8 @@ import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import type { WebSession } from '@/features/session/domain/session';
 import { ok, err } from '@/shared/result';
 import { InboxProvider } from '@/features/inbox/ui/inbox-provider';
+import { PersonalWorkspaceProvider } from '@/features/personal-workspace/ui/personal-workspace-provider';
+import type { SubRoom, SubRoomGateway } from '@/features/private-rooms/domain/sub-rooms';
 import { featuresUnreadInbox } from './features-unread-fixture';
 
 // Isolated UI acceptance harness: real publication, cryptography and IndexedDB; in-memory services.
@@ -220,6 +222,78 @@ function answerInvitation(catalogId: string, status: 'declined' | 'joined') {
   rooms.set(catalogId, answered);
   return Promise.resolve(ok(answered));
 }
+// `&subRooms`（和 `&unread` 一起用）：Design studio 下面你在 Specs（两句没读）和 Retro（免打扰，四句没读），
+// Engineering room 下面你在 Incidents（免打扰，有一句提到你）。“房间”页的卡片把它们算进去。
+const featureSubRooms: readonly {
+  readonly parentId: string;
+  readonly suffix: string;
+  readonly name: string;
+  readonly unread: number;
+  readonly mentionsYou?: boolean;
+  readonly muted?: boolean;
+}[] = params.has('subRooms')
+  ? [
+      { parentId: firstCatalog, suffix: '11', name: 'Specs', unread: 2 },
+      { parentId: firstCatalog, suffix: '12', name: 'Retro', unread: 4, muted: true },
+      {
+        parentId: '01990d9e-8400-7000-8000-000000000402',
+        suffix: '13',
+        name: 'Incidents',
+        unread: 1,
+        mentionsYou: true,
+        muted: true,
+      },
+    ]
+  : [];
+const featureSubRoomId = (suffix: string) => `01990d9e-8400-7000-8000-0000000004${suffix}`;
+function featureSubRoomGateway(): SubRoomGateway {
+  const unavailable = () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false }));
+  const entry = (sub: (typeof featureSubRooms)[number]): SubRoom => ({
+    catalogId: featureSubRoomId(sub.suffix),
+    name: sub.name,
+    description: '',
+    access: 'open',
+    hidden: false,
+    createdByPrincipalId: principal.principalId,
+    createdAtUnixMs: 1_763_000_000_000,
+    managerPrincipalIds: [],
+    joined: true,
+    banned: false,
+  });
+  return {
+    subRooms: (roomId) =>
+      Promise.resolve(
+        ok({
+          parent: { catalogId: roomId, name: rooms.get(roomId)?.name ?? '' },
+          canCreate: true,
+          categories: [],
+          subRooms: featureSubRooms.filter((sub) => sub.parentId === roomId).map(entry),
+        }),
+      ),
+    create: unavailable,
+    revise: unavailable,
+    archive: unavailable,
+    restore: unavailable,
+    join: unavailable,
+    leave: unavailable,
+    requestToJoin: unavailable,
+    withdrawJoinRequest: unavailable,
+    joinRequests: unavailable,
+    answerJoinRequest: unavailable,
+    admit: unavailable,
+    remove: unavailable,
+    ban: unavailable,
+    unban: unavailable,
+    grantManager: unavailable,
+    revokeManager: unavailable,
+    createCategory: unavailable,
+    reviseCategory: unavailable,
+    deleteCategory: unavailable,
+    policy: unavailable,
+    changePolicy: unavailable,
+  };
+}
+
 function featureServices(base: AppServices): AppServices {
   const unavailable = () => Promise.resolve(err({ code: 'fixture.unavailable', retryable: false }));
   const privateRooms: PrivateRoomGateway = {
@@ -336,6 +410,7 @@ function featureServices(base: AppServices): AppServices {
     ...base,
     session,
     privateRooms,
+    ...(featureSubRooms.length === 0 ? {} : { subRooms: featureSubRoomGateway() }),
     messagePublisher: publisher,
     privateRoomMatrix: {
       join: () => {
@@ -394,20 +469,34 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
   );
   const [inbox] = useState(() =>
     params.has('unread')
-      ? featuresUnreadInbox(principal.matrixUserId, [
-          ...seededRooms.slice(0, 2).map((room) => ({
-            catalogId: room.catalogId,
-            roomId: room.matrixRoomId,
-            name: room.name,
-            direct: false,
+      ? featuresUnreadInbox(
+          principal.matrixUserId,
+          [
+            ...seededRooms.slice(0, 2).map((room) => ({
+              catalogId: room.catalogId,
+              roomId: room.matrixRoomId,
+              name: room.name,
+              direct: false,
+            })),
+            {
+              catalogId: publicCatalog,
+              roomId: '!global-1:matrix.test',
+              name: 'Global lobby',
+              direct: false,
+            },
+          ],
+          featureSubRooms.map(({ suffix, name, unread, mentionsYou, muted }) => ({
+            room: {
+              catalogId: featureSubRoomId(suffix),
+              roomId: `!sub-${suffix}:matrix.test`,
+              name,
+              direct: false,
+            },
+            unread,
+            ...(mentionsYou === undefined ? {} : { mentionsYou }),
+            ...(muted === undefined ? {} : { muted }),
           })),
-          {
-            catalogId: publicCatalog,
-            roomId: '!global-1:matrix.test',
-            name: 'Global lobby',
-            direct: false,
-          },
-        ])
+        )
       : null,
   );
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -438,9 +527,11 @@ export function ApplicationFeaturesFixture({ base }: { readonly base: AppService
                   inbox === null ? (
                     <RoomDirectoryPage />
                   ) : (
-                    <InboxProvider store={inbox}>
-                      <RoomDirectoryPage />
-                    </InboxProvider>
+                    <PersonalWorkspaceProvider store={inbox.personal}>
+                      <InboxProvider store={inbox.inbox}>
+                        <RoomDirectoryPage />
+                      </InboxProvider>
+                    </PersonalWorkspaceProvider>
                   )
                 ) : (
                   <main

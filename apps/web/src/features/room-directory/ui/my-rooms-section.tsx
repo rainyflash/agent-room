@@ -5,11 +5,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
-import { RoomUnreadMark, useRoomUnread } from '@/features/inbox/ui/room-unread-mark';
+import { RoomUnreadMark } from '@/features/inbox/ui/room-unread-mark';
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
 import { ArchiveRoomConfirm } from '@/features/private-rooms/ui/archive-room-confirm';
 import { splitByOwner, type RoomOwner } from '@/features/room-directory/domain/my-private-rooms';
 import { AccountIdCopy } from '@/features/room-directory/ui/account-id-copy';
+import { useFamilyUnread } from '@/features/sub-rooms/ui/use-family-unread';
 import {
   useMyPrivateRooms,
   useRoomCommands,
@@ -281,7 +282,8 @@ function RoomCardLink({
   readonly owner: RoomOwner | undefined;
 }) {
   const { t } = useTranslation();
-  const unread = useRoomUnread(room.matrixRoomId);
+  // 子房间不单独有卡片：你在的子房间的没读的和 @ 也算在这一张上，免打扰的只算 @。
+  const unread = useFamilyUnread(room, !archived);
   return (
     <Link
       className={`room-row room-row--link room-row--card${archived ? ' room-row--archived' : ''}`}
