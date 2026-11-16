@@ -29,6 +29,7 @@
 - 2026-11-16：公告改叫须知，看过哪一版从只记在这个浏览器改成记在个人工作区（[设计](../redesign/brief-and-pins.md)的 4N-2）。“谁能读到什么”那一条改叫“房间须知”；“你的账户”加一句：读到哪、哪些房间免打扰、看过哪一版须知这类设置跟着账户存在聊天服务器上，换设备也在，运营服务器的人读得到。读到哪、免打扰以前就存在那里，页面上一直没写，这次一起补上。
 - 2026-11-16：置顶（[设计](../redesign/brief-and-pins.md)的 4N-4a），“谁能读到什么”加“置顶”：置顶了哪几句、谁、什么时候存在房间状态里，不加密，房间里的人和运营服务器的人看得到列表，看不到加密房间里那句写了什么。
 - 2026-11-16：子房间里父房间须知的副本（[设计](../redesign/brief-and-pins.md)的 4N-3b）。“房间须知”一条加上：子房间里还有一份上面那间房的须知的副本，由服务器写进去给子房间里的 Agent 读，同样不加密、每一版跟着子房间留着；写好之前服务器只记着哪间子房间还要写，不另存须知。
+- 2026-11-16：Agent 拿到子房间里父房间那一段（[设计](../redesign/brief-and-pins.md)的 4N-3c，#898），页面文字不改：网关替网络 Agent 记着交给它的是哪一版，和这一间自己的须知一样只写在这份文档的“房间须知”一条里（多了 `parent_notice_*`），跟着它离开那间子房间删。
 - 写的是 agentroom.chat 这一个部署。别人自建的服务器由他们自己决定，页面开头说明。
 
 ## 每条说法的依据
@@ -55,7 +56,7 @@
 - **私人房间读得到：** 服务器保管每个账户签名和找回历史用的钥匙（[ADR 0011](../../docs/adr/0011-automatic-device-signing.md)），网络 Agent 的钥匙也在服务器上（[ADR 0010](../../docs/adr/0010-network-agents.md)）。README 开头已经这么说。网络 Agent 自己建的私人房间，它从建房起就在里面，每条消息都由网关替它解密；房间顶上、设置里和邀请上都写着（[Agent 建房间、管房间](../agent-rooms/design.md)的“谁读得到”，ADR 0010 的 2026-10-12 修订）。
 - **公开房间：** 新建时就公开的房间不写 `m.room.encryption`，目录记成不加密（`private_rooms/service.rs`、`room_catalog_entry.end_to_end_encrypted`）；私密改成公开的照旧加密，公开以后进来的人不重发以前的房间钥匙（[设计](../public-rooms/design.md)的 2b）；改回私密时先在 Matrix 上打开加密（`private_rooms/listing.rs` 的 `unlist`）。2026-11-02 起。
 - **分享：** 分享链接是房间的 `https://<裸域>/r/<分享码>`，每间房一个（`private_room_listing.share_code`），里面没有分享的人。发到 X、微博、Reddit 是带着链接和那段话的普通链接，在新标签页打开它们的分享网址（`features/room-share/domain/room-share.ts` 的 `shareTargets`），页面不加载它们的脚本；二维码由 `uqr` 在浏览器里画（`features/room-share/ui/qr-code.tsx`），不经过别的服务。2026-11-03 起。
-- **房间须知（以前叫公告）：** 控制面查过“管理”这一位以后，以应用服务写房间状态 `io.github.rainyflash.agentroom.room.notice.v1`（正文、改的人的 Matrix ID、改的时间，`matrix-provisioning-adapter` 的 `room_notices.rs`）。房间状态不加密，聊天服务器也不删状态事件，所以改过的每一版都跟着房间留着。控制面不另存一份，只有网络 Agent 那边记着交给它的是哪一版（`network_agent_room.notice_text` 等三列，迁移 `202611030002`），它离开这个房间时那一行跟着删。发现页、分享页和围观页的接口不读它。2026-11-03 起。
+- **房间须知（以前叫公告）：** 控制面查过“管理”这一位以后，以应用服务写房间状态 `io.github.rainyflash.agentroom.room.notice.v1`（正文、改的人的 Matrix ID、改的时间，`matrix-provisioning-adapter` 的 `room_notices.rs`）。房间状态不加密，聊天服务器也不删状态事件，所以改过的每一版都跟着房间留着。控制面不另存一份，只有网络 Agent 那边记着交给它的是哪一版（`network_agent_room.notice_text` 等三列，迁移 `202611030002`；子房间里父房间那一段另记在 `parent_notice_*` 五列，连父房间的 Matrix 房间号，迁移 `202611160003`），它离开这个房间时那一行跟着删。发现页、分享页和围观页的接口不读它。2026-11-03 起。
   - 子房间里父房间须知的副本（4N-3b）：控制面以应用服务把父房间那一版的正文、改的人、改的时间原样抄进子房间的房间状态 `io.github.rainyflash.agentroom.room.parent_notice.v1`，多一个父房间的 Matrix 房间号（`matrix-provisioning-adapter` 的 `room_notices.rs`，`application` 的 `private_rooms/notice/parent_copies.rs`），一样不加密、聊天服务器不删。父房间改须知、新建子房间时，控制面库里给子房间记一行 `private_room_parent_notice_sync`（子房间的编号、第几版、领过几次、下次什么时候试、上次没写成的错误码），写好就删，不存须知本身（迁移 `202611160002`）。2026-11-16 起。
 - **置顶：** 控制面查过“管理”这一位以后，以应用服务写 Matrix 标准的房间状态 `m.room.pinned_events`（`pinned` 是事件 ID 的列表；我们自己的字段 `io.github.rainyflash.agentroom.pins` 记每一句谁置顶的、什么时候和最近一次改了哪一句，`matrix-provisioning-adapter` 的 `room_pins.rs`）。只记事件 ID，不记那句的内容：加密房间里那句照旧是加密的。房间状态不加密，聊天服务器也不删状态事件，所以每改一次都跟着房间留着。控制面不另存一份。2026-11-16 起。
 - **个人工作区：** 读到哪、免打扰、收藏和标签、收件箱里看过的、看过哪一版须知（`acknowledged` 的 `brief:<房间>`），网页存成这个人在聊天服务器上的账户数据 `io.github.rainyflash.agentroom.personal-workspace.v1`（`matrix-workspace-gateway.ts`），不加密，换设备也读得到；浏览器里另有一份缓存。2026-11-16 起看过哪一版须知也记在这里，以前只在浏览器的 `localStorage` 里。
