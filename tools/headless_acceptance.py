@@ -112,6 +112,11 @@ def accept() -> None:
             sub_rooms_web = v.verify_sub_rooms_in_web(
                 person_bridge=sender, environment=environment, redactor=redactor,
             )
+            # 须知与置顶：他改上面那间的须知、把子房间里的一句置顶又取消，子房间里的本机 Agent 和网络 Agent
+            # 下一批都拿到。
+            brief_pins = v.verify_brief_and_pins(
+                person_bridge=sender, environment=environment, redactor=redactor,
+            )
             # 公开房间：从发现页和分享链接进来，申请和批准，公告，Agent 照规则管房间，换分享码，
             # 改回私密以后的话是加密的。
             public_rooms = v.verify_public_rooms(
@@ -164,6 +169,8 @@ def accept() -> None:
                 sub_rooms["subRoomOwnerToken"],
                 sub_rooms["subRoomMemberToken"],
                 sub_rooms["subRoomParentCode"],
+                brief_pins["briefPinsReaderToken"],
+                brief_pins["briefPinsCode"],
                 private["token"],
                 private["everyoneToken"],
                 private["knockToken"],
@@ -189,6 +196,7 @@ def accept() -> None:
         "roomPeopleAgentEventId":room_people["roomPeopleAgentEventId"],
         "subRoomsWebOpenCatalogId":sub_rooms_web["subRoomsWebOpenCatalogId"],
         "subRoomsWebAgentEventId":sub_rooms_web["subRoomsWebAgentEventId"],
+        "briefAndPinsVerified":True, "briefPinsPinnedEventId":brief_pins["briefPinsPinnedEventId"],
         "publicRoomCatalogId":public_rooms["publicRoomCatalogId"],
         "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],
         "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],

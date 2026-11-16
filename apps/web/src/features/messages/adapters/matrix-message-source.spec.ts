@@ -148,6 +148,21 @@ describe('MatrixSdkMessageSource', () => {
     ]);
   });
 
+  it('置顶存在命名空间外的 m.room.pinned_events 里，也交出去：对话里要写“置顶了一句”', async () => {
+    const pins = new FakeEvent('m.room.pinned_events', '$pins', 10, { stateKey: '' }).asEvent();
+    const topic = new FakeEvent('m.room.topic', '$topic', 20, { stateKey: '' }).asEvent();
+    const room = new FakeRoom([pins, topic]);
+    const { source } = harness(room);
+    const expected = [{ ...timelineEvent('m.room.pinned_events', '$pins', 10), stateKey: '' }];
+
+    expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual(expected);
+    // 带过滤器的历史时间线也留着它。
+    await source.loadOlder(ROOM_ID);
+    expect(room.history().live.events).toContain(pins);
+    expect(room.history().live.events).not.toContain(topic);
+    expect(snapshot(source.read(ROOM_ID)).timelineEvents).toEqual(expected);
+  });
+
   it('往回翻页的过滤器排除在线状态，并按线上类型留下解密失败的加密事件', async () => {
     const room = new FakeRoom([]);
     const { source } = harness(room);
@@ -158,7 +173,12 @@ describe('MatrixSdkMessageSource', () => {
     expect(filter.filterId).toBe(matrixMessageHistoryFilterId);
     // /messages 直接带这份定义，不需要先在服务器上创建过滤器。
     expect(filter.getRoomTimelineFilterComponent()?.toJSON()).toEqual({
-      types: ['io.github.rainyflash.agentroom.*', legacyNamespaceFilter, 'm.room.encrypted'],
+      types: [
+        'io.github.rainyflash.agentroom.*',
+        legacyNamespaceFilter,
+        'm.room.encrypted',
+        'm.room.pinned_events',
+      ],
       not_types: [matrixAgentStatusEventType],
     });
     const undecryptable = new FakeEvent('m.room.message', '$utd', 1, {
@@ -583,7 +603,12 @@ describe('MatrixSdkMessageSource 与真实 Matrix SDK', () => {
     expect(first?.searchParams.get('dir')).toBe('b');
     expect(first?.searchParams.get('limit')).toBe('200');
     expect(JSON.parse(first?.searchParams.get('filter') ?? 'null')).toEqual({
-      types: ['io.github.rainyflash.agentroom.*', legacyNamespaceFilter, 'm.room.encrypted'],
+      types: [
+        'io.github.rainyflash.agentroom.*',
+        legacyNamespaceFilter,
+        'm.room.encrypted',
+        'm.room.pinned_events',
+      ],
       not_types: [matrixAgentStatusEventType],
     });
     expect(ids()).toEqual(['$b', '$a']);
