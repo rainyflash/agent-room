@@ -602,7 +602,7 @@
   - 关掉以后 `/live` 最多再放 5 秒（按分享码查到的“放”在内存里留 5 秒），所以这边轮询到 404 为止（最多 30 秒），别只查一次；再打开以后同理，轮询到那一句出来（最多 90 秒）。网页那边故意去开、开不了的 409，`collectUnhandledFailures` 只放过这两间房的 `live-view`。
   - 没走的：一段对话（3P-9b-2）；被平台拿掉的房间（要平台管理员）；子房间、只能邀请的房间（和这几样在同一个判断里，`application` 的 `tests/room_live_flow.rs` 有）；目录上没记加密、聊天服务器上却有 `m.room.encryption` 时快照封住（要在库里改目录，`public_watch/tests/live_rooms.rs` 有）；不是房主的管理员开关；归档、删账户时自动关。
   - 测试：读实况、按编号找说话人、认 Agent 那一句、看分享页有没有那一块、网页用例要的变量都给了，有 Python 单元测试（`tools/tests/test_vertical_project_rooms.py`）；整轮在 PR 分支上派发 `suite=all` 跑。
-- 2026-11-16 3P-7a-1（分享一段对话的存储、接口和每天的清理，只有控制面和隐私说明页；`/r/<码>/s/<段码>` 那一页是 3P-7a-2，网页上的“分享这一段”是 3P-7b，三步同一版发）：
+- 2026-11-16 3P-7a-1（#916，分享一段对话的存储、接口和每天的清理，只有控制面和隐私说明页；`/r/<码>/s/<段码>` 那一页是 3P-7a-2，网页上的“分享这一段”是 3P-7b，三步同一版发）：
   - 迁移 `202611160007_room_excerpt.sql` 建 `room_excerpt`：段码（8 位，和分享码同一套字母和数字）、房间（目录 ID，房间删了跟着删）、那几句的事件 ID（1 到 30 个，按时间先后）、第一句的时间、谁什么时候分享的。不存话。
   - 接口（`features/room_excerpts.rs`，用例在 `application` 的 `room_excerpts.rs`），回答都是新的：
     - `POST /private-rooms/{c}/excerpts`，正文 `{ firstEventId, lastEventId }`（多一个字段就 400），回 201 `{ code, url }`，`url` 是 `https://<裸域>/r/<分享码>/s/<段码>`。房间里已加入的人都能分享。
