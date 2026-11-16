@@ -85,7 +85,7 @@ use agent_room_application::{
         PublicRoomJoinService, PublicRoomPlatformHoldDependencies, PublicRoomPlatformHoldService,
         RoomModerationGrantDependencies, RoomModerationGrantService, RoomStateWriteLimit,
     },
-    project_rooms::{ProjectRoomDependencies, ProjectRoomService},
+    project_rooms::{ProjectRoomDependencies, ProjectRoomService, RepositoryRoomPageService},
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
@@ -1206,7 +1206,11 @@ fn build_agent_feature_states(
             .into(),
         },
         share_page: features::share_page::SharePageHttpState::new(
-            directory,
+            directory.clone(),
+            Arc::new(RepositoryRoomPageService::new(
+                dependencies.repositories.clone(),
+                directory,
+            )),
             dependencies.system_runtime.clone(),
             anonymous_limits,
             &config.authentication.matrix_server_name,

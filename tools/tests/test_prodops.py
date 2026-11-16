@@ -1104,10 +1104,25 @@ class ProductionRenderingTests(unittest.TestCase):
                 encoding="utf-8"
             )
             # 分享链接 https://<裸域>/r/<分享码>：不管裸域跳不跳网页、出不出网站，都由控制面出整页。
+            # 仓库地址 https://<裸域>/gh/<owner>/<repo> 和它的徽章也一样（项目房间 3P-3）。
             bare = self._caddy_block(caddyfile, config.public.server_name)
-            self.assertIn("\thandle /r/* {\n\t\treverse_proxy control-plane:8090\n\t}", bare, site)
             app = self._caddy_block(caddyfile, config.public.app_domain)
-            self.assertNotIn("handle /r/*", app, site)
+            for prefix in ("/r/*", "/gh/*"):
+                self.assertIn(
+                    f"\thandle {prefix} {{\n\t\treverse_proxy control-plane:8090\n\t}}",
+                    bare,
+                    site,
+                )
+                self.assertNotIn(f"handle {prefix}", app, site)
+            # 都在跳网页、出网站的那一段前面，不会被当成应用的页面跳走。
+            self.assertLess(bare.index("handle /gh/*"), bare.index("\thandle {\n"), site)
+
+    def test_repository_address_is_not_an_app_page(self) -> None:
+        # 应用自己的页面在裸域上跳到网页域名；/gh/ 由控制面出，不能算进去。
+        self.assertFalse(
+            any(path == "/gh" or path.startswith("/gh/") for path in APP_PAGE_PATHS),
+            APP_PAGE_PATHS,
+        )
 
     def test_network_agent_switch_and_guide_reach_the_control_plane(self) -> None:
         value = json.loads(EXAMPLE.read_text(encoding="utf-8"))

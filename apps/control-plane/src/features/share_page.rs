@@ -9,13 +9,21 @@
 //! 平台不审，不替它们进搜索结果。
 //!
 //! 页面和发现页的两个接口合起来按来源限流（[`AnonymousLimiter`]），样式和脚本不限。
+//!
+//! 项目房间（`specs/redesign/project-rooms.md` 的 3P-3）的仓库地址也在这里，Caddy 一样把 `/gh/*` 转过来：
+//! - `GET /gh/{owner}/{repo}`：名字照 GitHub 的规矩先验，不合的直接 404、不查库。绑着这个仓库、此刻公开着
+//!   的房间出它的分享页（和 `/r/<分享码>` 同一页）；别的一律出同一页“还没人认领”，回 404，不说是哪一种。
+//!   不读 GitHub。和分享页一样按来源限流、`noindex`、缓存 60 秒，语言照同一个规则。
+//! - `GET /gh/{owner}/{repo}/badge.svg`：README 徽章，见 [`badge`]。不按来源限流。
 
 use std::sync::Arc;
 
 use agent_room_application::{
     ports::Clock,
+    project_rooms::RepositoryRoomPages,
     public_room_directory::{PublicDirectoryFailureKind, PublicRoomDirectoryUseCases},
 };
+use agent_room_domain::project_rooms::GithubRepository;
 use axum::{
     Router,
     extract::{Path, State},
@@ -24,8 +32,11 @@ use axum::{
     routing::get,
 };
 
+mod badge;
 mod render;
+mod unclaimed;
 
+use badge::BadgeCounts;
 use render::Origins;
 // 提醒邮件的退订页也是一整页 HTML，和这里用同一套语言判断和转义。
 pub(crate) use render::{Language, escape};
@@ -43,6 +54,9 @@ pub(crate) struct SharePageHttpState {
     directory: Arc<dyn PublicRoomDirectoryUseCases>,
     clock: Arc<dyn Clock>,
     limits: Arc<AnonymousLimiter>,
+    /// 仓库地址 `/gh/<owner>/<repo>` 认的房间。
+    repositories: Arc<dyn RepositoryRoomPages>,
+    badges: Arc<BadgeCounts>,
     /// 分享链接所在的网站，`https://<Matrix 服务器名>`。
     site_origin: Arc<str>,
     /// 网页应用，按钮去它的 `/explore/<分享码>`。
@@ -52,6 +66,7 @@ pub(crate) struct SharePageHttpState {
 impl SharePageHttpState {
     pub(crate) fn new(
         directory: Arc<dyn PublicRoomDirectoryUseCases>,
+        repositories: Arc<dyn RepositoryRoomPages>,
         clock: Arc<dyn Clock>,
         limits: Arc<AnonymousLimiter>,
         server_name: &str,
@@ -59,6 +74,8 @@ impl SharePageHttpState {
     ) -> Self {
         Self {
             directory,
+            badges: BadgeCounts::new(repositories.clone(), clock.clone()),
+            repositories,
             clock,
             limits,
             site_origin: site_origin(server_name).into(),
@@ -79,6 +96,8 @@ pub(crate) fn router(state: SharePageHttpState) -> Router {
         .route("/r/_/share.css", get(stylesheet))
         .route("/r/_/share.js", get(script))
         .route("/r/{share_code}", get(page))
+        .route("/gh/{owner}/{repo}", get(repository_page))
+        .route("/gh/{owner}/{repo}/badge.svg", get(badge::badge))
         .with_state(state)
 }
 
@@ -88,14 +107,8 @@ async fn page(
     headers: HeaderMap,
 ) -> Response {
     let accepted = accepted_language(&headers);
-    if let Err(limited) = state.limits.admit(&headers) {
-        let html = render::busy_page(accepted.unwrap_or(Language::English), &state.origins());
-        let mut response = html_response(StatusCode::TOO_MANY_REQUESTS, "no-store", html);
-        response.headers_mut().insert(
-            header::RETRY_AFTER,
-            HeaderValue::from(limited.retry_after_seconds),
-        );
-        return response;
+    if let Some(busy) = admit(&state, &headers, accepted) {
+        return busy;
     }
     match state.directory.detail(None, share_code).await {
         Ok(detail) => {
@@ -128,6 +141,74 @@ async fn page(
             }
         }
     }
+}
+
+/// 仓库地址：绑着、公开着的房间出分享页，别的都是“还没人认领”。
+async fn repository_page(
+    State(state): State<SharePageHttpState>,
+    Path((owner, name)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let accepted = accepted_language(&headers);
+    let Ok(repository) = GithubRepository::new(&owner, &name) else {
+        let language = accepted.unwrap_or(Language::English);
+        return html_response(
+            StatusCode::NOT_FOUND,
+            "no-store",
+            unclaimed::invalid_page(language, &state.origins()),
+        );
+    };
+    if let Some(busy) = admit(&state, &headers, accepted) {
+        return busy;
+    }
+    match state.repositories.public_room(repository.clone()).await {
+        Ok(detail) => {
+            let language = accepted.unwrap_or_else(|| guess_language(&detail.room.room.name));
+            let html = render::room_page(&detail, language, &state.origins(), state.clock.now());
+            html_response(StatusCode::OK, ROOM_CACHE, html)
+        }
+        Err(failure) => {
+            let language = accepted.unwrap_or(Language::English);
+            match failure.kind() {
+                // 哪一种“没有”都是同一页，谁看都一样，照样缓存一分钟。
+                PublicDirectoryFailureKind::NotFound
+                | PublicDirectoryFailureKind::InvalidRequest => html_response(
+                    StatusCode::NOT_FOUND,
+                    ROOM_CACHE,
+                    unclaimed::unclaimed_page(&repository, language, &state.origins()),
+                ),
+                PublicDirectoryFailureKind::DependencyUnavailable
+                | PublicDirectoryFailureKind::Internal => {
+                    tracing::info!(
+                        operation = failure.operation(),
+                        failure = ?failure.kind(),
+                        "仓库地址没读到房间"
+                    );
+                    html_response(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "no-store",
+                        render::unavailable_page(language, &state.origins()),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// 按来源限流：这个来源一分钟里打开得太多时回“等一分钟”那一页，不去查。
+fn admit(
+    state: &SharePageHttpState,
+    headers: &HeaderMap,
+    accepted: Option<Language>,
+) -> Option<Response> {
+    let limited = state.limits.admit(headers).err()?;
+    let html = render::busy_page(accepted.unwrap_or(Language::English), &state.origins());
+    let mut response = html_response(StatusCode::TOO_MANY_REQUESTS, "no-store", html);
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        HeaderValue::from(limited.retry_after_seconds),
+    );
+    Some(response)
 }
 
 async fn stylesheet() -> Response {
@@ -231,5 +312,7 @@ fn guess_language(name: &str) -> Language {
     }
 }
 
+#[cfg(test)]
+mod repository_tests;
 #[cfg(test)]
 mod tests;
