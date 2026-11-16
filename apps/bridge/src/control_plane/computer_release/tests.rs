@@ -1,4 +1,5 @@
 use std::{
+    net::{Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -20,7 +21,7 @@ use axum::{
     routing::post,
 };
 use serde_json::json;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
 use uuid::Uuid;
 
 use super::{
@@ -181,11 +182,12 @@ async fn 还没有这个接口的控制面报不支持_连不上报暂时不可�
         Err(RELEASE_UNSUPPORTED)
     );
 
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("测试监听器可绑定");
-    let address = listener.local_addr().expect("测试地址存在");
-    drop(listener);
+    // 占着端口但不听。别改回“绑定再放掉”：放掉的端口会被并行的别的用例拿去起服务。
+    let closed = TcpSocket::new_v4().expect("可建出 TCP 套接字");
+    closed
+        .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .expect("测试端口可占住");
+    let address = closed.local_addr().expect("测试地址存在");
     let unreachable = release(
         format!("http://{address}/"),
         Arc::new(测试请求授权器::default()),
