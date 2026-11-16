@@ -54,6 +54,7 @@ const DEFAULT_ACCOUNT_DELETION_RETRY_MAXIMUM_MILLIS: u64 = 60 * 60 * 1_000;
 /// 删除账户时删 Keycloak 用户用的客户端：只开服务账号，有 realm-management 的 manage-users。
 const DEFAULT_KEYCLOAK_ACCOUNT_ADMIN_CLIENT_ID: &str = "agent-room-account-admin";
 const MAX_TEXT_LENGTH: usize = 1_024;
+const REMINDER_UNSUBSCRIBE_SECRET_BYTES: usize = 32;
 
 trait EnvironmentSource {
     fn read(&self, name: &str) -> Option<String>;
@@ -217,7 +218,17 @@ pub(crate) struct ControlPlaneConfig {
     pub(crate) lobby: LobbyConfig,
     pub(crate) content: ContentConfig,
     pub(crate) network_agents: NetworkAgentConfig,
+    pub(crate) reminders: ReminderConfig,
     pub(crate) observability: ObservabilityConfig,
+}
+
+/// 提醒（`specs/redesign/reminders.md`）。邮件提醒默认关着：要等发信那一步上线、维护者点了头才打开；
+/// 打开时必须配退订令牌的钥匙，每封信都带退订链接。
+#[derive(Clone)]
+pub(crate) struct ReminderConfig {
+    pub(crate) email_enabled: bool,
+    /// 签退订令牌的钥匙，至少 32 字节。没配时退订链接一律不认。
+    pub(crate) unsubscribe_secret: Option<SecretValue>,
 }
 
 impl ControlPlaneConfig {
@@ -235,9 +246,37 @@ impl ControlPlaneConfig {
             lobby: read_lobby_config(source)?,
             content: read_content_config(source)?,
             network_agents: read_network_agent_config(source)?,
+            reminders: read_reminder_config(source)?,
             observability: read_observability_config(source)?,
         })
     }
+}
+
+fn read_reminder_config(source: &impl EnvironmentSource) -> Result<ReminderConfig, ConfigError> {
+    const ENABLED: &str = "AGENT_ROOM_REMINDER_EMAIL_ENABLED";
+    const SECRET: &str = "AGENT_ROOM_REMINDER_UNSUBSCRIBE_SECRET";
+    let email_enabled = match read_optional(source, ENABLED).as_deref().map(str::trim) {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err(ConfigError::invalid(ENABLED, "只接受 true 或 false")),
+    };
+    // 配了就校验，哪怕开关还关着。
+    let unsubscribe_secret = read_optional_secret(source, SECRET)?
+        .map(|value| {
+            if value.len() < REMINDER_UNSUBSCRIBE_SECRET_BYTES {
+                Err(ConfigError::invalid(SECRET, "至少 32 字节"))
+            } else {
+                Ok(SecretValue(value))
+            }
+        })
+        .transpose()?;
+    if email_enabled && unsubscribe_secret.is_none() {
+        return Err(ConfigError::Missing { name: SECRET });
+    }
+    Ok(ReminderConfig {
+        email_enabled,
+        unsubscribe_secret,
+    })
 }
 
 fn read_network_agent_config(
@@ -1463,6 +1502,61 @@ mod tests {
                 "AGENT_ROOM_NETWORK_AGENT_STORE_DIR",
                 "relative/network-agents",
             ),
+        ] {
+            let mut environment = valid_environment();
+            environment.0.insert(name, value.to_owned());
+            assert!(
+                matches!(
+                    ControlPlaneConfig::from_source(&environment),
+                    Err(ConfigError::Invalid { name: invalid, .. }) if invalid == name
+                ),
+                "{name}={value} 应当被拒绝"
+            );
+        }
+    }
+
+    #[test]
+    fn 邮件提醒默认关着_打开时要配退订令牌的钥匙() {
+        let config = ControlPlaneConfig::from_source(&valid_environment()).expect("配置有效");
+        assert!(!config.reminders.email_enabled);
+        assert!(config.reminders.unsubscribe_secret.is_none());
+
+        let secret = "reminder-unsubscribe-secret-with-256-bit-minimum";
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_REMINDER_UNSUBSCRIBE_SECRET", secret.to_owned());
+        let keyed = ControlPlaneConfig::from_source(&environment).expect("只配钥匙也行");
+        assert!(!keyed.reminders.email_enabled);
+        assert_eq!(
+            keyed
+                .reminders
+                .unsubscribe_secret
+                .as_ref()
+                .map(super::SecretValue::expose),
+            Some(secret)
+        );
+        environment
+            .0
+            .insert("AGENT_ROOM_REMINDER_EMAIL_ENABLED", "true".to_owned());
+        assert!(
+            ControlPlaneConfig::from_source(&environment)
+                .expect("开关和钥匙都有")
+                .reminders
+                .email_enabled
+        );
+
+        let mut missing = valid_environment();
+        missing
+            .0
+            .insert("AGENT_ROOM_REMINDER_EMAIL_ENABLED", "true".to_owned());
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&missing),
+            Err(ConfigError::Missing { name }) if name == "AGENT_ROOM_REMINDER_UNSUBSCRIBE_SECRET"
+        ));
+        for (name, value) in [
+            ("AGENT_ROOM_REMINDER_EMAIL_ENABLED", "yes"),
+            ("AGENT_ROOM_REMINDER_UNSUBSCRIBE_SECRET", "too-short"),
         ] {
             let mut environment = valid_environment();
             environment.0.insert(name, value.to_owned());

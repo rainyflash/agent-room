@@ -26,6 +26,7 @@ pub mod public_lobby_entry;
 pub mod public_room_activity;
 pub mod public_room_directory;
 pub mod reception;
+pub mod reminders;
 pub mod room_people;
 pub mod room_role_changes;
 pub mod rooms;

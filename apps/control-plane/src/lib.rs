@@ -69,8 +69,8 @@ use agent_room_application::{
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
-        MatrixUserId, NetworkSourceWeights, OidcResult, PortFuture, SecretValue, SignInAccount,
-        SignInSessionTermination, UniformSourceWeights,
+        MatrixUserId, NetworkSourceWeights, OidcResult, PortFuture, ReminderUnsubscribeTokens,
+        SecretValue, SignInAccount, SignInSessionTermination, UniformSourceWeights,
     },
     private_rooms::{
         OwnerHandoverDependencies, OwnerHandoverService, PrivateRoomAgentAccessDependencies,
@@ -84,6 +84,7 @@ use agent_room_application::{
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
+    reminders::{ReminderDependencies, ReminderService},
     rooms::{
         LobbyJoinPolicy, LobbyProvisioningDependencies, LobbyProvisioningOperation,
         LobbyProvisioningPolicy, LobbyProvisioningService,
@@ -96,8 +97,9 @@ use agent_room_identity_adapter::{
     AesGcmAccountEncryptionKeySealer, AesGcmJoinCodeSealer, AesGcmNetworkAgentSealer,
     DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier,
     Ed25519DeviceProofVerifier, Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer,
-    KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval, NetworkAgentSealKey,
-    NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
+    HmacReminderUnsubscribeTokens, KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval,
+    NetworkAgentSealKey, NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig,
+    SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixAgentSessionClient, MatrixApplicationServiceConfiguration,
@@ -582,7 +584,46 @@ fn personal_routes(
     .merge(account_encryption_routes(config, dependencies))
     .merge(desktop_matrix_session_routes(config, dependencies))
     .merge(computer_grant_routes(config, dependencies))
-    .merge(sign_out_elsewhere_routes(config, dependencies)?))
+    .merge(sign_out_elsewhere_routes(config, dependencies)?)
+    .merge(reminder_routes(config, dependencies)?))
+}
+
+/// 提醒（`specs/redesign/reminders.md`）：邮件提醒的开关和退订页。没配退订令牌的钥匙时退订链接
+/// 一律不认；退订页按来源限流，名额单算，不和发现页、分享页抢。
+fn reminder_routes(
+    config: &ControlPlaneConfig,
+    dependencies: &AgentFeatureDependencies,
+) -> Result<Router, StartupError> {
+    let tokens = config
+        .reminders
+        .unsubscribe_secret
+        .as_ref()
+        .map(|secret| {
+            HmacReminderUnsubscribeTokens::new(secret.expose().as_bytes())
+                .map(|tokens| Arc::new(tokens) as Arc<dyn ReminderUnsubscribeTokens>)
+                .map_err(|error| {
+                    StartupError::new("startup.invalid_reminder_config", error.to_string())
+                })
+        })
+        .transpose()?;
+    let service = Arc::new(ReminderService::new(ReminderDependencies {
+        repository: dependencies.repositories.clone(),
+        tokens,
+        clock: dependencies.system_runtime.clone(),
+        email_available: config.reminders.email_enabled,
+    }));
+    Ok(features::reminders::router(
+        features::reminders::RemindersHttpState::new(
+            service,
+            dependencies.authentication.clone(),
+            Arc::new(features::anonymous_limits::AnonymousLimiter::new(
+                config.network_agents.shared_sources.clone(),
+                dependencies.system_runtime.clone(),
+            )),
+            &config.authentication.frontend_origin,
+            &config.authentication.desktop_origins,
+        ),
+    ))
 }
 
 /// 改好密码以后退出别的地方的登录（`specs/change-password/design.md`）。身份服务上的登录没结束成时，
