@@ -502,3 +502,13 @@
     - 15 分钟里最多核对 15 次（第一次马上）；到时间还没认上就回原来的认领，说再跑一次接着等。
     - `agents.md`、`agents.txt` 那一句照“分步”放在 3P-6a，这一步没改。
   - 测试：`agent-client` 认 `origin` 的写法、每分钟核对、太快等下一分钟、认领被后台认上后再认领、作废换了码、别的拒绝（暂停时间跑）；命令行认仓库、`AGENTS.md` 新建、加在末尾（换行、空行）、已经有链接、再跑一次接着等同一个认领而且只写一行、`--room` 换房间号、不在 git 仓库里、控制面拒绝和 Bridge 太旧；命令进程里 `--name` 不带 `--wait`、坏的 `--repo` 在碰 Bridge 之前就报错，`guide` 里有那一句。命令行的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。
+- 2026-11-16 3P-4c（#907，本机 MCP `agent_room_claim_repository`）：
+  - 参数 `repo`、`room`、`wait`，和命令行一样。工具不碰文件：认领（`wait` 时接着每分钟核对一次、最多 15 分钟），回 `repository`、`status`、`shareUrl`、`agentsLine`、`readmeBadge`、`next`，在等的另带 `claimId`、`lastCheck`，认上了的带 `catalogId`。`next` 说下一步：没认上时叫 Agent 把那一行写进仓库根目录的 `AGENTS.md`（没有就建，里面已经有 Agent Room 的链接就别动、告诉人）、把徽章给人看、问人要不要提交推送，不许自己提交推送；认上了叫它用 `agent_room_join` 按 `shareUrl` 进房间。
+  - 认领、核对和等待用 `agent-client` 的 `project_rooms.rs`，和命令行同一份；`room` 照 `agent_room_list_rooms` 的名单换成房间号（和建子房间找父房间一样）。不在会话里：认领是替这台电脑的账户做的。
+  - 风险提示是“不只读、收得回来、重做不多出东西、碰外面”（`(False, False, True, True)`）：同一个人同一个仓库再认领，控制面回同一个认领。
+  - 设计里那句英文没放进服务说明：服务说明已经 1532 字节，加上就超过 1536。照设计写在工具说明的开头（`To give the repository you are working in a room, call this when the user asks, …`）。
+  - 和设计不一样、设计里没写的：
+    - `repo` 必填：MCP 服务是宿主拉起的，不知道 Agent 在哪个目录里干活，所以不替它读 `origin`，由 Agent 自己读 `git remote get-url origin` 传进来。不像 `owner/repo` 的在碰 Bridge 之前就拒绝（`bridge.ipc.repository_invalid`）。
+    - 认上以后不替 Agent 进房间，只在 `next` 里叫它用 `agent_room_join`：进房间要开会话、挑人物，交给接入那个工具做。
+    - 等的时候原来的认领作废了、再认领拿到新码时，和命令行一样停下，`next` 说要把仓库里那一行和徽章换成新的。
+  - 测试：只认领不核对、回那一行和徽章，坏的仓库名不碰 Bridge，`room` 换房间号、找不到的房间不认领，`wait` 每分钟核对一次认上了说怎么进、等满还没认上，已经绑了的不核对，控制面拒绝和旧版 Bridge 的说法（暂停时间跑）；列全部工具、风险提示和 schema 的测试，发版门禁（`EXPECTED_TOOL_ANNOTATIONS`）和 `tools/mcp_client.py` 的 schema 校验都加上了它，语言测试也查 `project_rooms.rs`。MCP 的测试在设了和没设 `CLAUDE_CODE_SESSION_ID` 两种环境下都跑过。

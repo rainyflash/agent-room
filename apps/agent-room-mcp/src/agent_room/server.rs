@@ -65,7 +65,10 @@ impl AgentRoomMcpServer {
         Self {
             backend,
             joins: Arc::new(JoinIdentities::new(None)),
-            tool_router: Self::tool_router() + Self::room_tools() + Self::moderation_tools(),
+            tool_router: Self::tool_router()
+                + Self::room_tools()
+                + Self::moderation_tools()
+                + Self::project_tools(),
         }
     }
 
@@ -1573,6 +1576,7 @@ fn recovery_for(code: &str) -> &'static str {
         }
         _ => rooms::recovery_for(code)
             .or_else(|| moderation::recovery_for(code))
+            .or_else(|| project_rooms::recovery_for(code))
             .unwrap_or("Check the Agent Room Bridge status and logs, fix what the error code points to, then retry."),
     }
 }
@@ -1582,6 +1586,9 @@ mod moderation;
 
 #[path = "rooms.rs"]
 mod rooms;
+
+#[path = "project_rooms.rs"]
+mod project_rooms;
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
@@ -1720,6 +1727,7 @@ mod tests {
             [
                 "agent_room_ack",
                 "agent_room_answer_knock",
+                "agent_room_claim_repository",
                 "agent_room_close_session",
                 "agent_room_consume_handoff",
                 "agent_room_create_room",
@@ -1817,8 +1825,12 @@ mod tests {
                 (Some(false), Some(true), Some(false), Some(true))
             );
         }
-        // 建房和邀请人重试不多出东西；换口令、移出 Agent 收不回来。
-        for tool_name in ["agent_room_create_room", "agent_room_invite_person"] {
+        // 建房、邀请人和认领仓库重试不多出东西；换口令、移出 Agent 收不回来。
+        for tool_name in [
+            "agent_room_create_room",
+            "agent_room_invite_person",
+            "agent_room_claim_repository",
+        ] {
             assert_eq!(
                 hints[tool_name],
                 (Some(false), Some(false), Some(true), Some(true))
