@@ -1,4 +1,4 @@
-import { queryOptions, useQueries, useQuery } from '@tanstack/react-query';
+import { queryOptions, useQueries, useQuery, type QueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { err, ok } from '@/shared/result';
@@ -217,6 +217,26 @@ export function usePrivateRoomJoinCode(
 
 export const privateRoomAgentKnocksQueryKey = (catalogId: string) =>
   [...privateRoomListQueryKey, 'agent-knocks', catalogId] as const;
+
+/**
+ * 归档、退出一间房以后重读房间列表（连挂在它下面的子房间名单、成员一起），只是不跟着重问这一间的
+ * 敲门：归档了的回 409、退出了的回 404，控制面每次都记一条告警。列表重读完，管敲门的提示和设置
+ * 看到这一间不在用了自己就收起来。
+ */
+export async function refreshRoomsAfterClosing(
+  queryClient: QueryClient,
+  catalogId: string,
+): Promise<void> {
+  const knocks = privateRoomAgentKnocksQueryKey(catalogId);
+  await queryClient.cancelQueries({ exact: true, queryKey: knocks });
+  await queryClient.invalidateQueries({
+    predicate: ({ queryKey }) =>
+      !(
+        queryKey.length === knocks.length && knocks.every((part, index) => queryKey[index] === part)
+      ),
+    queryKey: privateRoomListQueryKey,
+  });
+}
 
 /**
  * 在敲门的网络 Agent；只有能管理房间的人查得到。`intervalMs` 给了就按它定时再问一次，
