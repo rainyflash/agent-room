@@ -128,7 +128,12 @@ def accept() -> None:
                 agent_bridge=sender, environment=environment, redactor=redactor,
             )
             # 项目房间：在仓库目录里认领，假 GitHub 上放了那一行以后认上、Agent 进去说话；/gh/ 页和徽章。
-            project_rooms = vertical_project_rooms.verify_project_rooms(agent_bridge=sender, redactor=redactor)
+            # 分享页的实况：房主关掉再打开、改成要申请；公开房间那一轮改回私密的房间开不了实况，再设成公开
+            # （加密的）也开不了。
+            project_rooms = vertical_project_rooms.verify_project_rooms(
+                agent_bridge=sender, environment=environment,
+                former_public_room=public_rooms["publicRoomCatalogId"], redactor=redactor,
+            )
             # 换账号：第三台电脑先归验收账号，移出以后交给第二个账号，它的 Agent 进大厅说话。
             switch = v.verify_computer_switch(
                 processes=processes, environment=environment, redactor=redactor,
@@ -204,6 +209,7 @@ def accept() -> None:
         "publicRoomOldKeysCatalogId":old_keys["oldKeysCatalogId"],
         "projectRoomCatalogId":project_rooms["projectRoomCatalogId"],
         "projectRoomEventId":project_rooms["projectRoomEventId"],
+        "projectRoomLiveEventId":project_rooms["projectRoomLiveEventId"],
         "computerSwitchVerified":True, "computerSwitchEventId":switch["computerSwitchEventId"],
         "agentIdentityVerified":True, "agentIdentityAgentId":identity_rooms["agentIdentityAgentId"],
         "privateRoomEveryoneEventIds":[private["localEveryoneEventId"], private["networkEveryoneEventId"]],
