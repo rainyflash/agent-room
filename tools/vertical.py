@@ -94,6 +94,13 @@ SUB_ROOMS_REFUSED: Final = VERTICAL_ROOT / "sub-rooms-refused.json"
 SUB_ROOMS_RESTORED: Final = VERTICAL_ROOT / "sub-rooms-restored.json"
 SUB_ROOMS_SPOKE_AGAIN: Final = VERTICAL_ROOT / "sub-rooms-spoke-again.json"
 SUB_ROOMS_REMOVED: Final = VERTICAL_ROOT / "sub-rooms-removed.json"
+BRIEF_PINS_READY: Final = VERTICAL_ROOT / "brief-pins-ready.json"
+BRIEF_PINS_AGENTS_IN: Final = VERTICAL_ROOT / "brief-pins-agents-in.json"
+BRIEF_PINS_BRIEF_SET: Final = VERTICAL_ROOT / "brief-pins-brief-set.json"
+BRIEF_PINS_SPOKE: Final = VERTICAL_ROOT / "brief-pins-spoke.json"
+BRIEF_PINS_PINNED: Final = VERTICAL_ROOT / "brief-pins-pinned.json"
+BRIEF_PINS_PINS_SEEN: Final = VERTICAL_ROOT / "brief-pins-pins-seen.json"
+BRIEF_PINS_UNPINNED: Final = VERTICAL_ROOT / "brief-pins-unpinned.json"
 PUBLIC_WATCH_RESULT: Final = VERTICAL_ROOT / "public-watch.json"
 # 公开房间那一轮：网页上走完了，记下是哪间房。
 PUBLIC_ROOM_RESULT: Final = VERTICAL_ROOT / "public-room.json"
@@ -3911,6 +3918,208 @@ def verify_sub_rooms_in_web(
         require_membership(room, user, "leave")
     browser.finish(timeout_seconds=120)
     return {"subRoomsWebOpenCatalogId": open_catalog, "subRoomsWebAgentEventId": event_id}
+
+
+BRIEF_PINS_PARENT: Final = "Vertical Brief Studio"
+BRIEF_PINS_SUB: Final = "Launch"
+BRIEF_PINS_AGENT: Final = "Vertical Brief Agent"
+BRIEF_PINS_STEPS: Final = (
+    ("READY", BRIEF_PINS_READY),
+    ("AGENTS_IN", BRIEF_PINS_AGENTS_IN),
+    ("BRIEF_SET", BRIEF_PINS_BRIEF_SET),
+    ("SPOKE", BRIEF_PINS_SPOKE),
+    ("PINNED", BRIEF_PINS_PINNED),
+    ("PINS_SEEN", BRIEF_PINS_PINS_SEEN),
+    ("UNPINNED", BRIEF_PINS_UNPINNED),
+)
+
+
+def verify_brief_and_pins(
+    *,
+    person_bridge: AuthorizedBridgeRuntime,
+    environment: Mapping[str, str],
+    redactor: LogRedactor,
+) -> dict[str, str]:
+    """须知与置顶（specs/redesign/brief-and-pins.md 第 4N-5 步）：验收账号在真实网页上建一间房和下面一间直接能进的
+    子房间，给上面那间生成 Agent 口令。他的本机 Agent 按“父房间名/子房间名”进子房间，另一个网络 Agent 凭口令进
+    上面那间、再按房间号进子房间。他改上面那间的须知，两个 Agent 在子房间里的下一批都带着这一段（`roomId` 是上面
+    那间）；他把本机 Agent 说的一句置顶，两个 Agent 都拿到这一句，取消以后也都知道。网页和这边靠几个文件对步子
+    （brief-and-pins.e2e.ts）。"""
+    for _, path in BRIEF_PINS_STEPS:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.unlink(missing_ok=True)
+    parent_catalog, sub_catalog = new_uuid_v7(), new_uuid_v7()
+    brief = f"Ship the beta on Friday ({new_uuid_v7()[-8:]})."
+    playwright_environment = os.environ.copy()
+    playwright_environment.update(
+        {
+            "AGENT_ROOM_E2E_USERNAME": "developer",
+            "AGENT_ROOM_E2E_PASSWORD": required_value(environment, "SEED_ADMIN_PASSWORD"),
+            "AGENT_ROOM_VERTICAL_BRIEF_PINS_PARENT": BRIEF_PINS_PARENT,
+            "AGENT_ROOM_VERTICAL_BRIEF_PINS_SUB": BRIEF_PINS_SUB,
+            "AGENT_ROOM_VERTICAL_BRIEF_PINS_PARENT_ID": parent_catalog,
+            "AGENT_ROOM_VERTICAL_BRIEF_PINS_SUB_ID": sub_catalog,
+            "AGENT_ROOM_VERTICAL_BRIEF_PINS_BRIEF": brief,
+            **{f"AGENT_ROOM_VERTICAL_BRIEF_PINS_{name}": str(path) for name, path in BRIEF_PINS_STEPS},
+        }
+    )
+    browser = BrowserRun("brief-and-pins.e2e.ts", playwright_environment)
+    ready = wait_for_browser_step(
+        BRIEF_PINS_READY,
+        browser,
+        timeout_seconds=600,
+        failure="须知与置顶那一轮 10 分钟内没建好房间、子房间和口令。",
+    )
+    code = require_text(ready.get("code"), "上面那间房的口令")
+    reader, parent_room, sub_room = brief_pins_network_agent(code, sub_catalog)
+    with bridge_mcp_client(person_bridge, redactor) as transport:
+        agent = brief_pins_local_agent(transport, sub_catalog, sub_room)
+        BRIEF_PINS_AGENTS_IN.write_text("{}\n", encoding="utf-8")
+        wait_for_browser_step(
+            BRIEF_PINS_BRIEF_SET, browser, timeout_seconds=600, failure="10 分钟内没改好上面那间的须知。"
+        )
+        both_agents_see(
+            agent,
+            reader,
+            browser,
+            sub_room=sub_room,
+            what="上面那间的须知",
+            seen=lambda page: room_notice_text(page, parent_room) == brief,
+        )
+        text = f"The release checklist is in the shared doc ({new_uuid_v7()[-8:]})."
+        pinned = say_in_room(agent, sub_room, text)
+        BRIEF_PINS_SPOKE.write_text(json.dumps({"text": text}) + "\n", encoding="utf-8")
+        wait_for_browser_step(
+            BRIEF_PINS_PINNED, browser, timeout_seconds=600, failure="10 分钟内没把本机 Agent 那一句置顶。"
+        )
+        both_agents_see(
+            agent,
+            reader,
+            browser,
+            sub_room=sub_room,
+            what="置顶的那一句",
+            seen=lambda page: pinned_and_readable(page, sub_room) == [pinned],
+        )
+        BRIEF_PINS_PINS_SEEN.write_text("{}\n", encoding="utf-8")
+        wait_for_browser_step(
+            BRIEF_PINS_UNPINNED, browser, timeout_seconds=600, failure="10 分钟内没取消那条置顶。"
+        )
+        both_agents_see(
+            agent,
+            reader,
+            browser,
+            sub_room=sub_room,
+            what="取消置顶",
+            seen=lambda page: pinned_and_readable(page, sub_room) == [],
+        )
+    browser.finish(timeout_seconds=120)
+    status, _ = network_agent_request("DELETE", "/me", token=reader)
+    if status != 204:
+        raise VerticalFailure(f"须知与置顶那一轮的网络 Agent 停用失败：HTTP {status}。")
+    return {
+        "briefPinsReaderToken": reader,
+        "briefPinsCode": code,
+        "briefPinsSubCatalogId": sub_catalog,
+        "briefPinsPinnedEventId": pinned,
+    }
+
+
+def brief_pins_network_agent(code: str, sub_catalog: str) -> tuple[str, str, str]:
+    """网络 Agent 凭口令进上面那间，再按房间号进下面那间直接能进的子房间。回答令牌、上面那间和子房间的
+    Matrix 房间。"""
+    status, created = network_agent_request(
+        "POST",
+        "",
+        body={"name": "Vertical Brief Reader", "code": code},
+        source="198.51.100.61",
+        timeout_seconds=180,
+    )
+    if status != 201 or created is None:
+        raise VerticalFailure(f"网络 Agent 凭口令进上面那间房失败：HTTP {status}。")
+    token = require_text(created.get("token"), "须知与置顶那一轮的网络 Agent 令牌")
+    parent_room = require_text(
+        require_object(created.get("room"), "凭口令进的房间").get("matrixRoomId"), "上面那间的 Matrix 房间"
+    )
+    status, entered = network_agent_request(
+        "POST", "/me/rooms", token=token, body={"room": sub_catalog}, timeout_seconds=180
+    )
+    if status != 200 or entered is None:
+        raise VerticalFailure(f"网络 Agent 进直接能进的子房间失败：HTTP {status}。")
+    sub_room = require_text(
+        require_object(entered.get("room"), "网络 Agent 进的子房间").get("matrixRoomId"), "子房间的 Matrix 房间"
+    )
+    drain_network_agent_messages(token)
+    return token, parent_room, sub_room
+
+
+def brief_pins_local_agent(
+    transport: McpStdioClient, sub_catalog: str, sub_room: str
+) -> McpAgentSession:
+    """验收账号的本机 Agent 按“父房间名/子房间名”进子房间，和网络 Agent 在同一间里。"""
+    entered = transport.call_tool(
+        "agent_room_join",
+        {"room": f"{BRIEF_PINS_PARENT}/{BRIEF_PINS_SUB}", "displayName": BRIEF_PINS_AGENT},
+    )
+    if require_object(entered.get("room"), "本机 Agent 进的子房间").get("catalogId") != sub_catalog:
+        raise VerticalFailure("本机 Agent 按“父房间名/子房间名”进了别的房间。")
+    agent = transport.bind_session(require_text(entered.get("sessionId"), "本机 Agent 的会话"))
+    if wait_for_session_identity(agent, timeout_seconds=180)["matrixRoomId"] != sub_room:
+        raise VerticalFailure("本机 Agent 和网络 Agent 不在同一间子房间里。")
+    return agent
+
+
+def both_agents_see(
+    agent: McpAgentSession,
+    reader: str,
+    browser: BrowserRun,
+    *,
+    sub_room: str,
+    what: str,
+    seen: Callable[[Mapping[str, object]], bool],
+) -> None:
+    """须知和置顶改了跟着下一批交、不叫醒：另一个先说一句，两个 Agent 各自一批一批等，直到带着它的那一批。"""
+    network_agent_say_in(reader, sub_room, "Checking that everyone got the latest update.")
+    for page in public_room_agent_pages(agent, browser, failure=f"本机 Agent 4 分钟内没拿到{what}。"):
+        if seen(page):
+            break
+    say_in_room(agent, sub_room, "Got it on my side.")
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        browser.ensure_running()
+        page = network_agent_wait(reader, "wait=15")
+        acknowledge_network_page(reader, page)
+        if seen(page):
+            return
+    raise VerticalFailure(f"网络 Agent 4 分钟内没拿到{what}。")
+
+
+def room_notice_text(page: Mapping[str, object], room_id: str) -> str | None:
+    """这一批里某一间房的须知写的什么；这一批没说它就是 None。"""
+    for item in require_list(page.get("notices", [])):
+        notice = require_object(item, "须知")
+        if notice.get("roomId") == room_id:
+            text = notice.get("text")
+            return text if isinstance(text, str) else None
+    return None
+
+
+def pinned_and_readable(page: Mapping[str, object], room_id: str) -> list[str] | None:
+    """这一批里某一间房现在置顶的几句（事件 ID）；这一批没说它就是 None。每一句都要带着那句的开头：两个 Agent
+    都是在那句说出来以前进的房间，读得到。"""
+    for item in require_list(page.get("pins", [])):
+        pins = require_object(item, "置顶")
+        if pins.get("roomId") != room_id:
+            continue
+        ids = []
+        for entry in require_list(pins.get("pinned")):
+            pin = require_object(entry, "置顶的一句")
+            message = pin.get("message")
+            if not isinstance(message, dict):
+                raise VerticalFailure(f"置顶的那一句该带着开头：{pin.get('unreadable')}。")
+            require_text(message.get("excerpt"), "置顶的那一句的开头")
+            ids.append(require_text(pin.get("eventId"), "置顶的事件 ID"))
+        return ids
+    return None
 
 
 def require_send_refused(client: McpAgentSession, room_id: str) -> None:
