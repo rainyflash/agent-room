@@ -339,7 +339,8 @@ async fn insert(
         .expect("写入不报错")
 }
 
-/// 记下一段，第一句在 `first_event_at`；实况开在那一刻或更早。
+/// 记下一段，第一句在 `first_event_at`；实况开在那一刻或更早。读回来的开实况那一刻已经是整的时间，
+/// 直接交给写入，别再经 `time` 加一遍基准。
 async fn shared(
     repositories: &PostgresRepositories,
     room: RoomCatalogId,
@@ -353,12 +354,13 @@ async fn shared(
         .expect("放着实况")
         .enabled_at;
     assert_eq!(
-        insert(
+        RoomExcerptStore::insert_excerpt(
             repositories,
             &excerpt(code, room, by, first_event_at, first_event_at + 1_000),
-            enabled_at.value()
+            enabled_at
         )
-        .await,
+        .await
+        .expect("写入不报错"),
         InsertRoomExcerptOutcome::Inserted
     );
 }
