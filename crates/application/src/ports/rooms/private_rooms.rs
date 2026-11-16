@@ -510,6 +510,26 @@ pub trait PrivateRoomNoticeGateway: Send + Sync {
     ) -> PortFuture<'a, MatrixResult<()>>;
 }
 
+/// 房主删除了账户、房间交给了谁（`room.owner_handover.v1`，`specs/redesign/room-roles.md` 的
+/// “房主不在了（R6）”）。不带时间：重来时写一样的内容，聊天服务器直接回旧的事件；网页按事件本身的
+/// 时间写那一行。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerHandoverWrite {
+    /// 接手的人在 Matrix 上的 ID。
+    pub owner: MatrixUserId,
+    /// 删除了账户的原房主。带上它，同一个人先后两次接手同一间房时内容也不一样，不会被当成没变。
+    pub former_owner: MatrixUserId,
+}
+
+pub trait PrivateRoomOwnerHandoverGateway: Send + Sync {
+    /// 以应用服务写 `io.github.rainyflash.agentroom.room.owner_handover.v1`（`state_key` 为空）。
+    fn announce_owner_handover<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        handover: &'a OwnerHandoverWrite,
+    ) -> PortFuture<'a, MatrixResult<()>>;
+}
+
 const fn invariant(entity: &'static str, rule: &'static str) -> DomainError {
     DomainError::InvariantViolation { entity, rule }
 }

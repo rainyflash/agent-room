@@ -181,6 +181,80 @@ async fn 管理员各当了多久_看最近一次拿到管理_没有记录的为
     database.close().await;
 }
 
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 房主删除账户时交出去的房间_没有动手的人_目录里的房主跟着换() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "handover-owner").await;
+    let admin = seed_principal(&database.runtime, "handover-admin").await;
+    let catalog = create_room(&repositories, owner).await;
+    let mut clock = 0;
+    change(&repositories, catalog, owner, &mut clock, |room| {
+        room.invite(owner, admin, admin_permissions())
+    })
+    .await;
+    change(&repositories, catalog, admin, &mut clock, |room| {
+        room.accept_invitation(admin)
+    })
+    .await;
+
+    // 照交房间的用例存：不经过谁，身份变动记成没有动手的人。
+    let before = load(&repositories, catalog).await;
+    let mut handed = before.clone();
+    assert!(
+        handed
+            .hand_over_from_deleted_owner(admin)
+            .expect("交得出去")
+    );
+    let unattended: Vec<_> = standing_changes(&before, &handed)
+        .into_iter()
+        .map(|change| RoomRoleChange {
+            actor: None,
+            change,
+        })
+        .collect();
+    assert_eq!(
+        PrivateRoomListingStore::save_transferred_room_recording(
+            &repositories,
+            &handed,
+            before.version(),
+            time(clock + 1),
+            &unattended,
+        )
+        .await
+        .expect("写入不报错"),
+        PrivateRoomListingSaveOutcome::Saved
+    );
+
+    // 删除账户最后一步只归档目录里房主还是他的房间：这一间目录里的房主换了，它不再碰。
+    let catalog_owner: Uuid = sqlx::query_scalar(
+        "SELECT owner_principal_id FROM agent_room.room_catalog_entry WHERE id = $1",
+    )
+    .bind(catalog.as_uuid())
+    .fetch_one(&database.runtime)
+    .await
+    .expect("可读");
+    assert_eq!(PrincipalId::from_uuid(catalog_owner), admin);
+    let room = load(&repositories, catalog).await;
+    assert_eq!(room.owner_principal_id(), admin);
+    let records = recent(&repositories, catalog).await;
+    let unattended: Vec<_> = records
+        .iter()
+        .filter(|record| record.actor.is_none())
+        .collect();
+    assert_eq!(unattended.len(), 2, "{records:?}");
+    assert!(unattended.iter().any(|record| record.target == owner
+        && record.next.status == PrivateRoomMembershipStatus::Removed));
+    assert!(
+        unattended
+            .iter()
+            .any(|record| record.target == admin && record.next.owner)
+    );
+
+    database.close().await;
+}
+
 /// 房主把房间转让给已经在房间里的人，照用例的做法连记录一起存。
 async fn transfer(
     repositories: &PostgresRepositories,
