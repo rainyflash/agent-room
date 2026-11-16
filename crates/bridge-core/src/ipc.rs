@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-const MAX_ADVERTISED_VERSIONS: usize = 4;
+/// 一次最多报几个版本。Bridge 为了还开着的旧版 MCP 进程同时认 4.4 到 4.8 五个版本（4.8 起从 4 放到 8）；
+/// 只是本地的上限，不上线路：旧 Bridge 收到的新版客户端提议只报一个版本。
+const MAX_ADVERTISED_VERSIONS: usize = 8;
 const MAX_REQUESTED_SCOPES: usize = 16;
 const MAX_INSTALLATION_ID_LENGTH: usize = 128;
 
@@ -68,6 +70,9 @@ impl IpcProtocolVersion {
     /// `category`、`access`），建房能带上父房间、门和分类。Bridge 同时接受 4.4 到 4.6：旧版客户端的
     /// 房间摘要不收不认识的字段，所以回给它们的房间列表里不放子房间，也不带这几项。
     pub const V4_7: Self = Self { major: 4, minor: 7 };
+    /// 4.8：读房间的置顶（`ReadRoomPins`，`specs/redesign/brief-and-pins.md`“Agent 读置顶”）。Bridge
+    /// 同时接受 4.4 到 4.7：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不会发这个方法。
+    pub const V4_8: Self = Self { major: 4, minor: 8 };
 
     /// 构造本地 IPC 协议版本。
     ///

@@ -8,12 +8,14 @@
 //! 记下以后进房间、改了以后等消息时交给 Agent。子房间里还有一份父房间须知的副本
 //! （`room.parent_notice.v1`，`specs/redesign/brief-and-pins.md`“子房间里父房间的须知也算”）：
 //! 进子房间的 Agent 不一定在父房间里，读不到父房间的状态，所以控制面在子房间里写一份，一样交给它。
+//! 房间的置顶（`m.room.pinned_events` 加我们的字段，`specs/redesign/brief-and-pins.md`“Agent 读置顶”）
+//! 也一样：记下以后进房间、改了以后等消息时交整份。
 
 use agent_room_application::ports::{
-    MatrixRoomId, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind, MatrixSyncBatch,
-    MatrixTimelineEvent,
+    MatrixEventId, MatrixRoomId, MatrixRoomStatePosition, MatrixRoomSync, MatrixRoomSyncKind,
+    MatrixSyncBatch, MatrixTimelineEvent,
 };
-use agent_room_domain::room_notices::RoomNoticeText;
+use agent_room_domain::{room_notices::RoomNoticeText, room_pins::MAX_ROOM_PINS};
 use chrono::DateTime;
 use serde_json::Value;
 
@@ -22,6 +24,10 @@ pub const ROOM_NOTICE_EVENT_TYPE: &str = "io.github.rainyflash.agentroom.room.no
 /// 子房间里父房间须知的副本，由控制面以应用服务写；内容和公告一样，多一个 `parentRoomId`。
 pub const ROOM_PARENT_NOTICE_EVENT_TYPE: &str =
     "io.github.rainyflash.agentroom.room.parent_notice.v1";
+/// Matrix 标准的置顶状态，由控制面以应用服务写。
+pub const ROOM_PINS_EVENT_TYPE: &str = "m.room.pinned_events";
+/// 置顶状态里我们自己的那一段：每一句谁、什么时候置顶的，最近一次谁、什么时候改的。
+const ROOM_PINS_FIELD: &str = "io.github.rainyflash.agentroom.pins";
 
 /// 一个房间这段同步里的变化。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +41,27 @@ pub struct RoomStateChange {
     pub notice: Option<RoomNotice>,
     /// 这段同步里看到的父房间须知的副本（最新的那一版）；不是子房间、没看到就没有。
     pub parent_notice: Option<ParentRoomNotice>,
+    /// 这段同步里看到的置顶（最新的那一版）；没看到就没有。
+    pub pins: Option<RoomPinsState>,
+}
+
+/// 一间房此刻的置顶，某一版。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomPinsState {
+    /// 新的在最前面；全取消了是空的。
+    pub entries: Vec<RoomPinEntry>,
+    /// 最近一次改置顶的人在 Matrix 上的 ID。
+    pub updated_by: String,
+    /// 最近一次改的时间（Unix 毫秒），按它分新旧。
+    pub updated_at_ms: i64,
+}
+
+/// 置顶的一句：服务器上只记事件 ID、谁、什么时候。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoomPinEntry {
+    pub event_id: MatrixEventId,
+    pub pinned_by: String,
+    pub pinned_at_ms: i64,
 }
 
 /// 子房间里父房间须知的副本，某一版。交给 Agent 时按父房间的房间号交，和这一间自己的分开。
@@ -89,6 +116,7 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
         membership: None,
         notice: None,
         parent_notice: None,
+        pins: None,
     };
     match room.kind() {
         MatrixRoomSyncKind::Joined => {}
@@ -124,13 +152,19 @@ fn room_change(room: &MatrixRoomSync, own_user_id: &str) -> Option<RoomStateChan
                     change.parent_notice = Some(copy);
                 }
             }
+            ROOM_PINS_EVENT_TYPE if event.state_key() == Some("") => {
+                if let Some(pins) = room_pins(event.content()) {
+                    change.pins = Some(pins);
+                }
+            }
             _ => {}
         }
     }
     (change.name.is_some()
         || change.membership.is_some()
         || change.notice.is_some()
-        || change.parent_notice.is_some())
+        || change.parent_notice.is_some()
+        || change.pins.is_some())
     .then_some(change)
 }
 
@@ -153,6 +187,56 @@ pub fn room_parent_notice(content: &Value) -> Option<ParentRoomNotice> {
         parent_room_id,
         notice,
     })
+}
+
+/// 读置顶状态。只认我们写的（带 [`ROOM_PINS_FIELD`]，按它的 `updatedAt` 分新旧）：别的客户端写的
+/// 不知道是谁、什么时候改的，不算一版。只留标准的 `pinned` 里也有的那几句，读不懂的一条跳过，最多
+/// [`MAX_ROOM_PINS`] 条。网关进房间时也直接读它。
+#[must_use]
+pub fn room_pins(content: &Value) -> Option<RoomPinsState> {
+    let pinned: Vec<&str> = content
+        .get("pinned")?
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let field = content.get(ROOM_PINS_FIELD)?;
+    let updated_by = matrix_user(field.get("updatedBy")?)?;
+    let updated_at_ms = timestamp_ms(field.get("updatedAt")?)?;
+    let mut entries: Vec<RoomPinEntry> = Vec::new();
+    for entry in field.get("entries")?.as_array()? {
+        let Some(entry) = pin_entry(entry) else {
+            continue;
+        };
+        let known = entries.iter().any(|kept| kept.event_id == entry.event_id);
+        if !known && pinned.contains(&entry.event_id.as_str()) && entries.len() < MAX_ROOM_PINS {
+            entries.push(entry);
+        }
+    }
+    Some(RoomPinsState {
+        entries,
+        updated_by,
+        updated_at_ms,
+    })
+}
+
+fn pin_entry(entry: &Value) -> Option<RoomPinEntry> {
+    Some(RoomPinEntry {
+        event_id: MatrixEventId::new(entry.get("eventId")?.as_str()?.to_owned()).ok()?,
+        pinned_by: matrix_user(entry.get("pinnedBy")?)?,
+        pinned_at_ms: timestamp_ms(entry.get("pinnedAt")?)?,
+    })
+}
+
+fn matrix_user(value: &Value) -> Option<String> {
+    let user = value.as_str()?;
+    (user.starts_with('@') && user.len() <= 255).then(|| user.to_owned())
+}
+
+fn timestamp_ms(value: &Value) -> Option<i64> {
+    DateTime::parse_from_rfc3339(value.as_str()?)
+        .ok()
+        .map(|time| time.timestamp_millis())
 }
 
 fn notice_of(content: &Value, event_type: &str) -> Option<RoomNotice> {
@@ -247,6 +331,7 @@ mod tests {
             membership,
             notice: None,
             parent_notice: None,
+            pins: None,
         }
     }
 
@@ -401,6 +486,84 @@ mod tests {
                     }),
                     7_000,
                 ),
+            ],
+        );
+        assert!(room_state_changes(&ignored, ME).is_empty());
+    }
+
+    #[test]
+    fn 置顶只认我们写的_只留标准列表里也有的_全取消了是空的() {
+        let pins = |pinned: Value, entries: Value, updated_at: &str, at: u64| {
+            state(
+                super::ROOM_PINS_EVENT_TYPE,
+                "",
+                json!({
+                    "pinned": pinned,
+                    "io.github.rainyflash.agentroom.pins": {
+                        "schemaVersion": "1.0",
+                        "entries": entries,
+                        "updatedBy": "@owner:matrix.test",
+                        "updatedAt": updated_at,
+                        "change": {"kind": "pinned", "eventId": "$b:matrix.test"},
+                    },
+                }),
+                at,
+            )
+        };
+        let entry = |id: &str| {
+            json!({
+                "eventId": id,
+                "pinnedBy": "@owner:matrix.test",
+                "pinnedAt": "2026-11-16T08:00:00.000Z",
+            })
+        };
+        let synced = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![pins(
+                json!(["$b:matrix.test", "$a:matrix.test"]),
+                // 标准列表里没有的、读不懂的、重复的都不留。
+                json!([
+                    entry("$b:matrix.test"),
+                    entry("$gone:matrix.test"),
+                    {"eventId": "$a:matrix.test"},
+                    entry("$a:matrix.test"),
+                    entry("$b:matrix.test"),
+                ]),
+                "2026-11-16T08:00:01.000Z",
+                1_000,
+            )],
+        );
+        let [change] = room_state_changes(&synced, ME).try_into().unwrap();
+        let pins_state = change.pins.expect("读出置顶");
+        assert_eq!(
+            pins_state
+                .entries
+                .iter()
+                .map(|pin| pin.event_id.as_str())
+                .collect::<Vec<_>>(),
+            ["$b:matrix.test", "$a:matrix.test"]
+        );
+        assert_eq!(pins_state.updated_at_ms, 1_794_816_001_000);
+        assert_eq!(pins_state.entries[0].pinned_at_ms, 1_794_816_000_000);
+
+        let cleared = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![pins(json!([]), json!([]), "2026-11-16T09:00:00Z", 2_000)],
+        );
+        let [change] = room_state_changes(&cleared, ME).try_into().unwrap();
+        assert_eq!(change.pins.map(|pins| pins.entries.len()), Some(0));
+
+        // 别的客户端写的（没有我们的字段）、撤回以后空的，都不算一版。
+        let ignored = batch(
+            MatrixRoomSyncKind::Joined,
+            vec![
+                state(
+                    super::ROOM_PINS_EVENT_TYPE,
+                    "",
+                    json!({"pinned": ["$a:matrix.test"]}),
+                    3_000,
+                ),
+                state(super::ROOM_PINS_EVENT_TYPE, "", json!({}), 4_000),
             ],
         );
         assert!(room_state_changes(&ignored, ME).is_empty());

@@ -4,6 +4,7 @@ mod desktop_launch;
 mod inbox;
 mod moderation;
 mod notices;
+mod pins;
 pub mod reception;
 pub mod rooms;
 mod waiting;

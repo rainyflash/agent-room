@@ -735,6 +735,16 @@ pub trait MessageTimelineQueryRepository: Send + Sync {
         Box::pin(async { Ok(None) })
     }
 
+    /// 交给 Agent 的置顶（整份），交出去就记下交过了这一版。`changed_only` 时只交这个 Agent 还没
+    /// 拿到过的那一版（从没拿到过时全取消了也不交）；不设时交现在的，没有置顶就没有。
+    fn take_room_pins<'a>(
+        &'a self,
+        _room_id: &'a MatrixRoomId,
+        _changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<super::RoomPinsState>, MessageTimelineQueryFailure>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// 按 ID 找仍然有效的消息，不限房间；找不到的跳过，不保证顺序。能不能看那个房间由调用方查。
     fn lookup_messages<'a>(
         &'a self,

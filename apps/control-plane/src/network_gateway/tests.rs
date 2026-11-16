@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use agent_room_application::ports::NetworkAgentRoomPins;
 use agent_room_application::{
     content::{
         BeginContentUploadOutcome, BeginContentUploadRequest, BeginContentUploadResult,
@@ -883,6 +884,8 @@ struct InboxState {
     /// 每个房间现在的公告，和交过的是哪一版（改的时间）。
     /// 按它在的房间记；子房间里父房间那一段另记一份（第二项是 true）。
     notices: HashMap<(MatrixRoomId, bool), (NetworkAgentRoomNotice, Option<i64>)>,
+    /// 每个房间现在的置顶，和交过的是哪一版（改的时间）。
+    pins: HashMap<MatrixRoomId, (NetworkAgentRoomPins, Option<i64>)>,
 }
 
 /// 公告记在它在的哪一间、是不是子房间里父房间那一段。
@@ -978,6 +981,48 @@ impl InboxState {
             };
             self.notices.insert(key, (notice.clone(), given_at));
         }
+    }
+
+    /// 置顶和公告一样只往新的改；进房间时交的和记着的一样新也算交过。
+    fn record_pins(&mut self, pins: &NetworkAgentRoomPins, given: bool) {
+        let at = pins.updated_at_ms;
+        let current = self.pins.get(&pins.room_id);
+        let newer = current.is_none_or(|(known, _)| {
+            known.updated_at_ms < at || (given && known.updated_at_ms == at)
+        });
+        if newer {
+            let given_at = if given {
+                Some(at)
+            } else {
+                current.and_then(|(_, given_at)| *given_at)
+            };
+            self.pins
+                .insert(pins.room_id.clone(), (pins.clone(), given_at));
+        }
+    }
+
+    /// 交一批时置顶改了的房间：从没交过的（全取消了不算），或者交过以后又改了的。
+    fn take_pins(&mut self, room: Option<&MatrixRoomId>, limit: u16) -> Vec<NetworkAgentRoomPins> {
+        let mut changed: Vec<MatrixRoomId> = self
+            .pins
+            .iter()
+            .filter(|(id, _)| room.is_none_or(|room| room == *id))
+            .filter(|(_, (pins, given_at))| match given_at {
+                None => !pins.entries.is_empty(),
+                Some(given_at) => *given_at < pins.updated_at_ms,
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        changed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        changed.truncate(usize::from(limit));
+        changed
+            .into_iter()
+            .filter_map(|id| {
+                let (pins, given_at) = self.pins.get_mut(&id)?;
+                *given_at = Some(pins.updated_at_ms);
+                Some(pins.clone())
+            })
+            .collect()
     }
 
     /// 交一批时改了的：从没交过的（撤掉的不算），或者交过以后又改了的。
@@ -1107,6 +1152,9 @@ impl NetworkAgentInboxStore for MemoryInbox {
             state.owe_before_join(&append.undecryptable_before_join);
             for notice in &append.room_notices {
                 state.record_notice(notice, false);
+            }
+            for pins in &append.room_pins {
+                state.record_pins(pins, false);
             }
             for change in &append.changes {
                 match change {
@@ -1243,6 +1291,25 @@ impl NetworkAgentInboxStore for MemoryInbox {
         Box::pin(async { Ok(()) })
     }
 
+    fn take_room_pins<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomPins>>> {
+        let pins = self.state.lock().unwrap().take_pins(room, limit);
+        Box::pin(async move { Ok(pins) })
+    }
+
+    fn give_room_pins<'a>(
+        &'a self,
+        _id: NetworkAgentId,
+        pins: &'a NetworkAgentRoomPins,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        self.state.lock().unwrap().record_pins(pins, true);
+        Box::pin(async { Ok(()) })
+    }
+
     fn prune_expired(
         &self,
         now: UtcMillis,
@@ -1328,6 +1395,8 @@ struct ScriptedMatrix {
     notices: Mutex<HashMap<String, Value>>,
     /// 子房间里父房间须知的副本（`room.parent_notice.v1`），按子房间记。
     parent_notices: Mutex<HashMap<String, Value>>,
+    /// 每个房间现在的置顶（`m.room.pinned_events` 的内容）。
+    pins: Mutex<HashMap<String, Value>>,
     left: Mutex<Vec<String>>,
     leave_fails: Mutex<bool>,
     /// 往回翻的结果，按顺序给出；给完之后都是“翻到了房间最早的历史”。
@@ -1584,6 +1653,11 @@ impl NetworkAgentMatrixGateway for ScriptedMatrix {
                 .get(room_id.as_str())
                 .cloned();
             return Box::pin(async move { Ok(copy) });
+        }
+        if event_type.as_str() == agent_room_bridge_core::messages::ROOM_PINS_EVENT_TYPE {
+            assert_eq!(state_key.as_str(), "", "置顶的 state_key 是空的");
+            let pins = self.pins.lock().unwrap().get(room_id.as_str()).cloned();
+            return Box::pin(async move { Ok(pins) });
         }
         assert_eq!(state_key.as_str(), OWN_INSTANCE);
         if *self.state_read_fails.lock().unwrap() {
@@ -4823,6 +4897,7 @@ mod backfill;
 mod before_join;
 mod knocks;
 mod notices;
+mod pins;
 mod presence;
 mod rooms;
 mod viewing;

@@ -410,8 +410,8 @@ async fn listen(backend: &dyn BridgeToolClient, args: cli::ReadArgs) -> CliResul
         let Some(batch) = read(backend, &mut waiter, wait).await? else {
             return success(json!({"type": "stopped", "afterEventId": after}));
         };
-        // 改了的公告每一版只交一次，没有消息也要交出去。
-        if !batch.previews.is_empty() || !batch.notices.is_empty() {
+        // 改了的公告、置顶每一版只交一次，没有消息也要交出去。
+        if batch.has_content() {
             after.clone_from(&batch.cursor);
             success(batch.to_json())?;
         }

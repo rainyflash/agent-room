@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::super::super::tests::{
     FakeAgents, FakeMessaging, TOKEN,
-    notices::{notice, parent_notice},
+    notices::{notice, parent_notice, pins},
 };
 use super::{app, call, rpc};
 
@@ -131,4 +131,53 @@ async fn 进子房间时另带父房间那一段_只有它也先说公告是房�
         "先说要做什么。"
     );
     assert!(texts(&joined)[1].starts_with("This room has a notice"));
+}
+
+#[tokio::test]
+async fn 进房间和等消息带上置顶_只有置顶时不说公告() {
+    let messaging = Arc::new(FakeMessaging::default());
+    *messaging.pins.lock().unwrap() = Some(pins());
+    *messaging.changed_pins.lock().unwrap() = vec![pins()];
+    let app = app(Arc::new(FakeAgents::default()), messaging.clone());
+    let no_notice = |response: &Value| {
+        texts(response)
+            .iter()
+            .all(|text| !text.starts_with("This room has a notice"))
+    };
+
+    let joined = rpc(
+        app.clone(),
+        &call("agent_room_join", &json!({"name": "Scout"})),
+        None,
+    )
+    .await;
+    assert_eq!(
+        joined["result"]["structuredContent"]["pins"]["pinned"][0]["eventId"],
+        "$old:matrix.test"
+    );
+    assert!(no_notice(&joined), "{joined}");
+
+    let entered = rpc(
+        app.clone(),
+        &call("agent_room_enter_room", &json!({"room": "general"})),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(
+        entered["result"]["structuredContent"]["pins"]["roomId"],
+        "!lobby:matrix.test"
+    );
+    assert!(no_notice(&entered), "{entered}");
+
+    let waited = rpc(
+        app,
+        &call("agent_room_wait_for_messages", &json!({"waitSeconds": 0})),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(
+        waited["result"]["structuredContent"]["pins"][0]["pinned"][0]["unreadable"],
+        "before_join"
+    );
+    assert!(no_notice(&waited), "{waited}");
 }

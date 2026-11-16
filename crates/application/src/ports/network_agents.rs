@@ -547,6 +547,28 @@ pub struct NetworkAgentInboxAppend {
     /// 这一批里看到的房间公告，每个房间最新的一版，子房间里父房间那一段也在里面。只记比记着的新的：
     /// 重新同步到同一版不算改。
     pub room_notices: Vec<NetworkAgentRoomNotice>,
+    /// 这一批里看到的置顶，每个房间最新的一版（整份）。和公告一样只记比记着的新的。
+    pub room_pins: Vec<NetworkAgentRoomPins>,
+}
+
+/// 房间的置顶（`specs/redesign/brief-and-pins.md`“Agent 读置顶”）：整份，照置顶状态里的先后（新的在前）；
+/// 全取消了是空的。服务器上只记事件 ID，那几句写了什么，交的时候照它的消息记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentRoomPins {
+    pub room_id: MatrixRoomId,
+    pub entries: Vec<NetworkAgentPin>,
+    /// 最近一次改置顶的人在 Matrix 上的 ID。
+    pub updated_by: String,
+    /// 改的时间（Unix 毫秒）：按它认哪一版新、交过的是哪一版。
+    pub updated_at_ms: i64,
+}
+
+/// 置顶的一句：事件 ID，谁、什么时候置顶的。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkAgentPin {
+    pub event_id: MatrixEventId,
+    pub pinned_by: String,
+    pub pinned_at_ms: i64,
 }
 
 /// 房间的常驻公告（`specs/public-rooms/design.md`“常驻公告”）：房主和管理员写的这间房的规矩。
@@ -656,6 +678,23 @@ pub trait NetworkAgentInboxStore: Send + Sync {
         &'a self,
         id: NetworkAgentId,
         notice: &'a NetworkAgentRoomNotice,
+    ) -> PortFuture<'a, RepositoryResult<()>>;
+
+    /// 交一批消息时拿置顶改了的房间（整份），记成交过了：从没交过的（全取消了的不算），或者交过
+    /// 以后又改了的（全取消了也算）。给了 `room` 只看这个房间。一次最多 `limit` 个房间，剩下的下次再交。
+    fn take_room_pins<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomPins>>>;
+
+    /// 进房间时交了这一版置顶：记下它（不比记着的旧时），也记成交过了，之后同步到同一版不再交。
+    /// 它不在这个房间里时什么都不记。
+    fn give_room_pins<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        pins: &'a NetworkAgentRoomPins,
     ) -> PortFuture<'a, RepositoryResult<()>>;
 
     /// 删掉所有网络 Agent 过了房间保留期的收件箱和消息记录，按消息发出的时间算（之前存的没记，

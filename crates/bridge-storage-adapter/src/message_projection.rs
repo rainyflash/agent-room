@@ -12,8 +12,8 @@ use agent_room_bridge_core::messages::{
     MessageTimelineProjectionStore, MessageTimelineQueryFailure, MessageTimelineQueryFailureKind,
     MessageTimelineQueryRepository, MessagesAround, OwnMembership, ParentRoomNotice,
     PendingTimelineGap, ProjectedActorInstanceVerification, ProjectedMessageActor,
-    ProjectedMessagePreview, ReservedIsolatedEvent, RoomName, RoomNotice, RoomStateChange,
-    TimelineLoss, UndecryptableSession,
+    ProjectedMessagePreview, ReservedIsolatedEvent, RoomName, RoomNotice, RoomPinsState,
+    RoomStateChange, TimelineLoss, UndecryptableSession,
 };
 use agent_room_domain::{
     content::{ContentMediaType, Sha256Digest},
@@ -502,6 +502,14 @@ impl MessageTimelineQueryRepository for SqliteMessageTimelineRepository {
         Box::pin(async move { self.take_parent_copy(room_id, changed_only).await })
     }
 
+    fn take_room_pins<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        changed_only: bool,
+    ) -> PortFuture<'a, Result<Option<RoomPinsState>, MessageTimelineQueryFailure>> {
+        Box::pin(async move { self.take_pins(room_id, changed_only).await })
+    }
+
     fn lookup_messages<'a>(
         &'a self,
         ids: &'a [MessageLookupId],
@@ -608,7 +616,42 @@ impl SqliteMessageTimelineRepository {
             if let Some(copy) = &change.parent_notice {
                 self.record_parent_copy(&change.room_id, copy, now).await?;
             }
+            if let Some(pins) = &change.pins {
+                self.record_pins(&change.room_id, pins, now).await?;
+            }
         }
+        Ok(())
+    }
+
+    /// 置顶也只往新的改，按我们的字段里记的改动时间。
+    async fn record_pins(
+        &self,
+        room_id: &MatrixRoomId,
+        pins: &RoomPinsState,
+        now: UtcMillis,
+    ) -> Result<(), MessageProjectionStoreFailure> {
+        let entries = (!pins.entries.is_empty()).then(|| room_pins::encode(&pins.entries));
+        sqlx::query(
+            "INSERT INTO message_room_state (
+                 room_id, pins_json, pins_updated_by, pins_updated_at_unix_ms, updated_at_unix_ms
+             ) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(room_id) DO UPDATE SET
+                 pins_json = excluded.pins_json,
+                 pins_updated_by = excluded.pins_updated_by,
+                 pins_updated_at_unix_ms = excluded.pins_updated_at_unix_ms,
+                 updated_at_unix_ms = excluded.updated_at_unix_ms
+             WHERE message_room_state.pins_updated_at_unix_ms IS NULL
+                OR message_room_state.pins_updated_at_unix_ms
+                   < excluded.pins_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(entries)
+        .bind(pins.updated_by.as_str())
+        .bind(pins.updated_at_ms)
+        .bind(now.value())
+        .execute(&self.pool)
+        .await
+        .map_err(|error| map_sqlx_error(&error))?;
         Ok(())
     }
 
@@ -712,6 +755,42 @@ impl SqliteMessageTimelineRepository {
         }))
     }
 
+    /// 交出置顶（整份），同样一条语句记下交过了这一版。
+    async fn take_pins(
+        &self,
+        room_id: &MatrixRoomId,
+        changed_only: bool,
+    ) -> Result<Option<RoomPinsState>, MessageTimelineQueryFailure> {
+        let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>)>(
+            "UPDATE message_room_state
+                SET pins_given_at_unix_ms = pins_updated_at_unix_ms
+              WHERE room_id = ?1
+                AND pins_updated_at_unix_ms IS NOT NULL
+                AND (?2 = 0
+                     OR (pins_given_at_unix_ms IS NULL AND pins_json IS NOT NULL)
+                     OR pins_given_at_unix_ms < pins_updated_at_unix_ms)
+             RETURNING pins_json, pins_updated_by, pins_updated_at_unix_ms",
+        )
+        .bind(room_id.as_str())
+        .bind(changed_only)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|error| map_query_sqlx_error(&error))?;
+        Ok(row.and_then(|(entries, updated_by, updated_at_ms)| {
+            // 进房间时没有置顶就是没有；等消息时全取消了也是一次改动。
+            if entries.is_none() && !changed_only {
+                return None;
+            }
+            Some(RoomPinsState {
+                entries: entries
+                    .map(|json| room_pins::decode(&json))
+                    .unwrap_or_default(),
+                updated_by: updated_by?,
+                updated_at_ms: updated_at_ms?,
+            })
+        }))
+    }
+
     /// 交出父房间须知的副本，同样一条语句记下交过了这一版，和这一间自己的公告分开记。
     async fn take_parent_copy(
         &self,
@@ -752,6 +831,48 @@ impl SqliteMessageTimelineRepository {
                 })
             }),
         )
+    }
+}
+
+/// 置顶的那几句存成 JSON（只在这个库里用）：事件 ID、谁、什么时候。
+mod room_pins {
+    use agent_room_application::ports::MatrixEventId;
+    use agent_room_bridge_core::messages::RoomPinEntry;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Stored {
+        event_id: String,
+        pinned_by: String,
+        pinned_at_ms: i64,
+    }
+
+    pub(super) fn encode(entries: &[RoomPinEntry]) -> String {
+        let stored: Vec<Stored> = entries
+            .iter()
+            .map(|entry| Stored {
+                event_id: entry.event_id.as_str().to_owned(),
+                pinned_by: entry.pinned_by.clone(),
+                pinned_at_ms: entry.pinned_at_ms,
+            })
+            .collect();
+        serde_json::to_string(&stored).unwrap_or_else(|_| "[]".to_owned())
+    }
+
+    /// 读不懂的一条跳过。
+    pub(super) fn decode(json: &str) -> Vec<RoomPinEntry> {
+        serde_json::from_str::<Vec<Stored>>(json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|stored| {
+                Some(RoomPinEntry {
+                    event_id: MatrixEventId::new(stored.event_id).ok()?,
+                    pinned_by: stored.pinned_by,
+                    pinned_at_ms: stored.pinned_at_ms,
+                })
+            })
+            .collect()
     }
 }
 

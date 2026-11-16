@@ -279,6 +279,9 @@ impl BridgeIpcRequestHandler for FoundationBridgeIpcRequestHandler {
                 IpcMethod::ReadRoomNotices(request) => {
                     self.agent_runtime()?.read_room_notices(request).await
                 }
+                IpcMethod::ReadRoomPins(request) => {
+                    self.agent_runtime()?.read_room_pins(request).await
+                }
                 view @ (IpcMethod::GetMessages(_)
                 | IpcMethod::MessagesAround(_)
                 | IpcMethod::RoomHistory(_)) => self.agent_runtime()?.view(view).await,
@@ -792,13 +795,14 @@ fn log_request_failure(
     }
 }
 
-/// 4.4 到 4.6 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
+/// 4.4 到 4.7 留着：升级以后宿主里还开着的旧版 MCP 进程照样连得上，它们不发后来才有的方法。
 /// 回给它们的房间摘要由 [`fit_to_version`] 去掉它们不认识的几项。
-const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 4] = [
+const SUPPORTED_IPC_VERSIONS: [IpcProtocolVersion; 5] = [
     IpcProtocolVersion::V4_4,
     IpcProtocolVersion::V4_5,
     IpcProtocolVersion::V4_6,
     IpcProtocolVersion::V4_7,
+    IpcProtocolVersion::V4_8,
 ];
 
 /// 4.7 以前的客户端不收房间摘要里不认识的字段：回给它们的房间列表里不放子房间（它们按名字找房间时
@@ -1081,6 +1085,7 @@ mod tests {
     mod inbox_ack;
     mod room_membership;
     mod room_notices;
+    mod room_pins;
     mod viewing;
 
     use std::{
@@ -2920,7 +2925,7 @@ mod tests {
     }
 
     #[test]
-    fn 旧版客户端报的四点四到四点六照样谈得拢_新版报四点七用新版() {
+    fn 旧版客户端报的四点四到四点七照样谈得拢_新版报四点八用新版() {
         let negotiator =
             IpcHandshakeNegotiator::new(super::SUPPORTED_IPC_VERSIONS, FoundationIpcScopePolicy)
                 .expect("Bridge 的协商器有效");
@@ -2929,6 +2934,7 @@ mod tests {
             (IpcProtocolVersion::V4_5, IpcProtocolVersion::V4_5),
             (IpcProtocolVersion::V4_6, IpcProtocolVersion::V4_6),
             (IpcProtocolVersion::V4_7, IpcProtocolVersion::V4_7),
+            (IpcProtocolVersion::V4_8, IpcProtocolVersion::V4_8),
         ] {
             let offer = IpcHandshakeOffer::new(
                 IpcCallerKind::McpServer,

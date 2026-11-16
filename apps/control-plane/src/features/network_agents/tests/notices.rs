@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use agent_room_application::ports::{MatrixRoomId, NetworkAgentRoomNotice};
+use agent_room_bridge_ipc::{IpcPinUnreadable, IpcRoomPin, IpcRoomPins};
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
@@ -21,6 +22,22 @@ pub(in crate::features::network_agents) fn notice(text: Option<&str>) -> Network
         text: text.map(str::to_owned),
         updated_by: "@owner:matrix.test".to_owned(),
         updated_at_ms: 1_793_692_801_000,
+    }
+}
+
+/// 置顶了一句进来以前的消息的大厅。
+pub(in crate::features::network_agents) fn pins() -> IpcRoomPins {
+    IpcRoomPins {
+        room_id: LOBBY.to_owned(),
+        pinned: vec![IpcRoomPin {
+            event_id: "$old:matrix.test".to_owned(),
+            pinned_by: "@owner:matrix.test".to_owned(),
+            pinned_at_unix_ms: 1_793_692_801_000,
+            message: None,
+            unreadable: Some(IpcPinUnreadable::BeforeJoin),
+        }],
+        updated_by: "@owner:matrix.test".to_owned(),
+        updated_at_unix_ms: 1_793_692_801_000,
     }
 }
 
@@ -175,4 +192,48 @@ async fn 进子房间的回答另带父房间那一段_等消息时按父房间�
             }
         ])
     );
+}
+
+#[tokio::test]
+async fn 进房间和等消息的回答带上置顶_没有就不给() {
+    let messaging = Arc::new(FakeMessaging::default());
+    let plain = app(&messaging)
+        .oneshot(post("/v1/network-agents/me/rooms", r#"{"room":"general"}"#))
+        .await
+        .unwrap();
+    assert!(body_json(plain).await.get("pins").is_none(), "没有置顶不给");
+
+    *messaging.pins.lock().unwrap() = Some(pins());
+    let entered = app(&messaging)
+        .oneshot(post("/v1/network-agents/me/rooms", r#"{"room":"general"}"#))
+        .await
+        .unwrap();
+    assert_eq!(
+        body_json(entered).await["pins"],
+        json!({
+            "roomId": LOBBY,
+            "pinned": [{
+                "eventId": "$old:matrix.test",
+                "pinnedBy": "@owner:matrix.test",
+                "pinnedAtUnixMs": 1_793_692_801_000_i64,
+                "unreadable": "before_join",
+            }],
+            "updatedBy": "@owner:matrix.test",
+            "updatedAtUnixMs": 1_793_692_801_000_i64,
+        })
+    );
+    let created = app(&messaging)
+        .oneshot(post("/v1/network-agents", r#"{"name":"Scout"}"#))
+        .await
+        .unwrap();
+    assert_eq!(
+        body_json(created).await["pins"]["pinned"][0]["eventId"],
+        "$old:matrix.test"
+    );
+
+    let plain = app(&messaging).oneshot(wait()).await.unwrap();
+    assert!(body_json(plain).await.get("pins").is_none());
+    *messaging.changed_pins.lock().unwrap() = vec![pins()];
+    let changed = app(&messaging).oneshot(wait()).await.unwrap();
+    assert_eq!(body_json(changed).await["pins"][0]["roomId"], LOBBY);
 }

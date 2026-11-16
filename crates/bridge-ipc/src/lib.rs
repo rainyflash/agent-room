@@ -25,6 +25,7 @@ pub use moderation::{
 };
 mod room_management;
 mod room_notices;
+mod room_pins;
 mod session_rooms;
 pub use room_management::{
     IpcAnswerKnockRequest, IpcCreateRoomRequest, IpcInvitePersonRequest, IpcRemoveAgentRequest,
@@ -32,6 +33,9 @@ pub use room_management::{
     managed_room,
 };
 pub use room_notices::{IpcReadRoomNoticesRequest, IpcRoomNotice, ROOM_NOTICES_PER_RESPONSE};
+pub use room_pins::{
+    IpcPinUnreadable, IpcReadRoomPinsRequest, IpcRoomPin, IpcRoomPins, ROOM_PINS_PER_RESPONSE,
+};
 pub use session_rooms::{IpcEnterRoomRequest, IpcLeaveRoomRequest, IpcRoomCursor, IpcSessionRoom};
 pub mod typing;
 pub mod wake;

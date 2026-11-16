@@ -4,7 +4,8 @@ use agent_room_bridge_ipc::{
     IpcActorSummary, IpcAgentSummary, IpcBridgeState, IpcContentReference, IpcConversationMessage,
     IpcListPreviewsRequest, IpcMessagePreviewSummary, IpcMessageProvenance, IpcMessageSensitivity,
     IpcMethod, IpcModerateRoomRequest, IpcModerationAction, IpcModerationGrant, IpcOwnerSummary,
-    IpcReadRoomNoticesRequest, IpcResponse, IpcRoomNotice, IpcSelfSummary, IpcTimelineGap,
+    IpcReadRoomNoticesRequest, IpcReadRoomPinsRequest, IpcResponse, IpcRoomNotice, IpcRoomPins,
+    IpcSelfSummary, IpcTimelineGap,
     wake::{IpcTyping, WaitOptions, WaitRules, WakeReason},
 };
 use tokio::time::Instant;
@@ -100,6 +101,8 @@ struct Room {
     gaps: Vec<IpcTimelineGap>,
     /// 改了还没交的公告：读一次就交出去，和 Bridge 一样同一版只交一次。
     notices: Mutex<Vec<IpcRoomNotice>>,
+    /// 改了还没交的置顶，和公告一样。
+    pins: Mutex<Vec<IpcRoomPins>>,
     /// 主人交给它管的房间（Matrix 房间 ID）。
     granted: Vec<String>,
     calls: Mutex<Vec<(String, bool)>>,
@@ -120,6 +123,7 @@ impl Room {
             typists: Vec::new(),
             gaps: Vec::new(),
             notices: Mutex::new(Vec::new()),
+            pins: Mutex::new(Vec::new()),
             granted: Vec::new(),
             calls: Mutex::new(Vec::new()),
         }
@@ -156,6 +160,18 @@ impl Room {
             .push(("read_room_notices".to_owned(), request.every_room));
         IpcResponse::RoomNotices {
             notices: std::mem::take(&mut *self.notices.lock().unwrap()),
+        }
+    }
+
+    /// 交一批时要改了的置顶，和公告一样同一版只交一次。
+    fn changed_pins(&self, request: &IpcReadRoomPinsRequest) -> IpcResponse {
+        assert!(request.changed_only, "交一批时只要改了的");
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("read_room_pins".to_owned(), request.every_room));
+        IpcResponse::RoomPins {
+            rooms: std::mem::take(&mut *self.pins.lock().unwrap()),
         }
     }
 
@@ -325,6 +341,7 @@ impl BridgeToolClient for Room {
                 }
             }
             IpcMethod::ReadRoomNotices(request) => self.changed_notices(&request),
+            IpcMethod::ReadRoomPins(request) => self.changed_pins(&request),
             IpcMethod::ModerateRoom(request) => self.moderation_grant(&request),
             IpcMethod::GetSelf => IpcResponse::SelfSummary {
                 summary: IpcSelfSummary {
@@ -483,7 +500,7 @@ async fn 只看一眼_读一次_有什么给什么() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn 开了公告_交一批时带上改了的_同一版只交一次() {
+async fn 开了公告_交一批时带上改了的公告和置顶_同一版只交一次() {
     let room = Room::new(vec![(1_000, named("Scout 在吗"))]);
     let changed = IpcRoomNotice {
         room_id: "!lobby:room.test".to_owned(),
@@ -492,6 +509,13 @@ async fn 开了公告_交一批时带上改了的_同一版只交一次() {
         updated_at_unix_ms: 1_000,
     };
     room.notices.lock().unwrap().push(changed.clone());
+    let unpinned = IpcRoomPins {
+        room_id: "!lobby:room.test".to_owned(),
+        pinned: Vec::new(),
+        updated_by: "@owner:room.test".to_owned(),
+        updated_at_unix_ms: 1_000,
+    };
+    room.pins.lock().unwrap().push(unpinned.clone());
     let mut noticing = waiter(WaitRules::default()).with_notices().every_room();
     let batch = noticing
         .next(&room, MessageWait::For(Duration::from_secs(30)))
@@ -500,10 +524,17 @@ async fn 开了公告_交一批时带上改了的_同一版只交一次() {
     assert_eq!(texts(&batch.previews), ["Scout 在吗"]);
     assert_eq!(batch.notices, [changed]);
     assert_eq!(batch.to_json()["notices"][0]["removed"], true, "撤掉的写明");
+    assert_eq!(batch.pins, [unpinned]);
+    assert_eq!(
+        batch.to_json()["pins"][0]["pinned"],
+        serde_json::json!([]),
+        "全取消了也说"
+    );
+    let calls = room.calls();
     assert!(
-        room.calls()
-            .contains(&("read_room_notices".to_owned(), true)),
-        "看所有房间时公告也看所有房间"
+        calls.contains(&("read_room_notices".to_owned(), true))
+            && calls.contains(&("read_room_pins".to_owned(), true)),
+        "看所有房间时公告和置顶也看所有房间"
     );
 
     let peek = noticing
@@ -511,6 +542,7 @@ async fn 开了公告_交一批时带上改了的_同一版只交一次() {
         .await
         .unwrap();
     assert!(peek.notices.is_empty() && peek.to_json().get("notices").is_none());
+    assert!(peek.pins.is_empty() && peek.to_json().get("pins").is_none());
 
     let plain = Room::new(vec![(0, chatter("闲聊"))]);
     waiter(WaitRules::default())

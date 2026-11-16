@@ -10,7 +10,8 @@
 //!
 //! 过了房间保留期的收件箱和消息记录，由定时清理按消息发出的时间删掉（`prune_expired`）。
 //!
-//! 房间公告也在同一次写入里记在房间上，交给 Agent 时记下交的是哪一版（见 `network_agent_notices.rs`）。
+//! 房间公告也在同一次写入里记在房间上，交给 Agent 时记下交的是哪一版（见 `network_agent_notices.rs`）；
+//! 置顶也一样（`network_agent_pins.rs`）。
 
 use std::collections::HashSet;
 
@@ -21,8 +22,8 @@ use agent_room_application::{
         NetworkAgentGapReason, NetworkAgentInboxAppend, NetworkAgentInboxAppendOutcome,
         NetworkAgentInboxChange, NetworkAgentInboxEntry, NetworkAgentInboxMessage,
         NetworkAgentInboxPage, NetworkAgentInboxStore, NetworkAgentMessageRetention,
-        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomRecord,
-        NetworkAgentTimelineGap, PortFuture,
+        NetworkAgentRoomNotice, NetworkAgentRoomParent, NetworkAgentRoomPins,
+        NetworkAgentRoomRecord, NetworkAgentTimelineGap, PortFuture,
     },
 };
 use agent_room_domain::{
@@ -36,7 +37,7 @@ use crate::{
     PostgresRepositories,
     agents::corrupt_data,
     error::{map_domain_error, map_sqlx_error},
-    network_agent_notices,
+    network_agent_notices, network_agent_pins,
 };
 
 /// 网络 Agent 所在的一个房间：房间号、Matrix 房间、进来的时间、名字、归档了没有，子房间再带父房间。
@@ -274,6 +275,7 @@ impl NetworkAgentInboxStore for PostgresRepositories {
                 .record_reported(&mut transaction, append, operation)
                 .await?;
             network_agent_notices::record_synced(&mut transaction, append, operation).await?;
+            network_agent_pins::record_synced(&mut transaction, append, operation).await?;
             let dropped = trim_to_capacity(&mut transaction, append, operation).await?;
             trim_history(&mut transaction, append, operation).await?;
             sqlx::query(
@@ -387,6 +389,23 @@ impl NetworkAgentInboxStore for PostgresRepositories {
         notice: &'a NetworkAgentRoomNotice,
     ) -> PortFuture<'a, RepositoryResult<()>> {
         Box::pin(network_agent_notices::give(self.pool(), id, notice))
+    }
+
+    fn take_room_pins<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        room: Option<&'a MatrixRoomId>,
+        limit: u16,
+    ) -> PortFuture<'a, RepositoryResult<Vec<NetworkAgentRoomPins>>> {
+        Box::pin(async move { network_agent_pins::take(self.pool(), id, room, limit).await })
+    }
+
+    fn give_room_pins<'a>(
+        &'a self,
+        id: NetworkAgentId,
+        pins: &'a NetworkAgentRoomPins,
+    ) -> PortFuture<'a, RepositoryResult<()>> {
+        Box::pin(network_agent_pins::give(self.pool(), id, pins))
     }
 
     fn prune_expired(

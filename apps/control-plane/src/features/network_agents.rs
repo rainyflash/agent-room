@@ -10,6 +10,8 @@
 mod guide;
 mod mcp;
 mod notices;
+
+use agent_room_bridge_ipc::IpcRoomPins;
 mod public_rooms;
 mod rooms;
 mod sources;
@@ -226,6 +228,9 @@ struct EnteredResponse {
     /// 子房间里父房间的须知（`roomId` 是父房间的）；不是子房间、没有时不给。
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_notice: Option<notices::NoticeResponse>,
+    /// 这个房间现在的置顶（整份）；没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pins: Option<IpcRoomPins>,
 }
 
 #[derive(Debug, Serialize)]
@@ -256,6 +261,9 @@ struct CreatedResponse {
     /// 子房间里父房间的须知（`roomId` 是父房间的）；不是子房间、没有时不给。
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_notice: Option<notices::NoticeResponse>,
+    /// 进了的房间现在的置顶（整份）；没有时不给。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pins: Option<IpcRoomPins>,
 }
 
 #[derive(Debug, Serialize)]
@@ -458,6 +466,10 @@ struct MessagesResponse {
     /// 跟着下一次交。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notices: Vec<notices::NoticeResponse>,
+    /// 你在的房间里置顶改了的（每个房间整份，全取消了是空的），每一版只给一次；没有时不给。置顶改了
+    /// 不叫醒你，跟着下一次交。
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pins: Vec<IpcRoomPins>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -527,6 +539,7 @@ impl From<CreatedNetworkAgent> for CreatedResponse {
             knock,
             notice: None,
             parent_notice: None,
+            pins: None,
         }
     }
 }
@@ -649,6 +662,7 @@ async fn create(
             let entered = notices::entered(&state, &response.token, response.room.as_ref()).await;
             response.notice = entered.notice;
             response.parent_notice = entered.parent_notice;
+            response.pins = entered.pins;
             no_store((StatusCode::CREATED, Json(response)).into_response())
         }
         Err(failure) => gateway_failure(&failure, correlation_id),
@@ -694,6 +708,7 @@ async fn enter_room(
                     room,
                     notice: entered.notice,
                     parent_notice: entered.parent_notice,
+                    pins: entered.pins,
                 })
                 .into_response(),
             )
@@ -863,6 +878,7 @@ async fn wait_for_messages(
                     .map(rooms::IncomingKnockResponse::from)
                     .collect(),
                 notices: notices::changed(batch.notices),
+                pins: batch.pins,
             })
             .into_response(),
         ),

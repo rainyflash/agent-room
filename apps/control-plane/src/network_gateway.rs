@@ -86,6 +86,7 @@ mod cleanup;
 mod encrypted;
 mod knocks;
 mod notices;
+mod pins;
 mod presence;
 pub(crate) mod projection;
 mod rooms;
@@ -191,6 +192,9 @@ pub(crate) struct NetworkAgentMessages {
     pub(crate) incoming_knocks: Vec<NetworkAgentIncomingKnock>,
     /// 交这一批时房间公告改了的（撤掉也算），每一版只交一次。被新的等待顶掉时不列。
     pub(crate) notices: Vec<NetworkAgentRoomNotice>,
+    /// 交这一批时置顶改了的房间（全取消了也算），每个房间是整份，每一版只交一次。被新的等待顶掉时
+    /// 不列。
+    pub(crate) pins: Vec<agent_room_bridge_ipc::IpcRoomPins>,
 }
 
 /// 一次等消息：最多等多久、一次最多取几条、听什么（`specs/agent-reading/waiting.md`）。
@@ -238,6 +242,14 @@ pub(crate) trait NetworkAgentMessaging: Send + Sync {
         token: &'a str,
         room_id: &'a str,
     ) -> PortFuture<'a, Vec<NetworkAgentRoomNotice>>;
+
+    /// 进房间以后，这个房间现在的置顶（`specs/redesign/brief-and-pins.md`“Agent 读置顶”），记成交过了。
+    /// 没有置顶、全取消了或者读不到都是没有。
+    fn current_pins<'a>(
+        &'a self,
+        token: &'a str,
+        room_id: &'a str,
+    ) -> PortFuture<'a, Option<agent_room_bridge_ipc::IpcRoomPins>>;
 
     /// 等消息：按 `request` 的规则等到有事，防抖后交出去；等满时间就空手返回。
     fn wait_for_messages<'a>(
@@ -611,6 +623,7 @@ impl NetworkGateway {
                     WaitDecision::Deliver(delivery) if synced => {
                         let mut batch = knocks.attach(delivered(page, delivery));
                         batch.notices = self.changed_notices(&session, room.as_ref()).await;
+                        batch.pins = self.changed_pins(&session, room.as_ref()).await;
                         return Ok(batch);
                     }
                     WaitDecision::Deliver(delivery) => (Some(delivery), None),
@@ -618,6 +631,7 @@ impl NetworkGateway {
                     WaitDecision::Wait { .. } if knocked && synced => {
                         let mut batch = knocks.attach(nothing(&page, WakeReason::Knocks));
                         batch.notices = self.changed_notices(&session, room.as_ref()).await;
+                        batch.pins = self.changed_pins(&session, room.as_ref()).await;
                         return Ok(batch);
                     }
                     WaitDecision::Wait { recheck_at_ms } => (None, recheck_at_ms),
@@ -728,6 +742,7 @@ impl NetworkGateway {
                 history_capacity: HISTORY_CAPACITY,
                 undecryptable_before_join,
                 room_notices: notices::synced(batch, &session.agent_matrix_user_id),
+                room_pins: pins::synced(batch, &session.agent_matrix_user_id),
             })
             .await
             .map_err(|_| NetworkGatewayFailure::Unavailable)?;
@@ -1164,6 +1179,14 @@ impl NetworkAgentMessaging for NetworkGateway {
         Box::pin(self.current_notices_internal(token, room_id))
     }
 
+    fn current_pins<'a>(
+        &'a self,
+        token: &'a str,
+        room_id: &'a str,
+    ) -> PortFuture<'a, Option<agent_room_bridge_ipc::IpcRoomPins>> {
+        Box::pin(self.current_pins_internal(token, room_id))
+    }
+
     fn wait_for_messages<'a>(
         &'a self,
         token: &'a str,
@@ -1530,6 +1553,7 @@ fn delivered(page: NetworkAgentInboxPage, delivery: Delivery) -> NetworkAgentMes
         gaps,
         incoming_knocks: Vec::new(),
         notices: Vec::new(),
+        pins: Vec::new(),
     }
 }
 
@@ -1568,6 +1592,7 @@ fn nothing(page: &NetworkAgentInboxPage, reason: WakeReason) -> NetworkAgentMess
         gaps: Vec::new(),
         incoming_knocks: Vec::new(),
         notices: Vec::new(),
+        pins: Vec::new(),
     }
 }
 
