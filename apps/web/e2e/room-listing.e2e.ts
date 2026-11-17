@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+import { fakePng } from './support/fake-png';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import { openRoomSettings, roomAction } from './support/workspace-navigation';
 
@@ -247,6 +248,95 @@ for (const width of [1440, 390]) {
     expect(failures).toEqual([]);
   });
 }
+
+/** 夹具里的预览图客户端向同源的这一条要图（`?private&listed&preview`）。 */
+const previewRoute = '**/fixture-control-plane/r/aB3xYz/preview.png*';
+
+/** 记下页面收回了哪些 `blob:` 地址：关掉对话框时那张图的地址要收回。 */
+async function recordRevokedUrls(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const revoked: string[] = [];
+    const revoke = URL.revokeObjectURL.bind(URL);
+    Object.defineProperty(window, '__revokedPreviewUrls', { value: revoked });
+    URL.revokeObjectURL = (url: string) => {
+      revoked.push(url);
+      revoke(url);
+    };
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`“分享”里发出去长这样：放这间房自己的预览图，关掉时收回：${String(width)}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = collectPageFailures(page);
+    await recordRevokedUrls(page);
+    const asked: URL[] = [];
+    await page.route(previewRoute, async (route) => {
+      asked.push(new URL(route.request().url()));
+      await route.fulfill({
+        body: fakePng(640, 320),
+        headers: { 'cache-control': 'public, max-age=600', etag: '"0123456789abcdef"' },
+        contentType: 'image/png',
+        status: 200,
+      });
+    });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto(`${roomFixture}?private&listed&preview`);
+    await (await roomAction(page, 'Share')).click();
+    const dialog = page.getByRole('dialog', { name: 'Share this room' });
+    await expect(dialog.getByRole('heading', { name: 'How it looks when posted' })).toBeVisible();
+    const image = dialog.locator('.room-share__preview img');
+    await expect(image).toHaveAttribute('data-preview', 'room');
+    await expect(image).toHaveAttribute('src', /^blob:/u);
+    // 放的是假的那张（640×320），不是 1280×640 的通用图。
+    await expect(image).toHaveJSProperty('naturalWidth', 640);
+    await expect(dialog.locator('.room-share__preview figure')).not.toHaveAttribute('aria-busy');
+    // 不带 `?v=`：服务器不看它，照此刻的画。
+    expect(asked.map((url) => `${url.pathname}${url.search}`)).toEqual([
+      '/fixture-control-plane/r/aB3xYz/preview.png',
+    ]);
+    await expectNoHorizontalOverflow(page);
+    await expectAccessible(page, '.ar-dialog');
+    await page.screenshot({ path: testInfo.outputPath(`share-preview-${String(width)}.png`) });
+
+    const shown = await image.getAttribute('src');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { readonly __revokedPreviewUrls?: string[] })
+              .__revokedPreviewUrls ?? [],
+        ),
+      )
+      .toContain(shown);
+    expect(failures).toEqual([]);
+  });
+}
+
+test('“分享”里服务器给不了这间房的图（忙着跳去通用图）时放通用图', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  let asked = 0;
+  await page.route(previewRoute, async (route) => {
+    asked += 1;
+    await route.fulfill({
+      headers: { 'cache-control': 'no-store', location: '/room-share-preview-en.png' },
+      status: 302,
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${roomFixture}?private&listed&preview`);
+  await (await roomAction(page, 'Share')).click();
+  const dialog = page.getByRole('dialog', { name: 'Share this room' });
+  const image = dialog.locator('.room-share__preview img');
+  await expect(image).toHaveAttribute('data-preview', 'generic');
+  await expect(image).toHaveAttribute('src', '/room-share-preview-en.png');
+  await expect(image).toHaveJSProperty('naturalWidth', 1_280);
+  expect(asked).toBe(1);
+  expect(failures).toEqual([]);
+});
 
 test('“分享”只给公开房间：私密的没有', async ({ page }) => {
   await page.goto(`${roomFixture}?private`);

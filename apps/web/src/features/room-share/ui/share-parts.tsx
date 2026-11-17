@@ -51,7 +51,7 @@ export function ShareTargetLinks({
   room,
   text,
 }: {
-  readonly room: ShareableRoom;
+  readonly room: Pick<ShareableRoom, 'name' | 'shareUrl'>;
   readonly text: string;
 }) {
   const { t } = useTranslation();

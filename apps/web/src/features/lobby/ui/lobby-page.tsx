@@ -460,6 +460,7 @@ function ReadyLobby({
                   ?.description
               : undefined) ?? '',
           name: room.name,
+          shareCode: listing.data.value.shareCode,
           shareUrl: listing.data.value.shareUrl,
         }
       : null;

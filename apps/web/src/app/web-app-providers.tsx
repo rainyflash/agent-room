@@ -50,6 +50,7 @@ import { ControlPlaneSubRoomClient } from '@/features/private-rooms/adapters/con
 import { ControlPlaneProjectRoomClient } from '@/features/private-rooms/adapters/control-plane-project-room-client';
 import { ControlPlaneRoomLiveViewClient } from '@/features/private-rooms/adapters/control-plane-room-live-view-client';
 import { ControlPlaneRoomExcerptClient } from '@/features/room-excerpts/adapters/control-plane-room-excerpt-client';
+import { ControlPlaneSharePreviewClient } from '@/features/room-share/adapters/control-plane-share-preview-client';
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlanePublicWatchClient } from '@/features/public-watch/adapters/control-plane-public-watch-client';
@@ -282,6 +283,11 @@ export function createCloudRuntime(
     roomDirectory,
     roundTrip,
     security: new MatrixSdkSecurityGateway(matrixClients),
+    // 预览图不要登录：发现页上没登录的人也能分享，不放进登录范围。桌面端照样经原生层代发。
+    sharePreviews: new ControlPlaneSharePreviewClient({
+      baseUrl: config.controlPlaneUrl,
+      fetch: controlPlaneFetch,
+    }),
     session: {
       browser: new WindowBrowserGateway(),
       controlPlane,

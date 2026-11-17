@@ -85,6 +85,8 @@ export type AppServices = {
   readonly roomRoleChanges?: import('@/features/private-rooms/domain/room-role-changes').RoomRoleChangeGateway;
   /** 子房间：名单、建、进出、门和管理、分类、房间的三项设置；测试和夹具里可以没有。 */
   readonly subRooms?: import('@/features/private-rooms/domain/sub-rooms').SubRoomGateway;
+  /** 分享对话框里“发出去长这样”那张这间房自己的预览图（3P-8b-2）；不带登录范围。测试和夹具里可以没有，没有就放通用图。 */
+  readonly sharePreviews?: import('@/features/room-share/domain/room-share').SharePreviewGateway;
   /** 房主和管理员改房间的常驻公告；测试和夹具里可以没有。 */
   readonly roomNotices?: import('@/features/room-notice/domain/room-notice').RoomNoticeGateway;
   /** 房主和管理员置顶房间里的一句；测试和夹具里可以没有。 */
