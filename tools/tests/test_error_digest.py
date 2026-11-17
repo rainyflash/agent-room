@@ -858,6 +858,40 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn("RateLimit(Unavailable)", digest.findings[0].signature.summary)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_content_upload_denied_is_noise_but_other_failures_are_not(self) -> None:
+        def failure(operation: str, detail: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-17T13:47:27.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "内容请求失败",
+                        "correlation.id": CORRELATION_ID,
+                        "operation": operation,
+                        "failure": detail,
+                    },
+                    "target": "agent_room_control_plane::error",
+                    "span": {
+                        "http.request.method": "POST",
+                        "url.path": "/content/uploads",
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    failure("begin_upload", "Denied"),
+                    failure("begin_upload", "Authorization(Unavailable)"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(len(digest.findings), 1)
+        self.assertIn("Authorization(Unavailable)", digest.findings[0].signature.summary)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_backfill_gap_notice_is_noise(self) -> None:
         def line(message: str) -> str:
             return json.dumps(
