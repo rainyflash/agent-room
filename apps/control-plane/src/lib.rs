@@ -1308,7 +1308,8 @@ fn build_agent_feature_states(
             &config.authentication.matrix_server_name,
             &config.authentication.frontend_origin,
         )
-        .with_excerpts(room_excerpt_pages(dependencies)),
+        .with_excerpts(room_excerpt_pages(dependencies))
+        .with_preview_font(config.project_rooms.preview_font.clone()),
         agents,
         instances,
         cards,

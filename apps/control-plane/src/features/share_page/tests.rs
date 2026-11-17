@@ -40,7 +40,7 @@ const DAY: i64 = 24 * 60 * 60 * 1_000;
 /// 分享码 `aB3xYz` 是 `room`，别的码照 `failure` 回答（没设就是没有这间房）。
 pub(super) struct FakeDirectory {
     pub(super) room: Mutex<PublicRoomDetailView>,
-    failure: Mutex<Option<PublicDirectoryFailureKind>>,
+    pub(super) failure: Mutex<Option<PublicDirectoryFailureKind>>,
     pub(super) asked: Mutex<Vec<(bool, String)>>,
 }
 
@@ -145,11 +145,13 @@ impl Clock for TestClock {
     }
 }
 
-/// 仓库地址认的房间：照 `answer` 回答，记下问过哪些仓库。`gate` 设了就等它放行再回答。
+/// 仓库地址认的房间：照 `answer` 回答，记下问过哪些仓库。`gate` 设了就等它放行再回答。预览图问一间房
+/// 绑着哪个仓库时照 `bound` 回答（不设就是没绑）。
 pub(super) struct FakeRepositories {
     pub(super) answer: Mutex<Result<PublicRoomDetailView, PublicDirectoryFailureKind>>,
     pub(super) asked: Mutex<Vec<String>>,
     pub(super) gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub(super) bound: Mutex<Result<Option<GithubRepository>, PublicDirectoryFailureKind>>,
 }
 
 impl FakeRepositories {
@@ -160,6 +162,7 @@ impl FakeRepositories {
             answer: Mutex::new(answer),
             asked: Mutex::new(Vec::new()),
             gate: None,
+            bound: Mutex::new(Ok(None)),
         })
     }
 
@@ -187,6 +190,19 @@ impl RepositoryRoomPages for FakeRepositories {
             }
             answer
         })
+    }
+
+    fn bound_repository(
+        &self,
+        _catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, PublicDirectoryResult<Option<GithubRepository>>> {
+        let answer = self
+            .bound
+            .lock()
+            .unwrap()
+            .clone()
+            .map_err(|kind| PublicDirectoryFailure::new("test", kind));
+        Box::pin(async move { answer })
     }
 }
 
@@ -216,7 +232,12 @@ async fn 公开房间出整页_用户写的字都转义_缓存一分钟_不进�
         "<meta property=\"og:description\" content=\"第一行 &lt;img src=x onerror=alert(1)&gt; 第二行\">"
     ));
     assert!(html.contains("<meta name=\"robots\" content=\"noindex\">"));
-    assert!(html.contains("content=\"https://app.agent-room.test/room-share-preview-zh-CN.png\""));
+    assert!(
+        html.contains(
+            "<meta property=\"og:image\" content=\"https://agent-room.test/r/aB3xYz/preview.png?v="
+        ),
+        "这间房自己的预览图"
+    );
     assert!(html.contains("<link rel=\"stylesheet\" href=\"/r/_/share.css\">"));
     assert!(html.contains("<script src=\"/r/_/share.js\" defer></script>"));
     assert!(!html.contains("style=\""), "内容安全策略不许内联样式");
@@ -305,8 +326,8 @@ async fn 语言按浏览器_没说的看房间名里有没有中文() {
             "{accept:?} {name}"
         );
         assert!(
-            html.contains(&format!("/room-share-preview-{lang}.png\"")),
-            "预览图跟着页面的语言：{accept:?} {name}"
+            html.contains("content=\"https://agent-room.test/r/aB3xYz/preview.png?v="),
+            "预览图是这间房自己的，图上的语言看房间名：{accept:?} {name}"
         );
     }
     let room = detail("Book club", "", RoomJoinMode::Open, true);

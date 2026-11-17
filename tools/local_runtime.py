@@ -62,6 +62,9 @@ def required_value(values: Mapping[str, str], name: str) -> str:
     return value
 
 
+PREVIEW_FONT: Final = ROOT / "apps" / "control-plane" / "assets" / "fonts" / "NotoSansSC-Bold.otf"
+
+
 def control_plane_runtime_environment(
     values: Mapping[str, str],
     *,
@@ -142,6 +145,8 @@ def control_plane_runtime_environment(
             "AGENT_ROOM_NETWORK_AGENT_SEAL_KEY": local_network_agent_seal_key(
                 required_value(values, "CONTENT_TICKET_SECRET")
             ),
+            # 分享预览图的字体：镜像里拷到 /usr/share/agent-room/fonts/，本机直接读仓库里的那一份。
+            "AGENT_ROOM_PREVIEW_FONT": str(PREVIEW_FONT),
         }
     )
     if enable_telemetry:

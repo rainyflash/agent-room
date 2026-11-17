@@ -12,7 +12,7 @@ const DAY_MILLIS: i64 = 24 * 60 * 60 * 1_000;
 /// `og:description` 最多取简介的前几个字。
 const PREVIEW_CHARS: usize = 150;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Language {
     Chinese,
     English,
@@ -236,13 +236,14 @@ pub(super) const fn disclaimer(language: Language) -> &'static str {
     text(language).disclaimer
 }
 
-/// 一间公开房间的分享页。`live` 时卡片下面放实况那一块。
+/// 一间公开房间的分享页。`live` 时卡片下面放实况那一块；`image` 是这间房自己的预览图（3P-8a）。
 pub(super) fn room_page(
     detail: &PublicRoomDetailView,
     live: bool,
     language: Language,
     origins: &Origins<'_>,
     now: UtcMillis,
+    image: &str,
 ) -> String {
     let text = text(language);
     let room = &detail.room.room;
@@ -256,7 +257,7 @@ pub(super) fn room_page(
     }
     body.push_str(&agents_panel(text, origins, code));
     body.push_str(&steps_panel(text, origins));
-    page(text, &title, &preview, origins, &body)
+    page(text, &title, &preview, Some(image), origins, &body)
 }
 
 /// 不公开了、关了、码换了、没有这个码，都是这一页，不写房间名。
@@ -277,7 +278,8 @@ pub(super) fn busy_page(language: Language, origins: &Origins<'_>) -> String {
     notice_page(text, origins, text.busy_title, text.busy_text)
 }
 
-/// 别的整页（仓库地址的“还没人认领”）也套这一层：同样的页头、`og:` 标签、样式和脚本。
+/// 别的整页（仓库地址的“还没人认领”）也套这一层：同样的页头、`og:` 标签、样式和脚本。预览图是
+/// 通用的那张。
 pub(super) fn shell(
     language: Language,
     title: &str,
@@ -285,7 +287,32 @@ pub(super) fn shell(
     origins: &Origins<'_>,
     body: &str,
 ) -> String {
-    page(text(language), title, description, origins, body)
+    page(text(language), title, description, None, origins, body)
+}
+
+/// 和 [`shell`] 一样，预览图换成 `image`（一段对话那一页自己的）。
+pub(super) fn shell_with_image(
+    language: Language,
+    title: &str,
+    description: &str,
+    image: &str,
+    origins: &Origins<'_>,
+    body: &str,
+) -> String {
+    page(
+        text(language),
+        title,
+        description,
+        Some(image),
+        origins,
+        body,
+    )
+}
+
+/// 网页上的通用预览图（`apps/web/public/room-share-preview-<语言>.png`）：没有自己的图的页面用它，
+/// 自己的图画不了时也跳到它。
+pub(super) fn generic_preview(app: &str, language: Language) -> String {
+    format!("{app}/room-share-preview-{}.png", text(language).lang)
 }
 
 fn notice_page(text: &Wording, origins: &Origins<'_>, title: &str, message: &str) -> String {
@@ -298,19 +325,24 @@ fn notice_page(text: &Wording, origins: &Origins<'_>, title: &str, message: &str
         app = escape(origins.app),
         explore = escape(text.explore),
     );
-    page(text, title, text.generic_description, origins, &body)
+    page(text, title, text.generic_description, None, origins, &body)
 }
 
 fn page(
     text: &Wording,
     title: &str,
     description: &str,
+    image: Option<&str>,
     origins: &Origins<'_>,
     body: &str,
 ) -> String {
     let title = escape(title);
     let description = escape(description);
     let app = escape(origins.app);
+    let image = escape(&image.map_or_else(
+        || generic_preview(origins.app, text.language),
+        str::to_owned,
+    ));
     format!(
         "<!doctype html>\n<html lang=\"{lang}\">\n<head>\n<meta charset=\"utf-8\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
@@ -320,7 +352,7 @@ fn page(
          <meta property=\"og:site_name\" content=\"Agent Room\">\n\
          <meta property=\"og:title\" content=\"{title}\">\n\
          <meta property=\"og:description\" content=\"{description}\">\n\
-         <meta property=\"og:image\" content=\"{app}/room-share-preview-{lang}.png\">\n\
+         <meta property=\"og:image\" content=\"{image}\">\n\
          <meta property=\"og:image:width\" content=\"1280\">\n\
          <meta property=\"og:image:height\" content=\"640\">\n\
          <meta name=\"twitter:card\" content=\"summary_large_image\">\n\

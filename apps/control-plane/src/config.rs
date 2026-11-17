@@ -228,9 +228,11 @@ pub(crate) const ACCEPTANCE_GITHUB_ADDRESS: &str = "AGENT_ROOM_ACCEPTANCE_GITHUB
 
 /// 项目房间。读 GitHub 的主机在生产上写死（`raw.githubusercontent.com`）；只有无头验收把它换成本机
 /// 回环地址上的假 GitHub，别的地址一律不认。部署配置从来不写它（`tools/tests/test_prodops.py` 卡着）。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct ProjectRoomConfig {
     pub(crate) acceptance_github: Option<SocketAddr>,
+    /// 画分享预览图的字体（3P-8a）。默认是镜像里拷好的那一份；读不到时预览图一律给通用图。
+    pub(crate) preview_font: PathBuf,
 }
 
 /// 提醒（`specs/redesign/reminders.md`）。邮件提醒默认关着：要等发信那一步上线、维护者点了头才打开；
@@ -268,8 +270,33 @@ impl ControlPlaneConfig {
 fn read_project_room_config(
     source: &impl EnvironmentSource,
 ) -> Result<ProjectRoomConfig, ConfigError> {
+    Ok(ProjectRoomConfig {
+        acceptance_github: read_acceptance_github(source)?,
+        preview_font: read_preview_font(source)?,
+    })
+}
+
+/// 本地可以指到仓库里的 `apps/control-plane/assets/fonts/NotoSansSC-Bold.otf`。
+fn read_preview_font(source: &impl EnvironmentSource) -> Result<PathBuf, ConfigError> {
+    const PREVIEW_FONT: &str = "AGENT_ROOM_PREVIEW_FONT";
+    let Some(value) = read_optional(source, PREVIEW_FONT) else {
+        return Ok(PathBuf::from(
+            crate::features::share_page::DEFAULT_PREVIEW_FONT,
+        ));
+    };
+    let path = PathBuf::from(value.trim());
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(ConfigError::invalid(PREVIEW_FONT, "必须是绝对路径"))
+    }
+}
+
+fn read_acceptance_github(
+    source: &impl EnvironmentSource,
+) -> Result<Option<SocketAddr>, ConfigError> {
     let Some(value) = read_optional(source, ACCEPTANCE_GITHUB_ADDRESS) else {
-        return Ok(ProjectRoomConfig::default());
+        return Ok(None);
     };
     let address: SocketAddr = value.trim().parse().map_err(|_| {
         ConfigError::invalid(
@@ -283,9 +310,7 @@ fn read_project_room_config(
             "只认本机回环地址和一个端口：它只给无头验收的假 GitHub 用",
         ));
     }
-    Ok(ProjectRoomConfig {
-        acceptance_github: Some(address),
-    })
+    Ok(Some(address))
 }
 
 fn read_reminder_config(source: &impl EnvironmentSource) -> Result<ReminderConfig, ConfigError> {
@@ -1367,6 +1392,40 @@ mod tests {
             format!("{:?}", config.content.object_store_secret_key),
             "[已脱敏]"
         );
+    }
+
+    #[test]
+    fn 预览图的字体默认在镜像里_只认绝对路径() {
+        assert_eq!(
+            ControlPlaneConfig::from_source(&valid_environment())
+                .unwrap()
+                .project_rooms
+                .preview_font,
+            std::path::Path::new("/usr/share/agent-room/fonts/NotoSansSC-Bold.otf")
+        );
+        let font = std::env::temp_dir().join("NotoSansSC-Bold.otf");
+        let mut environment = valid_environment();
+        environment
+            .0
+            .insert("AGENT_ROOM_PREVIEW_FONT", format!(" {} ", font.display()));
+        assert_eq!(
+            ControlPlaneConfig::from_source(&environment)
+                .unwrap()
+                .project_rooms
+                .preview_font,
+            font
+        );
+        environment.0.insert(
+            "AGENT_ROOM_PREVIEW_FONT",
+            "fonts/NotoSansSC-Bold.otf".to_owned(),
+        );
+        assert!(matches!(
+            ControlPlaneConfig::from_source(&environment),
+            Err(ConfigError::Invalid {
+                name: "AGENT_ROOM_PREVIEW_FONT",
+                ..
+            })
+        ));
     }
 
     #[test]

@@ -221,6 +221,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Bundled data
 
 The control-plane container image includes the DB-IP IP to Country Lite database. The control plane uses it only to turn a request's address into a coarse region for aggregate counts; the address is not stored. [IP Geolocation by DB-IP](https://db-ip.com) is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+The control-plane container image also includes the Noto Sans SC Bold font (`apps/control-plane/assets/fonts/NotoSansSC-Bold.otf`, from [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk) tag `Sans2.004`). The control plane uses it only to draw link preview images for public rooms. Noto Sans SC is licensed under the [SIL Open Font License 1.1](https://openfontlicense.org); the license text ships next to the font as `apps/control-plane/assets/fonts/LICENSE`.
 """
 
 

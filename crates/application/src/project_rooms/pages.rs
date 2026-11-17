@@ -4,10 +4,13 @@
 //!
 //! 这里不读 GitHub：地址谁都能编，不能让访客借它叫我们去敲 GitHub。没绑、认领了还没核对上、绑着的房间
 //! 不公开了、关了、被平台拿掉，一律回答没有（[`PublicDirectoryFailureKind::NotFound`]），不分是哪一种。
+//!
+//! 分享页的预览图（3P-8a）另问一间房绑着哪个仓库（[`RepositoryRoomPages::bound_repository`]），图上写
+//! `owner/repo` 和那个勾。
 
 use std::sync::Arc;
 
-use agent_room_domain::project_rooms::GithubRepository;
+use agent_room_domain::{ids::RoomCatalogId, project_rooms::GithubRepository};
 
 use crate::{
     persistence::{RepositoryError, RepositoryErrorKind},
@@ -24,6 +27,12 @@ pub trait RepositoryRoomPages: Send + Sync {
         &self,
         repository: GithubRepository,
     ) -> PortFuture<'_, PublicDirectoryResult<PublicRoomDetailView>>;
+
+    /// 这间房绑着的仓库，没绑是 `None`。不查房间公不公开：问之前已经由目录查过了。
+    fn bound_repository(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, PublicDirectoryResult<Option<GithubRepository>>>;
 }
 
 pub struct RepositoryRoomPageService {
@@ -79,6 +88,19 @@ impl RepositoryRoomPages for RepositoryRoomPageService {
         repository: GithubRepository,
     ) -> PortFuture<'_, PublicDirectoryResult<PublicRoomDetailView>> {
         Box::pin(self.public_room_internal(repository))
+    }
+
+    fn bound_repository(
+        &self,
+        catalog_id: RoomCatalogId,
+    ) -> PortFuture<'_, PublicDirectoryResult<Option<GithubRepository>>> {
+        Box::pin(async move {
+            self.store
+                .binding_for_room(catalog_id)
+                .await
+                .map(|binding| binding.map(|binding| binding.repository))
+                .map_err(|error| store_failure("project_room.bound_repository", &error))
+        })
     }
 }
 
