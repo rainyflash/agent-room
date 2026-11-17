@@ -1,5 +1,5 @@
-import { Button, CopyBlock, Dialog } from '@agent-room/ui-system';
-import { useId, useState } from 'react';
+import { CopyBlock, Dialog } from '@agent-room/ui-system';
+import { useId, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -7,28 +7,25 @@ import {
   SHARE_PREVIEW_CHARS,
   shareExcerpt,
   sharePreviewImage,
-  shareTargets,
-  withoutLink,
   type ShareableRoom,
-  type ShareTargets,
 } from '@/features/room-share/domain/room-share';
 
-import { QrCode } from './qr-code';
+import { ShareLinkField, ShareQrCode, ShareTargetLinks } from './share-parts';
 import './share-room-dialog.css';
 
 export type ShareRoomDialogProps = {
   readonly room: ShareableRoom;
   readonly onClose: () => void;
+  /** 放在最下面的另一节：房间页里是分享过的几段对话（3P-7b）；发现页没有。 */
+  readonly children?: ReactNode;
 };
-
-const targets = ['x', 'weibo', 'reddit'] as const satisfies readonly (keyof ShareTargets)[];
 
 /**
  * 公开房间的“分享”（`specs/public-rooms/design.md`“分享链接”）：链接和复制、一段能改的话、发到 X、微博、
  * Reddit（打开它们自己的分享网址）、系统的分享菜单（有才给）、二维码，和发出去的预览。改了的话只用这一次，
  * 不存。
  */
-export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
+export function ShareRoomDialog({ children, onClose, room }: ShareRoomDialogProps) {
   const { t } = useTranslation();
   const excerpt = shareExcerpt(room.description, SHARE_MESSAGE_EXCERPT_CHARS);
   const [text, setText] = useState(
@@ -39,16 +36,8 @@ export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
           : t('roomShare.message.default', { excerpt, name: room.name })
       }\n${room.shareUrl}`,
   );
-  const linkId = useId();
   const messageId = useId();
   const hintId = useId();
-  const postToId = useId();
-  const copyLabels = {
-    copiedLabel: t('roomShare.copied'),
-    failedLabel: t('roomShare.copyFailed'),
-  };
-  const links = shareTargets(room, text);
-  const systemShare = typeof navigator.share === 'function';
   return (
     <Dialog
       className="room-share"
@@ -60,26 +49,7 @@ export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
     >
       <div className="room-share__layout">
         <div className="room-share__main">
-          <div className="room-share__field">
-            <label htmlFor={linkId}>{t('roomShare.link')}</label>
-            <div className="room-share__link">
-              <input
-                id={linkId}
-                onFocus={(event) => {
-                  event.currentTarget.select();
-                }}
-                readOnly
-                value={room.shareUrl}
-              />
-              <CopyBlock
-                {...copyLabels}
-                copyLabel={t('roomShare.copyLink')}
-                hideText
-                size="compact"
-                text={room.shareUrl}
-              />
-            </div>
-          </div>
+          <ShareLinkField url={room.shareUrl} />
           <div className="room-share__field">
             <label htmlFor={messageId}>{t('roomShare.message')}</label>
             <textarea
@@ -94,8 +64,9 @@ export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
             <div className="room-share__message-footer">
               <small id={hintId}>{t('roomShare.message.hint')}</small>
               <CopyBlock
-                {...copyLabels}
+                copiedLabel={t('roomShare.copied')}
                 copyLabel={t('roomShare.copyMessage')}
+                failedLabel={t('roomShare.copyFailed')}
                 hideText
                 size="compact"
                 text={text}
@@ -103,54 +74,19 @@ export function ShareRoomDialog({ onClose, room }: ShareRoomDialogProps) {
               />
             </div>
           </div>
-          <section aria-labelledby={postToId} className="room-share__field">
-            <h3 id={postToId}>{t('roomShare.postTo')}</h3>
-            <div className="room-share__targets">
-              {targets.map((target) => (
-                <a
-                  aria-label={t('roomShare.targetLabel', {
-                    target: t(`roomShare.target.${target}`),
-                  })}
-                  className="ar-button ar-button--compact ar-button--ghost"
-                  href={links[target]}
-                  key={target}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  {t(`roomShare.target.${target}`)}
-                </a>
-              ))}
-              {systemShare ? (
-                <Button
-                  onClick={() => {
-                    // 关掉系统的分享菜单也算失败，不用说。
-                    navigator
-                      .share({
-                        text: withoutLink(text, room.shareUrl),
-                        title: `${room.name} · Agent Room`,
-                        url: room.shareUrl,
-                      })
-                      .catch(() => undefined);
-                  }}
-                  size="compact"
-                  tone="ghost"
-                >
-                  {t('roomShare.more')}
-                </Button>
-              ) : null}
-            </div>
-          </section>
+          <ShareTargetLinks room={room} text={text} />
         </div>
         <aside className="room-share__side">
-          <section className="room-share__qr">
-            <h3>{t('roomShare.qr')}</h3>
-            <QrCode label={t('roomShare.qr.label', { name: room.name })} value={room.shareUrl} />
-            <p>{t('roomShare.qr.detail')}</p>
-          </section>
+          <ShareQrCode
+            detail={t('roomShare.qr.detail')}
+            label={t('roomShare.qr.label', { name: room.name })}
+            url={room.shareUrl}
+          />
           <SharePreview room={room} />
         </aside>
       </div>
       <p className="room-share__note">{t('roomShare.note')}</p>
+      {children}
     </Dialog>
   );
 }

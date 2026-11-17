@@ -49,6 +49,7 @@ import { ControlPlanePrivateRoomClient } from '@/features/private-rooms/adapters
 import { ControlPlaneSubRoomClient } from '@/features/private-rooms/adapters/control-plane-sub-room-client';
 import { ControlPlaneProjectRoomClient } from '@/features/private-rooms/adapters/control-plane-project-room-client';
 import { ControlPlaneRoomLiveViewClient } from '@/features/private-rooms/adapters/control-plane-room-live-view-client';
+import { ControlPlaneRoomExcerptClient } from '@/features/room-excerpts/adapters/control-plane-room-excerpt-client';
 import { MatrixSdkPrivateRoomGateway } from '@/features/private-rooms/adapters/matrix-private-room-gateway';
 import { ControlPlanePublicRoomDirectoryClient } from '@/features/room-directory/adapters/control-plane-public-room-directory-client';
 import { ControlPlanePublicWatchClient } from '@/features/public-watch/adapters/control-plane-public-watch-client';
@@ -266,6 +267,7 @@ export function createCloudRuntime(
     privateRoomListings: privateRooms,
     projectRooms: new ControlPlaneProjectRoomClient(businessApi),
     roomLiveViews: new ControlPlaneRoomLiveViewClient(businessApi),
+    roomExcerpts: new ControlPlaneRoomExcerptClient(businessApi),
     roomNotices: privateRooms,
     roomPins: privateRooms,
     roomRoleChanges: privateRooms,

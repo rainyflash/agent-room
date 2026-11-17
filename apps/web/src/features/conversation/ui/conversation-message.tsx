@@ -1,10 +1,23 @@
-import { Check, CheckCheck, ChevronDown, ChevronUp, Copy, Pin, PinOff, Reply } from 'lucide-react';
+import {
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronUp,
+  Circle,
+  CircleCheck,
+  Copy,
+  MessageSquareShare,
+  Pin,
+  PinOff,
+  Reply,
+} from 'lucide-react';
 import { useContext, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { ActorAvatar } from '@/features/lobby/ui/avatars';
 import { useIsNetworkAgent, useNetworkAgentLabel } from '@/features/lobby/ui/network-agent-labels';
 import { RoomPinsActionsContext } from '@/features/room-pins/ui/room-pins-actions';
+import { ExcerptSelectionContext } from '@/features/room-excerpts/ui/excerpt-selection';
 import type { AgentDelivery } from '../domain/message-delivery';
 import { ChatMarkdown } from './chat-markdown';
 import { MessageAttachment } from './message-attachment';
@@ -73,6 +86,16 @@ export function ConversationMessage({
       ? pinActions
       : null;
   const pinned = pins?.pinned.has(message.matrixEventId) ?? false;
+  // 放着实况的房间里，开了实况以后说的每一句都能“分享这一段”；正在选时每一句换成一个勾。
+  const excerptActions = useContext(ExcerptSelectionContext);
+  const excerpts =
+    excerptActions !== null &&
+    excerptActions.roomId === message.roomId &&
+    excerptActions.shareable(message)
+      ? excerptActions
+      : null;
+  const selecting = excerptActions?.roomId === message.roomId && excerptActions.selecting;
+  const excerptPlace = excerpts?.place(message.messageId);
   const fold = useRef<HTMLDivElement>(null);
   const foldId = useId();
   const tall = useTallContent(fold);
@@ -84,6 +107,22 @@ export function ConversationMessage({
       className={`conversation-message${own ? ' conversation-message--own' : ''}`}
       data-actor-kind={message.actor.kind}
       data-mentioned={mentioned ? 'true' : undefined}
+      data-action-count={selecting ? undefined : actionCount(chat?.text, pins, excerpts)}
+      data-excerpt={excerptPlace}
+      data-excerpt-pickable={selecting && excerpts !== null ? 'true' : undefined}
+      onClick={
+        selecting && excerpts !== null
+          ? (event) => {
+              // 选的时候点这一句的哪里都算；点里面的链接、按钮照旧是它们自己的。
+              if (
+                event.target instanceof Element &&
+                event.target.closest('a, button, summary, input, textarea') !== null
+              )
+                return;
+              excerpts.pick(message);
+            }
+          : undefined
+      }
     >
       <div className="conversation-message__avatar" aria-hidden="true">
         <ActorAvatar actor={message.actor} />
@@ -187,59 +226,106 @@ export function ConversationMessage({
         </div>
         {own ? <DeliveryMark delivery={delivery} /> : null}
       </div>
-      <div className="conversation-message__actions">
-        {chat?.text ? (
-          <button
-            className="conversation-message__action"
-            type="button"
-            aria-label={t(copied ? 'conversation.copied' : 'conversation.copy')}
-            title={t(copied ? 'conversation.copied' : 'conversation.copy')}
-            onClick={() => {
-              void navigator.clipboard.writeText(chat.text).then(
-                () => {
-                  setCopied(true);
-                  window.setTimeout(() => {
+      {selecting ? (
+        excerpts === null ? null : (
+          <div className="conversation-message__actions conversation-message__actions--select">
+            <button
+              className="conversation-message__select"
+              type="button"
+              aria-pressed={excerptPlace !== undefined}
+              aria-label={t('roomExcerpt.select.message', {
+                name: message.actor.displayName,
+                time: time.format(message.serverTimestamp),
+              })}
+              title={t('roomExcerpt.select.message', {
+                name: message.actor.displayName,
+                time: time.format(message.serverTimestamp),
+              })}
+              onClick={() => {
+                excerpts.pick(message);
+              }}
+            >
+              {excerptPlace === undefined ? (
+                <Circle aria-hidden="true" />
+              ) : (
+                <CircleCheck aria-hidden="true" />
+              )}
+            </button>
+          </div>
+        )
+      ) : (
+        <div className="conversation-message__actions">
+          {chat?.text ? (
+            <button
+              className="conversation-message__action"
+              type="button"
+              aria-label={t(copied ? 'conversation.copied' : 'conversation.copy')}
+              title={t(copied ? 'conversation.copied' : 'conversation.copy')}
+              onClick={() => {
+                void navigator.clipboard.writeText(chat.text).then(
+                  () => {
+                    setCopied(true);
+                    window.setTimeout(() => {
+                      setCopied(false);
+                    }, 1_500);
+                  },
+                  () => {
                     setCopied(false);
-                  }, 1_500);
-                },
-                () => {
-                  setCopied(false);
-                },
-              );
-            }}
-          >
-            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-          </button>
-        ) : null}
-        <button
-          className="conversation-message__action"
-          type="button"
-          disabled={!editable}
-          aria-label={t('conversation.reply', { name: message.actor.displayName })}
-          title={t('conversation.reply', { name: message.actor.displayName })}
-          onClick={() => {
-            onReply(message);
-          }}
-        >
-          <Reply aria-hidden="true" />
-        </button>
-        {pins === null ? null : (
+                  },
+                );
+              }}
+            >
+              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </button>
+          ) : null}
           <button
             className="conversation-message__action"
             type="button"
-            disabled={pins.pending.has(message.matrixEventId)}
-            aria-label={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
-            title={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
+            disabled={!editable}
+            aria-label={t('conversation.reply', { name: message.actor.displayName })}
+            title={t('conversation.reply', { name: message.actor.displayName })}
             onClick={() => {
-              pins.toggle(message.matrixEventId, !pinned);
+              onReply(message);
             }}
           >
-            {pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+            <Reply aria-hidden="true" />
           </button>
-        )}
-      </div>
+          {pins === null ? null : (
+            <button
+              className="conversation-message__action"
+              type="button"
+              disabled={pins.pending.has(message.matrixEventId)}
+              aria-label={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
+              title={t(pinned ? 'roomPins.action.unpin' : 'roomPins.action.pin')}
+              onClick={() => {
+                pins.toggle(message.matrixEventId, !pinned);
+              }}
+            >
+              {pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+            </button>
+          )}
+          {excerpts === null ? null : (
+            <button
+              className="conversation-message__action conversation-message__share"
+              type="button"
+              aria-label={t('roomExcerpt.action.share')}
+              title={t('roomExcerpt.action.share')}
+              onClick={() => {
+                excerpts.begin(message);
+              }}
+            >
+              <MessageSquareShare aria-hidden="true" />
+            </button>
+          )}
+        </div>
+      )}
     </article>
   );
+}
+
+/** 悬停出来的那一排有几个按钮：触屏上一直摆着，标题行右边按它留出位置，免得盖住时间。 */
+function actionCount(text: string | undefined, pins: unknown, excerpts: unknown): number {
+  return 1 + (text ? 1 : 0) + (pins === null ? 0 : 1) + (excerpts === null ? 0 : 1);
 }
 
 /**

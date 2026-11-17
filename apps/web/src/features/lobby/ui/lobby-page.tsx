@@ -107,6 +107,14 @@ import type { SubRoomRowMenuContext } from '@/features/sub-rooms/ui/sub-room-row
 import { useUnseenSubRooms } from '@/features/sub-rooms/ui/use-unseen-sub-rooms';
 import { shareable } from '@/features/private-rooms/domain/private-room-listing';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
+import { conversationMessages } from '@/features/conversation/domain/conversation';
+import {
+  ExcerptSelectionContext,
+  useExcerptSharing,
+} from '@/features/room-excerpts/ui/excerpt-selection';
+import { ExcerptSelectionBar } from '@/features/room-excerpts/ui/excerpt-selection-bar';
+import { ShareExcerptDialog } from '@/features/room-excerpts/ui/share-excerpt-dialog';
+import { SharedExcerpts } from '@/features/room-excerpts/ui/shared-excerpts';
 import type { ShareableRoom } from '@/features/room-share/domain/room-share';
 import type { WebSession } from '@/features/session/domain/session';
 import './lobby-workspace.css';
@@ -244,6 +252,7 @@ function ReadyLobby({
     privateRoomListings,
     privateRooms,
     projectRooms,
+    roomExcerpts,
     roomLiveViews,
     roomNotices,
     roomPins,
@@ -520,7 +529,24 @@ function ReadyLobby({
     panel === 'space' && (conversationLayout || selectedDirectSessionId !== null)
       ? 'conversation'
       : panel;
-  const { store: messageStore } = useRoomMessages(room.roomId);
+  const { state: roomMessages, store: messageStore } = useRoomMessages(room.roomId);
+  // 对话里“分享这一段”（specs/redesign/project-rooms.md“分享一段对话”）：只在放着实况的主房间里有，
+  // 也只认开了实况以后的话。
+  const timeline = useMemo(
+    () => conversationMessages(roomMessages.kind === 'ready' ? roomMessages.room.messages : []),
+    [roomMessages],
+  );
+  const liveSinceUnixMs =
+    liveView && !archived && !subRoom && liveViewQuery.data?.ok === true
+      ? liveViewQuery.data.value.enabledAtUnixMs
+      : null;
+  const excerptSharing = useExcerptSharing({
+    gateway: principal === null ? undefined : roomExcerpts,
+    catalogId,
+    roomId: room.roomId,
+    liveSinceUnixMs,
+    timeline,
+  });
   const activityStore = useMemo(
     () => new RoomActivityStore(messageStore, principal?.matrixUserId ?? null),
     [messageStore, principal?.matrixUserId],
@@ -724,8 +750,26 @@ function ReadyLobby({
             setShareOpen(false);
           }}
           room={shareRoom}
-        />
+        >
+          {roomExcerpts === undefined || principal === null ? null : (
+            <SharedExcerpts
+              catalogId={catalogId}
+              gateway={roomExcerpts}
+              live={liveView}
+              manages={managesThisRoom}
+            />
+          )}
+        </ShareRoomDialog>
       ) : null}
+      {excerptSharing.dialog === null || excerptSharing.selected === null ? null : (
+        <ShareExcerptDialog
+          messages={excerptSharing.selected}
+          onClose={excerptSharing.closeDialog}
+          onRetry={excerptSharing.retry}
+          roomName={room.name}
+          state={excerptSharing.dialog}
+        />
+      )}
       {roomSettings === null || principal === null ? null : (
         <RoomSettingsDialog
           catalogId={catalogId}
@@ -865,6 +909,15 @@ function ReadyLobby({
           selfMatrixUserId={principal?.matrixUserId ?? null}
         />
       ) : null}
+      {publicConversationVisible && excerptSharing.selected !== null ? (
+        <ExcerptSelectionBar
+          count={excerptSharing.selected.length}
+          onCancel={excerptSharing.cancel}
+          onShare={excerptSharing.share}
+          sharing={excerptSharing.dialog?.kind === 'pending'}
+          tooLong={excerptSharing.tooLong}
+        />
+      ) : null}
     </>
   );
   // 对话版面里没有“对话 / 资料”两个标签：换过去、换回来的按钮和须知都放进对话那一栏里。
@@ -873,45 +926,47 @@ function ReadyLobby({
   const conversationContent = (
     <ConversationSearchRequestContext.Provider value={searchRequests}>
       <RoomPinsActionsContext.Provider value={pinsControl.actions}>
-        <div
-          {...(conversationLayout
-            ? { className: 'room-desk__content' }
-            : {
-                className: 'room-panel__content',
-                id: 'workspace-current-view',
-                role: 'tabpanel',
-                'aria-labelledby': `workspace-tab-${panelView}`,
-              })}
-        >
-          <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
-            <MessageLayer
+        <ExcerptSelectionContext.Provider value={excerptSharing.actions}>
+          <div
+            {...(conversationLayout
+              ? { className: 'room-desk__content' }
+              : {
+                  className: 'room-panel__content',
+                  id: 'workspace-current-view',
+                  role: 'tabpanel',
+                  'aria-labelledby': `workspace-tab-${panelView}`,
+                })}
+          >
+            <div className="workspace-room-content" hidden={selectedDirectSessionId !== null}>
+              <MessageLayer
+                {...deskViews}
+                {...(conversationLayout
+                  ? { conversationUnread: activity.unread, notices: conversationNotices }
+                  : {})}
+                active={publicConversationVisible}
+                focusedConversationMessageId={focusedConversationMessageId}
+                participants={room.agents}
+                {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
+                catalogId={catalogId}
+                onSelectedMessageChange={onSelectedMessageChange}
+                roomId={room.roomId}
+                roomName={room.name}
+                privateRoom={room.encrypted === true}
+                selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+                view={panelView}
+                writesAllowed={writesAllowed}
+              />
+            </div>
+            <DirectConversationDock
               {...deskViews}
-              {...(conversationLayout
-                ? { conversationUnread: activity.unread, notices: conversationNotices }
-                : {})}
-              active={publicConversationVisible}
-              focusedConversationMessageId={focusedConversationMessageId}
-              participants={room.agents}
-              {...(room.memberNames === undefined ? {} : { memberNames: room.memberNames })}
-              catalogId={catalogId}
+              activeCatalogId={selectedDirectSessionId}
+              controller={directSessions}
               onSelectedMessageChange={onSelectedMessageChange}
-              roomId={room.roomId}
-              roomName={room.name}
-              privateRoom={room.encrypted === true}
-              selectedMessageId={selectedDirectSessionId === null ? selectedMessageId : null}
+              selectedMessageId={selectedMessageId}
               view={panelView}
-              writesAllowed={writesAllowed}
             />
           </div>
-          <DirectConversationDock
-            {...deskViews}
-            activeCatalogId={selectedDirectSessionId}
-            controller={directSessions}
-            onSelectedMessageChange={onSelectedMessageChange}
-            selectedMessageId={selectedMessageId}
-            view={panelView}
-          />
-        </div>
+        </ExcerptSelectionContext.Provider>
       </RoomPinsActionsContext.Provider>
     </ConversationSearchRequestContext.Provider>
   );

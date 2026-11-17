@@ -485,6 +485,41 @@
   width: 14px;
   height: 14px;
 }
+/*
+ * 选一段对话（分享这一段）：选中的几句铺一层浅灰，和找你的那一条一样向外扩；每一句右上角一个勾，
+ * 一直看得见。点这一句的哪里都算。
+ */
+.conversation-message[data-excerpt-pickable='true'] {
+  cursor: pointer;
+}
+.conversation-message[data-excerpt] {
+  border-radius: 2px;
+  background: var(--ar-selected);
+  box-shadow: 0 0 0 8px var(--ar-selected);
+}
+.conversation-message .conversation-message__actions--select {
+  opacity: 1;
+}
+.conversation-message__select {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--ar-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.conversation-message__select:hover,
+.conversation-message__select[aria-pressed='true'] {
+  color: var(--color-ink);
+}
+.conversation-message__select svg {
+  width: 18px;
+  height: 18px;
+}
 
 /* 气泡里的受限 Markdown：段落与纯文字消息一致，代码块和列表另有排版。 */
 .chat-markdown > p {
@@ -877,6 +912,13 @@
   /* 触屏上复制、回复按钮一直显示，给它们在标题行右侧留出位置，免得盖住时间。 */
   .conversation-message header {
     padding-right: 58px;
+  }
+  /* 还有置顶、分享这一段时，按钮多了，留的位置也跟着多。 */
+  .conversation-message[data-action-count='3'] header {
+    padding-right: 86px;
+  }
+  .conversation-message[data-action-count='4'] header {
+    padding-right: 114px;
   }
 }
 @media (max-width: 767px) {

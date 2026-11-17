@@ -631,3 +631,22 @@
     - 不是今年的日期带上年份。
     - 隐私说明页“公开房间”那一条原来写“每次打开都重新读”，改成“读到的在内存里留一分钟”“照实况的样子显示”。
   - 测试：读（`public_watch/tests/excerpt_pages.rs`）、页面（`share_page/excerpt_tests.rs`：转义、内容安全策略、缓存、410、和分享页一模一样的 404、503、限流、语言、年份）、隐私说明页的说法。真实数据库的按码查（`postgres-adapter` 的 `private_rooms/excerpts.rs`）只在派发 `suite=all` 时跑。
+- 2026-11-16 3P-7b（网页：对话里“分享这一段”，房间“分享”里分享过的几段；和 3P-7a-1、3P-7a-2 同一版发）：
+  - 三个接口的客户端 `features/room-excerpts/adapters/control-plane-room-excerpt-client.ts`，经组合根注入的 fetch 带着登录发；回答照新的 schema 严格校验（`domain/room-excerpts.ts`：段码 8 位、句数 1 到 30、多一个字段不认）。`invalid_range` 的 `details.reason` 由共用的 `PrivateRoomHttp` 读进 `PrivateRoomFailure.reason`，和实况的 `condition` 一样，别的接口用不着就是空的。查询键挂在私人房间列表的键下面（`roomExcerptsQueryKey`）。
+  - 一句话上的按钮：悬停出来的那一排（复制、回复、置顶旁边）多“分享这一段”，经 `ExcerptSelectionContext` 拿到（`ui/excerpt-selection.ts`，和置顶的 `RoomPinsActionsContext` 一样）。只在房间放着实况时有：房间页用已有的实况那一份查询（`useRoomLiveView`，没多问一次），`live` 而且不是子房间、没归档才给；只给开了实况以后真发出去的聊天消息（事件 ID 以 `$` 开头，系统那几行、还在发的不算）。
+  - 选：点了这一句是开头，焦点落到它的勾上；之后每一句的那一排换成一个勾（`aria-pressed`，读屏念“选这一句：谁，几点”），点勾或点这一句哪里都算（点里面的链接、按钮照旧是它们自己的）。往下点是结尾，点在已选的中间缩到那儿，点在开头前面开头挪过去；超过 30 句不改，那一条上说为什么。对话上面那一条（`ui/excerpt-selection-bar.tsx`，放在对话上面的提示那一栏最后）写“已选 6 句”和怎么接着选（`role="status"`），右边“分享”“取消”；Esc 也是取消，焦点回到开头那一句的“分享这一段”。实况关了、换了房间、开头那一句没了，都不再选。
+  - 点“分享”时才向控制面要链接，对话框马上打开、先说“正在生成链接…”：设计里对话框一打开就有链接，选的时候每改一下就要一次又会白占每小时 20 段的名额。生成好了是链接和“复制链接”、发到 X、微博、Reddit、二维码（`ui/share-excerpt-dialog.tsx`）。关掉对话框这一段就分享完了，不再选，焦点回到开头那一句；没成时关掉还选着，好改了再分享。
+  - 每个错误码都有中英文的一句（`ui/excerpt-failure.tsx`），错误码、`reason` 和关联 ID 只在“详情”里：`before_live` 只说“只能分享开了实况以后说的话，从后面的一句开始选”；`rate_limited` 照 `Retry-After` 说几分钟以后（向上取整），没说就是“过一会儿”；`not_live`、`not_found`、`forbidden` 还让实况那一份重问，按钮多半该收起来了。连不上、服务器暂时不行的给“再试一次”，别的给“回去改选”。
+  - 对话框下面预览这几句，照分享出去的那一页：名字、人还是 Agent、几点，正文开头 280 个字，不公开的只说一句、只发了文件的只说发了一个文件、改过的带“（改过）”；标题“6 句 · 今天 19:54”。最多 30 句，框住能滚，键盘也滚得动。
+  - 房间“分享”对话框下面多一节（`ui/shared-excerpts.tsx`）：每段几句、第一句的日子、链接，“复制链接”和“删掉”。删掉先在这一行里确认（“删掉这一段？链接马上就打不开了。”，焦点在“不删了”），不用 `window.confirm`；删了焦点回到这一节的标题，读屏说一声。删的时候早就没了的直接从名单上拿掉。
+  - 标题：成员是“我分享过的”（Stretches you’ve shared），房主和管理员看到的是这间房的全部，写“这间房分享过的”（Shared from this room），下面一句说看得到每一段、看不出是谁分享的，自己的那几段标“你分享的”（Yours）。管理员也写“我分享过的”的话，别人分享的看着像是自己的。
+  - 房间没在放实况、又一段也没有时整节不出来；没在放但服务器还留着（平台冻结、从目录里拿掉时实况那一行和段都留着）时照样列出来，能删。
+  - 对话框里的链接、发到别处、二维码从 `room-share` 拆成共用的几块（`room-share/ui/share-parts.tsx`：`ShareLinkField`、`ShareTargetLinks`、`ShareQrCode`），房间的“分享”对话框也换成用它们，没另抄一份；它多了一个 `children`，分享过的那一节放在里面。
+  - 浏览器验收：夹具 `lobby-scene.html?private&listed&history&unfolded&live=on`（`&historyPage=40` 一开始就有 41 到 80 句，`&excerptFail=before_live|rate_limited|not_live|…` 让分享回那个错误码；开着实况时先有两段，一段是你的）。夹具和服务器一样只认开了实况以后、连着的最多 30 句。`e2e/room-excerpts.e2e.ts` 在 1440 和 390 两种宽度、带 axe：没放实况时没有按钮；键盘开始选、够不着 30 句、缩回去、Esc；分享、预览、复制、发到 X、二维码；房间“分享”里多了这一段，确认、不删了、删掉；错误码换成说法、改选的回去还选着。
+  - 单元测试：选的规则和错误码（`domain/room-excerpts.spec.ts`），客户端（`adapters/control-plane-room-excerpt-client.spec.ts`），选和分享的流程（`ui/excerpt-selection.spec.tsx`），对话框和那一条（`ui/share-excerpt-dialog.spec.tsx`），分享过的那一节和两种语言的错误说法（`ui/shared-excerpts.spec.tsx`），一句话上的按钮和勾（`conversation-message.spec.tsx`）。
+  - 和设计不一样、设计里没写的：
+    - 开实况以前的话没有“分享这一段”，选的时候也没有勾；服务器照样会回 `before_live`（比如选着的时候实况关了又开），说法照上面。
+    - 选的时候那几句的复制、回复、置顶先收起来，只剩勾。
+    - 预览只写人还是 Agent，不写是谁的 Agent、不标网络 Agent（分享出去的那一页写主人）。
+  - 隐私说明页不改：3P-7a-1、3P-7a-2 已经照做完的样子写了谁看得到、存什么、什么时候删。
+  - 没做的：一段对话的无头验收（3P-9b-2）；预览图（3P-8）；指南、README 里补一段对话（3P-10b）。
