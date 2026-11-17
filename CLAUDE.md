@@ -266,12 +266,14 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 用例里开 Agent 名单、开私聊、回主房间用 `e2e/support/workspace-navigation.ts` 的 `openAgentRoster`、`openDirectConversation`、`openMainRoom`：1100px 以上名单在右栏、私聊在左栏，窄了才从顶栏的按钮打开抽屉，直接点 `View agents` 在宽屏上点不到。
     - 人不在主房间的对话里（在私聊里、在看资料）时来了新消息，条数标在“主房间”“回到主房间”和“对话”标签上（`RoomUnreadCount`）。按钮的名字不带条数，条数在 `aria-describedby` 里，用例照 `toHaveAccessibleDescription` 查。
     - 对话框的无障碍检查在对话版面上比在场景上严：对话框盖在场景上时 axe 算不出底色，对比度的问题报不出来（1b 就这样查出成员一节里一处对比度不够的字）。新加的对话框在对话版面上跑一遍 axe。
-  - 第四稿配色（4C）：维护者 2026-11-17 定了方向 D“深色导航，颜色跟着人”，做法和令牌表在 [room-page.md](./specs/redesign/room-page.md)“风格”一节，对比稿是 Artifact“第四稿配色方向”。分三步：4C-1 令牌、主按钮、导航、选中和链接，连同各处抄的那一份颜色（#927）；4C-2 名字和房间小图标的颜色；4C-3 剩下的页面过一遍、截图给维护者看，他点头了再发版。下面 1c 的规矩已经照第四稿改过。4C-1 以后加界面还要留意：
+  - 第四稿配色（4C）：维护者 2026-11-17 定了方向 D“深色导航，颜色跟着人”，做法和令牌表在 [room-page.md](./specs/redesign/room-page.md)“风格”一节，对比稿是 Artifact“第四稿配色方向”。分三步：4C-1 令牌、主按钮、导航、选中和链接，连同各处抄的那一份颜色（#927）；4C-2 名字和房间小图标的颜色（#928）；4C-3 剩下的页面过一遍、截图给维护者看，他点头了再发版。下面 1c 的规矩已经照第四稿改过。4C-1 以后加界面还要留意：
     - 导航（`AppNavigation` 的顶栏、房间页的左栏）带 `.ar-nav`：在这个容器里 `--color-ink`、`--ar-muted`、`--ar-surface-muted`、`--ar-selected`、`--ar-line`、`--ar-accent` 这些令牌换成了导航的，往里面放东西照旧用这些令牌，别写死颜色，也别用 `--ar-nav-*` 以外的办法另配一套。左栏里的东西手机上会搬进浅底的下拉，所以只在导航里才有的样子（你在的那一项前面的记号是明黄）要挂在 `.room-desk__rail`、`.app-navigation` 这样的容器上。
     - 导航里“你在的那一项”垫的是一层半透明的白（`--ar-nav-selected`）。导航里次要的字、绿字、红字（`--ar-nav-muted`、`--ar-nav-success`、`--ar-nav-alert`）的值是照“压在这一层上也过 4.5:1”定的，改它们或者改这一层要重算。
     - 从导航里弹出来的 `<dialog>`、`[popover]` 自动换回内容区的令牌（`--ar-base-*`）。给 `.ar-nav` 里多换一个令牌时，`:root` 的 `--ar-base-*` 和换回来的那一块要一起加，不然弹出来的菜单里那一样是深色的。
     - `--ar-accent` 是青绿，只给焦点圈、打了勾的框、开关、选中的标签下面那条线；青绿的字（选中的那一项、链接）用深一档的 `--ar-accent-ink`；要墨色直接用 `--color-ink`。主按钮的颜色是 `--ar-primary`、`--ar-on-primary`，白天夜间一样，上面别放白字。
     - 选中的那一项一律是 `color: var(--ar-accent-ink); background: var(--ar-selected)`。`--ar-selected` 也拿来当浅底按钮悬停时的底，所以它带一点青是有意的。
+    - Agent 的名字跟它的机器人一个颜色：写名字的元素加 `ar-name` 和 `data-tone={agentTone(agentId)}`（消息的作者用 `actorTone(actor)`，人不带、是墨色），都在 `features/lobby/ui/avatars.tsx`，和头像垫的底是同一张表。离线的在表格、名单里不带。别在样式里按第几个轮，也别给标题上颜色。导航里（`.ar-nav`）名字自动不带颜色。
+    - 房间的小图标按房间号挑颜色：元素加 `ar-tile` 和 `data-tone={roomTone(catalogId)}`（`shared/ui/room-tone.ts`，青、珊瑚、明黄、天蓝四种），同一间房到哪儿都是同一种。归档了的不带。不是哪一间房的小图标（邀请、“去发现页”）照旧垫浅青。
   - 第 1 块 1c 的第一个 PR（#799）：界面换成白底黑字（第三稿）。令牌在 `packages/ui-system/src/styles.css`，白天、夜间各一套，名字和值见 [room-page.md](./specs/redesign/room-page.md)“风格”一节的表。状态的点、`#` 和锁、头像垫的浅底、提到你的那一行是第二个 PR（#800）。以后加界面：
     - 颜色、圆角、阴影只用令牌，别写死。圆角就三档（`--ar-control-radius` 8、`--ar-radius` 12、`--ar-panel-radius` 16）加药丸（`--ar-pill`）。
     - 一页只有一个明黄的按钮（`primary`，第三稿是黑的），别的是灰的（`ghost`）或者只有字。列表和卡片上一排排重复的按钮都用灰的。
