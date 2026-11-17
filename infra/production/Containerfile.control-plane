@@ -43,5 +43,7 @@ COPY --from=builder /out/agent-room-control-plane /usr/local/bin/agent-room-cont
 COPY --from=builder /out/migrate /usr/local/bin/agent-room-migrate
 COPY --from=builder /out/provision_bucket /usr/local/bin/agent-room-provision-bucket
 COPY --from=region-database /out/dbip-country-lite.mmdb /usr/share/agent-room/dbip-country-lite.mmdb
+# 画分享预览图的字体（思源黑体粗体，OFL 1.1，许可原文一起拷），控制面默认从这里读（AGENT_ROOM_PREVIEW_FONT）。
+COPY apps/control-plane/assets/fonts/NotoSansSC-Bold.otf apps/control-plane/assets/fonts/LICENSE /usr/share/agent-room/fonts/
 USER 10001:10001
 ENTRYPOINT ["/usr/local/bin/agent-room-control-plane"]

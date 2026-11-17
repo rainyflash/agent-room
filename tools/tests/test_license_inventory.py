@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -128,6 +130,29 @@ class LicenseInventoryTests(unittest.TestCase):
         self.assertIn("[alpha](https://www.npmjs.com/package/alpha/v/2.0.0)", markdown)
         # 控制面镜像里的 IP 库要按 CC BY 4.0 署名。
         self.assertIn("[IP Geolocation by DB-IP](https://db-ip.com)", markdown)
+        # 画预览图的字体是 OFL 1.1，镜像里带着它。
+        self.assertIn("Noto Sans SC Bold font", markdown)
+        self.assertIn("[SIL Open Font License 1.1](https://openfontlicense.org)", markdown)
+
+    def test_preview_font_matches_its_readme_and_ships_its_license(self) -> None:
+        fonts = Path(__file__).resolve().parents[2] / "apps" / "control-plane" / "assets" / "fonts"
+        readme = (fonts / "README.md").read_text(encoding="utf-8")
+        digests = re.findall(r"SHA-256 `([0-9a-f]{64})`", readme)
+        self.assertEqual(len(digests), 2, readme)
+        font_digest, license_digest = digests
+        self.assertEqual(
+            hashlib.sha256((fonts / "NotoSansSC-Bold.otf").read_bytes()).hexdigest(),
+            font_digest,
+            "换了字体要一起改 README 里的摘要和 Bundled data 那一段",
+        )
+        license_text = (fonts / "LICENSE").read_bytes()
+        self.assertEqual(hashlib.sha256(license_text).hexdigest(), license_digest)
+        self.assertIn(b"SIL OPEN FONT LICENSE Version 1.1", license_text)
+        containerfile = (
+            Path(__file__).resolve().parents[2] / "infra" / "production" / "Containerfile.control-plane"
+        ).read_text(encoding="utf-8")
+        self.assertIn("apps/control-plane/assets/fonts/NotoSansSC-Bold.otf", containerfile)
+        self.assertIn("apps/control-plane/assets/fonts/LICENSE", containerfile)
 
     def test_missing_license_fails_loudly(self) -> None:
         with self.assertRaises(LicenseInventoryError):

@@ -859,6 +859,23 @@ async fn 仓库地址只认绑着它_此刻公开着的那间房_不分没有的
     assert_eq!(directory.asked.lock().unwrap().len(), asked_before);
 }
 
+#[tokio::test]
+async fn 预览图问一间房绑着哪个仓库_没绑是没有() {
+    let fixture = Fixture::new();
+    let directory = Arc::new(CodeDirectory::default());
+    let pages = RepositoryRoomPageService::new(fixture.store.clone(), directory.clone());
+    fixture.public_room(room(1), owner(), "Proj01");
+    assert_eq!(pages.bound_repository(room(1)).await.unwrap(), None);
+
+    fixture.bind(room(1), "octo/hello", owner());
+    assert_eq!(
+        pages.bound_repository(room(1)).await.unwrap(),
+        Some(GithubRepository::parse("octo/hello").unwrap())
+    );
+    assert_eq!(pages.bound_repository(room(2)).await.unwrap(), None);
+    assert!(directory.asked.lock().unwrap().is_empty(), "不去问目录");
+}
+
 fn listed_detail(catalog_id: RoomCatalogId, code: &str) -> PublicRoomDetailView {
     PublicRoomDetailView {
         room: PublicRoomView {

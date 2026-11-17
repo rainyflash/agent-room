@@ -60,6 +60,16 @@ class ControlPlaneEnvironmentTests(unittest.TestCase):
             environment["AGENT_ROOM_NETWORK_AGENT_SEAL_KEY"],
         )
 
+    def test_本地控制面读仓库里的预览图字体(self) -> None:
+        environment = control_plane_runtime_environment(
+            REQUIRED_VALUES,
+            enable_telemetry=False,
+            matrix_lifecycle_token_file=self.lifecycle_token,
+        )
+        font = Path(environment["AGENT_ROOM_PREVIEW_FONT"])
+        self.assertTrue(font.is_absolute())
+        self.assertTrue(font.is_file(), font)
+
     def test_遥测开关不会残留旧端点(self) -> None:
         with patch.dict(
             os.environ,

@@ -24,8 +24,11 @@
 //! 分享的一段对话（3P-7a-2）：`GET /r/{分享码}/s/{段码}` 出那几句（[`crate::public_watch::RoomExcerptPages`]）。
 //! 和分享页一样按来源限流、`noindex`、缓存 60 秒；房间不放实况、码不对、这一段早于这次开实况，都回和分享页
 //! “没有这个码”一模一样的 404；读不到第一句了、那几句都没了回 410。
+//!
+//! 预览图（3P-8a）：`GET /r/{分享码}/preview.png` 和 `GET /r/{分享码}/s/{段码}/preview.png`，在控制面上画，
+//! 见 [`preview`]。上面三种页面的 `og:image` 指着它们。
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use agent_room_application::{
     ports::{Clock, PortFuture},
@@ -52,10 +55,13 @@ use axum::{
 
 mod badge;
 mod excerpt;
+mod preview;
 mod render;
 mod unclaimed;
 
 use badge::BadgeCounts;
+pub(crate) use preview::DEFAULT_PREVIEW_FONT;
+use preview::PreviewImages;
 use render::Origins;
 // 提醒邮件的退订页也是一整页 HTML，和这里用同一套语言判断和转义。
 pub(crate) use render::{Language, escape};
@@ -100,6 +106,9 @@ pub(crate) struct SharePageHttpState {
     live: Arc<dyn RoomLiveSource>,
     /// 分享的一段对话。没接上（[`SharePageHttpState::with_excerpts`]）时哪一段都没有。
     excerpts: Arc<dyn RoomExcerptPageSource>,
+    /// 预览图。字体默认在镜像里的位置（[`DEFAULT_PREVIEW_FONT`]），见
+    /// [`SharePageHttpState::with_preview_font`]。
+    previews: Arc<PreviewImages>,
 }
 
 impl SharePageHttpState {
@@ -118,6 +127,7 @@ impl SharePageHttpState {
             repositories,
             live,
             excerpts: Arc::new(NoExcerptPages),
+            previews: PreviewImages::new(PathBuf::from(DEFAULT_PREVIEW_FONT), clock.clone()),
             clock,
             limits,
             site_origin: site_origin(server_name).into(),
@@ -128,6 +138,12 @@ impl SharePageHttpState {
     /// 接上分享的一段对话。
     pub(crate) fn with_excerpts(mut self, excerpts: Arc<dyn RoomExcerptPageSource>) -> Self {
         self.excerpts = excerpts;
+        self
+    }
+
+    /// 预览图的字体从这里读（`AGENT_ROOM_PREVIEW_FONT`）。
+    pub(crate) fn with_preview_font(mut self, path: PathBuf) -> Self {
+        self.previews = PreviewImages::new(path, self.clock.clone());
         self
     }
 
@@ -144,8 +160,13 @@ pub(crate) fn router(state: SharePageHttpState) -> Router {
         .route("/r/_/share.css", get(stylesheet))
         .route("/r/_/share.js", get(script))
         .route("/r/{share_code}", get(page))
+        .route("/r/{share_code}/preview.png", get(preview::room_image))
         .route("/r/{share_code}/live", get(live))
         .route("/r/{share_code}/s/{excerpt}", get(excerpt_page))
+        .route(
+            "/r/{share_code}/s/{excerpt}/preview.png",
+            get(preview::excerpt_image),
+        )
         .route("/gh/{owner}/{repo}", get(repository_page))
         .route("/gh/{owner}/{repo}/badge.svg", get(badge::badge))
         .layer(middleware::map_response(with_page_policy))
@@ -175,11 +196,7 @@ async fn page(
             let language = accepted.unwrap_or(Language::English);
             match failure.kind() {
                 PublicDirectoryFailureKind::NotFound
-                | PublicDirectoryFailureKind::InvalidRequest => html_response(
-                    StatusCode::NOT_FOUND,
-                    "no-store",
-                    render::gone_page(language, &state.origins()),
-                ),
+                | PublicDirectoryFailureKind::InvalidRequest => not_found_page(&state, accepted),
                 PublicDirectoryFailureKind::DependencyUnavailable
                 | PublicDirectoryFailureKind::Internal => {
                     tracing::info!(
@@ -257,7 +274,15 @@ async fn room_response(
         && !room.end_to_end_encrypted
         && state.live.is_live(&room.share_code).await;
     let language = accepted.unwrap_or_else(|| guess_language(&room.name));
-    let html = render::room_page(detail, live, language, &state.origins(), state.clock.now());
+    let image = preview::room_image_url(&state.site_origin, detail);
+    let html = render::room_page(
+        detail,
+        live,
+        language,
+        &state.origins(),
+        state.clock.now(),
+        &image,
+    );
     html_response(StatusCode::OK, ROOM_CACHE, html)
 }
 
@@ -345,50 +370,66 @@ async fn excerpt_page(
     if let Some(busy) = admit(&state, &headers, accepted) {
         return busy;
     }
-    let not_found = || {
-        html_response(
-            StatusCode::NOT_FOUND,
-            "no-store",
-            render::gone_page(accepted.unwrap_or(Language::English), &state.origins()),
-        )
-    };
     let (Ok(share_code), Ok(code)) = (
         RoomShareCode::parse(&share_code),
         RoomExcerptCode::parse(&code),
     ) else {
-        return not_found();
+        return not_found_page(&state, accepted);
     };
     match state.excerpts.page(&share_code, &code).await {
         Ok(page) => match page.as_ref() {
             ExcerptPage::Shown(excerpt) => {
                 let language = accepted.unwrap_or_else(|| guess_language(&excerpt.room_name));
+                let image = preview::excerpt_image_url(
+                    &state.site_origin,
+                    share_code.as_str(),
+                    code.as_str(),
+                    excerpt,
+                );
                 let html = excerpt::excerpt_page(
                     excerpt,
                     share_code.as_str(),
                     language,
                     &state.origins(),
                     state.clock.now(),
+                    &image,
                 );
                 html_response(StatusCode::OK, ROOM_CACHE, html)
             }
             ExcerptPage::Gone { room_name } => {
-                let language = accepted.unwrap_or_else(|| guess_language(room_name));
-                let html = excerpt::gone_excerpt_page(
-                    room_name,
-                    share_code.as_str(),
-                    language,
-                    &state.origins(),
-                );
-                html_response(StatusCode::GONE, ROOM_CACHE, html)
+                gone_excerpt_response(&state, &share_code, room_name, accepted)
             }
         },
-        Err(ExcerptPageFailure::NotFound) => not_found(),
+        Err(ExcerptPageFailure::NotFound) => not_found_page(&state, accepted),
         Err(ExcerptPageFailure::Unavailable) => html_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "no-store",
             render::unavailable_page(accepted.unwrap_or(Language::English), &state.origins()),
         ),
     }
+}
+
+/// 分享页“没有这个码”那一页：不公开了、关了、码换了、没有这个码，一段对话的几种“没有”，预览图也是它，
+/// 都一字不差、不缓存。
+fn not_found_page(state: &SharePageHttpState, accepted: Option<Language>) -> Response {
+    html_response(
+        StatusCode::NOT_FOUND,
+        "no-store",
+        render::gone_page(accepted.unwrap_or(Language::English), &state.origins()),
+    )
+}
+
+/// 一段对话读不到第一句了、那几句都没了：410，带房间名和“去看这间房”。那一段的预览图也回它。
+fn gone_excerpt_response(
+    state: &SharePageHttpState,
+    share_code: &RoomShareCode,
+    room_name: &str,
+    accepted: Option<Language>,
+) -> Response {
+    let language = accepted.unwrap_or_else(|| guess_language(room_name));
+    let html =
+        excerpt::gone_excerpt_page(room_name, share_code.as_str(), language, &state.origins());
+    html_response(StatusCode::GONE, ROOM_CACHE, html)
 }
 
 /// 没接上一段对话时：哪一段都没有。

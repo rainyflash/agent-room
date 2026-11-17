@@ -1,11 +1,15 @@
-//! 分享的一段对话那一页（3P-7a-2）：`/r/{分享码}/s/{段码}`。
+//! 分享的一段对话那一页（3P-7a-2）：`/r/{分享码}/s/{段码}`；它的预览图（3P-8a）在最后。
 
-use std::sync::{Arc, Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use agent_room_application::{
     ports::PortFuture, public_room_directory::PublicDirectoryFailureKind,
 };
 use agent_room_domain::{
+    project_rooms::GithubRepository,
     room_excerpts::RoomExcerptCode,
     room_listing::{RoomJoinMode, RoomShareCode},
 };
@@ -83,6 +87,15 @@ fn app(excerpts: Arc<FakeExcerpts>) -> Router {
 }
 
 async fn get(app: &Router, path: &str, language: Option<&str>) -> (StatusCode, HeaderMap, String) {
+    let (status, headers, body) = get_bytes(app, path, language).await;
+    (status, headers, String::from_utf8(body).unwrap())
+}
+
+async fn get_bytes(
+    app: &Router,
+    path: &str,
+    language: Option<&str>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
     let mut request = Request::builder()
         .uri(path)
         .header("x-forwarded-for", "203.0.113.9");
@@ -96,8 +109,10 @@ async fn get(app: &Router, path: &str, language: Option<&str>) -> (StatusCode, H
         .unwrap();
     let status = response.status();
     let headers = response.headers().clone();
-    let body = to_bytes(response.into_body(), 256 * 1_024).await.unwrap();
-    (status, headers, String::from_utf8(body.to_vec()).unwrap())
+    let body = to_bytes(response.into_body(), 4 * 1_024 * 1_024)
+        .await
+        .unwrap();
+    (status, headers, body.to_vec())
 }
 
 fn line(name: &str, author: ExcerptAuthor, text: &str, seconds_ago: i64) -> ExcerptLine {
@@ -344,4 +359,189 @@ async fn 没接上一段对话时哪一段都没有() {
     ));
     let (status, _, _) = get(&app, PATH, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+const IMAGE: &str = "/r/aB3xYz/s/Seg8Ab3x/preview.png";
+
+/// 画得出预览图的：用仓库里的字体，目录和仓库绑定可以换。
+fn image_app(
+    excerpts: Arc<FakeExcerpts>,
+    directory: Arc<FakeDirectory>,
+    repositories: Arc<FakeRepositories>,
+) -> Router {
+    router(
+        SharePageHttpState::new(
+            directory,
+            repositories,
+            Arc::new(FakeLive::default()),
+            Arc::new(TestClock),
+            Arc::new(AnonymousLimiter::new(Vec::new(), Arc::new(TestClock))),
+            "agent-room.test",
+            &Url::parse("https://app.agent-room.test").unwrap(),
+        )
+        .with_excerpts(excerpts)
+        .with_preview_font(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/fonts/NotoSansSC-Bold.otf"),
+        ),
+    )
+}
+
+fn app_for(excerpts: Arc<FakeExcerpts>) -> Router {
+    image_app(excerpts, public_room(), unbound())
+}
+
+fn public_room() -> Arc<FakeDirectory> {
+    FakeDirectory::new(detail("读书会", "", RoomJoinMode::Open, false))
+}
+
+fn unbound() -> Arc<FakeRepositories> {
+    FakeRepositories::answering(Err(PublicDirectoryFailureKind::NotFound))
+}
+
+/// 页面里 `og:image` 的地址。
+fn og_image(html: &str) -> String {
+    let marker = "<meta property=\"og:image\" content=\"";
+    let start = html.find(marker).unwrap() + marker.len();
+    let end = start + html[start..].find('"').unwrap();
+    html[start..end].replace("&amp;", "&")
+}
+
+/// 只要 `ETag`、不画：`If-None-Match: *` 回 304 和这张图的 `ETag`。
+async fn etag(app: &Router) -> String {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(IMAGE)
+                .header("x-forwarded-for", "203.0.113.9")
+                .header(header::IF_NONE_MATCH, "*")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    response.headers()[header::ETAG]
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[tokio::test]
+async fn 一段对话那一页的预览图是它自己的_摘要跟着房间名和几句变() {
+    let app = app_for(showing("读书会", four_lines()));
+    let (_, _, html) = get(&app, PATH, Some("zh-CN")).await;
+    let image = og_image(&html);
+    assert!(
+        image.starts_with("https://agent-room.test/r/aB3xYz/s/Seg8Ab3x/preview.png?v="),
+        "{image}"
+    );
+    let (_, _, english) = get(&app, PATH, Some("en")).await;
+    assert_eq!(og_image(&english), image, "图不跟着浏览器的语言");
+
+    let mut fewer = four_lines();
+    fewer.pop();
+    let (_, _, html) = get(&app_for(showing("读书会", fewer)), PATH, None).await;
+    assert_ne!(og_image(&html), image, "少了一句");
+    let (_, _, html) = get(&app_for(showing("读书会二", four_lines())), PATH, None).await;
+    assert_ne!(og_image(&html), image, "房间改了名");
+    let mut reworded = four_lines();
+    reworded[0].text = "换了一句话".to_owned();
+    let (_, _, html) = get(&app_for(showing("读书会", reworded)), PATH, None).await;
+    assert_eq!(og_image(&html), image, "图上不画说的话");
+
+    let path = image.strip_prefix("https://agent-room.test").unwrap();
+    let (status, headers, png) = get_bytes(&app, path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_TYPE], "image/png");
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=600");
+    assert_eq!(headers["x-robots-tag"], "noindex");
+    let decoded = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (1_280, 640));
+}
+
+#[tokio::test]
+async fn 一段对话的预览图不画说的话_绑着仓库换一张() {
+    let plain = etag(&app_for(showing("读书会", four_lines()))).await;
+    let mut reworded = four_lines();
+    reworded[0].text = "换了一句话".to_owned();
+    reworded[1].name = "别人".to_owned();
+    assert_eq!(etag(&app_for(showing("读书会", reworded))).await, plain);
+
+    let repositories = unbound();
+    *repositories.bound.lock().unwrap() = Ok(Some(GithubRepository::new("octo", "hello").unwrap()));
+    let bound = image_app(showing("读书会", four_lines()), public_room(), repositories);
+    assert_ne!(etag(&bound).await, plain);
+}
+
+#[tokio::test]
+async fn 一段对话的预览图_没有的和分享页没有这个码一模一样_看不了了是_410() {
+    let app = app_for(FakeExcerpts::answering(Err(ExcerptPageFailure::NotFound)));
+    let (_, share_headers, share_html) = get_bytes(&app, "/r/Zz9Zz9", Some("zh-CN")).await;
+    for path in [
+        IMAGE,
+        "/r/aB3xYz/s/Zz9Zz9Zz/preview.png",
+        "/r/Zz9Zz9/s/Seg8Ab3x/preview.png",
+        "/r/aB3xYz/s/not-a-code/preview.png",
+        "/r/not-a-code/s/Seg8Ab3x/preview.png",
+    ] {
+        let (status, headers, body) = get_bytes(&app, path, Some("zh-CN")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(body, share_html, "{path}");
+        for name in [header::CACHE_CONTROL, header::CONTENT_TYPE, header::VARY] {
+            assert_eq!(headers[&name], share_headers[&name], "{path} {name}");
+        }
+    }
+
+    // 这一段还看得到，可房间此刻不公开了：一样没有。
+    let directory = public_room();
+    *directory.failure.lock().unwrap() = Some(PublicDirectoryFailureKind::NotFound);
+    let app = image_app(showing("读书会", four_lines()), directory, unbound());
+    let (status, _, body) = get_bytes(&app, IMAGE, Some("zh-CN")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, share_html);
+
+    let gone = FakeExcerpts::answering(Ok(Arc::new(ExcerptPage::Gone {
+        room_name: "读书会".to_owned(),
+    })));
+    let app = app_for(gone);
+    let (page_status, page_headers, page) = get_bytes(&app, PATH, None).await;
+    let (status, headers, body) = get_bytes(&app, IMAGE, None).await;
+    assert_eq!((page_status, status), (StatusCode::GONE, StatusCode::GONE));
+    assert_eq!(body, page);
+    assert_eq!(
+        headers[header::CACHE_CONTROL],
+        page_headers[header::CACHE_CONTROL]
+    );
+}
+
+#[tokio::test]
+async fn 一段对话的预览图读不到就跳到通用图() {
+    let app = app_for(FakeExcerpts::answering(Err(
+        ExcerptPageFailure::Unavailable,
+    )));
+    let (status, headers, _) = get_bytes(&app, IMAGE, None).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(
+        headers[header::LOCATION],
+        "https://app.agent-room.test/room-share-preview-en.png"
+    );
+    assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+
+    let directory = public_room();
+    *directory.failure.lock().unwrap() = Some(PublicDirectoryFailureKind::DependencyUnavailable);
+    let app = image_app(showing("读书会", four_lines()), directory, unbound());
+    let (status, headers, _) = get_bytes(&app, IMAGE, Some("en")).await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert_eq!(
+        headers[header::LOCATION],
+        "https://app.agent-room.test/room-share-preview-zh-CN.png",
+        "图上的语言看房间名"
+    );
+
+    let repositories = unbound();
+    *repositories.bound.lock().unwrap() = Err(PublicDirectoryFailureKind::DependencyUnavailable);
+    let app = image_app(showing("读书会", four_lines()), public_room(), repositories);
+    let (status, _, _) = get_bytes(&app, IMAGE, None).await;
+    assert_eq!(status, StatusCode::FOUND);
 }

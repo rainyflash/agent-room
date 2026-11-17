@@ -48,13 +48,15 @@ const fn wording(language: Language) -> &'static ExcerptWording {
     }
 }
 
-/// 看得见的那几句：房间名，“一段对话 · 6 句 · 11 月 16 日”，那几句，“去看这间房”。
+/// 看得见的那几句：房间名，“一段对话 · 6 句 · 11 月 16 日”，那几句，“去看这间房”。`image` 是这一段
+/// 自己的预览图（3P-8a）。
 pub(super) fn excerpt_page(
     excerpt: &ShownExcerpt,
     share_code: &str,
     language: Language,
     origins: &Origins<'_>,
     now: UtcMillis,
+    image: &str,
 ) -> String {
     let words = wording(language);
     let live = render::live_wording(language);
@@ -87,7 +89,7 @@ pub(super) fn excerpt_page(
         disclaimer = escape(render::disclaimer(language)),
     );
     let title = format!("{} · {} · Agent Room", words.excerpt, excerpt.room_name);
-    render::shell(language, &title, words.description, origins, &body)
+    render::shell_with_image(language, &title, words.description, image, origins, &body)
 }
 
 /// 读不到第一句了，或者那几句都没了。

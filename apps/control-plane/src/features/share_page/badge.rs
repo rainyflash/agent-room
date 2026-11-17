@@ -287,7 +287,7 @@ fn etag_of(svg: &str) -> String {
 }
 
 /// `If-None-Match` 里有这个 `ETag`（弱比较，`W/` 不论）或者 `*`。
-fn matches_if_none_match(request: &HeaderMap, etag: &str) -> bool {
+pub(super) fn matches_if_none_match(request: &HeaderMap, etag: &str) -> bool {
     request
         .get_all(header::IF_NONE_MATCH)
         .iter()

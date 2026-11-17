@@ -440,6 +440,7 @@ async fn 同一个仓库同时只算一次_别的请求等它() {
         answer: Mutex::new(Ok(online_room("Book club", 5))),
         asked: Mutex::new(Vec::new()),
         gate: Some(gate.clone()),
+        bound: Mutex::new(Ok(None)),
     });
     let fixture = Arc::new(Fixture::new(repositories));
     let requests: Vec<_> = (0..5)
@@ -473,6 +474,7 @@ async fn 等着的请求走了也照样算完_记下结果() {
         answer: Mutex::new(Ok(online_room("Book club", 6))),
         asked: Mutex::new(Vec::new()),
         gate: Some(gate.clone()),
+        bound: Mutex::new(Ok(None)),
     });
     let fixture = Arc::new(Fixture::new(repositories));
     let waiting = {

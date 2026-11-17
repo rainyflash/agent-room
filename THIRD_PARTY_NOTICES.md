@@ -6,10 +6,10 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 
 ## Inventory
 
-- Cargo packages: 889
+- Cargo packages: 916
 - npm packages: 713
-- Total locked package versions: 1602
-- `Cargo.lock` SHA-256: `1bbca3e628484b4fdd4647553a6742b508765727e11bb616f972870a42b766f5`
+- Total locked package versions: 1629
+- `Cargo.lock` SHA-256: `347f768f4f9572327a203b1204f5469866c089a3eb837ba2e9a9b7b446b39ed7`
 - `pnpm-lock.yaml` SHA-256: `f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27`
 
 ## License expressions
@@ -30,14 +30,14 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `Apache-2.0 OR BSL-1.0` | 2 |
 | `Apache-2.0 OR BSL-1.0 OR MIT` | 1 |
 | `Apache-2.0 OR ISC OR MIT` | 3 |
-| `Apache-2.0 OR MIT` | 87 |
+| `Apache-2.0 OR MIT` | 92 |
 | `Apache-2.0 WITH LLVM-exception` | 1 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 5 |
 | `Apache-2.0/MIT` | 7 |
 | `BlueOak-1.0.0` | 11 |
-| `BSD-2-Clause` | 22 |
+| `BSD-2-Clause` | 23 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 2 |
-| `BSD-3-Clause` | 19 |
+| `BSD-3-Clause` | 21 |
 | `BSD-3-Clause AND MIT` | 1 |
 | `BSD-3-Clause OR MIT OR Apache-2.0` | 2 |
 | `BSD-3-Clause/MIT` | 1 |
@@ -51,15 +51,15 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `ISC` | 55 |
 | `ISC AND (Apache-2.0 OR ISC)` | 1 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 1 |
-| `MIT` | 770 |
+| `MIT` | 778 |
 | `MIT AND BSD-3-Clause` | 1 |
-| `MIT OR Apache-2.0` | 379 |
+| `MIT OR Apache-2.0` | 387 |
 | `MIT OR Apache-2.0 OR BSD-1-Clause` | 1 |
 | `MIT OR Apache-2.0 OR LGPL-2.1-or-later` | 2 |
 | `MIT OR Apache-2.0 OR Zlib` | 3 |
 | `MIT OR Zlib OR Apache-2.0` | 1 |
 | `MIT-0` | 3 |
-| `MIT/Apache-2.0` | 42 |
+| `MIT/Apache-2.0` | 43 |
 | `MPL-2.0` | 14 |
 | `MPL-2.0+` | 3 |
 | `OFL-1.1` | 3 |
@@ -67,8 +67,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | `Unlicense` | 1 |
 | `Unlicense OR MIT` | 9 |
 | `Unlicense/MIT` | 2 |
-| `Zlib` | 5 |
-| `Zlib OR Apache-2.0 OR MIT` | 18 |
+| `Zlib` | 6 |
+| `Zlib OR Apache-2.0 OR MIT` | 19 |
 
 ## Packages
 
@@ -96,6 +96,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [aquamarine](https://github.com/mersinvald/aquamarine) | 0.6.0 | `MIT` |
 | cargo | [arc-swap](https://github.com/vorner/arc-swap) | 1.9.2 | `MIT OR Apache-2.0` |
 | cargo | [archery](https://github.com/orium/archery) | 1.2.3 | `MIT` |
+| cargo | [arrayref](https://github.com/droundy/arrayref) | 0.3.9 | `BSD-2-Clause` |
 | cargo | [arrayvec](https://github.com/bluss/arrayvec) | 0.7.8 | `MIT OR Apache-2.0` |
 | cargo | [as_variant](https://github.com/jplatte/as_variant) | 1.3.0 | `MPL-2.0` |
 | cargo | [assign](https://github.com/Kelerchian/assign) | 1.1.1 | `MIT` |
@@ -167,6 +168,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [bumpalo](https://github.com/fitzgen/bumpalo) | 3.20.3 | `MIT OR Apache-2.0` |
 | cargo | [bytecount](https://github.com/llogiq/bytecount) | 0.6.9 | `Apache-2.0/MIT` |
 | cargo | [bytemuck](https://github.com/Lokathor/bytemuck) | 1.25.2 | `Zlib OR Apache-2.0 OR MIT` |
+| cargo | [bytemuck_derive](https://github.com/Lokathor/bytemuck) | 1.12.1 | `Zlib OR Apache-2.0 OR MIT` |
 | cargo | [byteorder](https://github.com/BurntSushi/byteorder) | 1.5.0 | `Unlicense OR MIT` |
 | cargo | [bytes](https://github.com/tokio-rs/bytes) | 1.12.1 | `MIT` |
 | cargo | [bytes-utils](https://github.com/vorner/bytes-utils) | 0.1.4 | `Apache-2.0/MIT` |
@@ -239,6 +241,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [darling_macro](https://github.com/TedDriggs/darling) | 0.23.0 | `MIT` |
 | cargo | [darling_macro](https://github.com/TedDriggs/darling) | 0.24.1 | `MIT` |
 | cargo | [data-encoding](https://github.com/ia0/data-encoding) | 2.11.1 | `MIT` |
+| cargo | [data-url](https://github.com/servo/rust-url) | 0.3.2 | `MIT OR Apache-2.0` |
 | cargo | [date_header](https://github.com/jayshua/date_header) | 1.0.5 | `MIT/Apache-2.0` |
 | cargo | [dbus](https://github.com/diwic/dbus-rs) | 0.9.12 | `Apache-2.0/MIT` |
 | cargo | [deadpool](https://github.com/deadpool-rs/deadpool) | 0.13.0 | `MIT OR Apache-2.0` |
@@ -294,6 +297,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [erased-serde](https://github.com/dtolnay/erased-serde) | 0.4.10 | `MIT OR Apache-2.0` |
 | cargo | [errno](https://github.com/lambda-fairy/rust-errno) | 0.3.14 | `MIT OR Apache-2.0` |
 | cargo | [etcetera](https://github.com/lunacookies/etcetera) | 0.11.0 | `MIT OR Apache-2.0` |
+| cargo | [euclid](https://github.com/servo/euclid) | 0.22.14 | `MIT OR Apache-2.0` |
 | cargo | [event-listener](https://github.com/smol-rs/event-listener) | 5.4.2 | `Apache-2.0 OR MIT` |
 | cargo | [event-listener-strategy](https://github.com/smol-rs/event-listener-strategy) | 0.5.4 | `Apache-2.0 OR MIT` |
 | cargo | [eyeball](https://github.com/jplatte/eyeball) | 0.8.8 | `MPL-2.0` |
@@ -310,11 +314,14 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [filetime](https://github.com/alexcrichton/filetime) | 0.2.29 | `MIT/Apache-2.0` |
 | cargo | [find-msvc-tools](https://github.com/rust-lang/cc-rs) | 0.1.11 | `MIT OR Apache-2.0` |
 | cargo | [flate2](https://github.com/rust-lang/flate2-rs) | 1.1.9 | `MIT OR Apache-2.0` |
+| cargo | [float-cmp](https://github.com/mikedilger/float-cmp) | 0.9.0 | `MIT` |
 | cargo | [fluent-uri](https://github.com/yescallop/fluent-uri-rs) | 0.4.1 | `MIT` |
 | cargo | [flume](https://github.com/zesterer/flume) | 0.12.0 | `Apache-2.0/MIT` |
 | cargo | [fnv](https://github.com/servo/rust-fnv) | 1.0.7 | `Apache-2.0 / MIT` |
 | cargo | [foldhash](https://github.com/orlp/foldhash) | 0.1.5 | `Zlib` |
 | cargo | [foldhash](https://github.com/orlp/foldhash) | 0.2.0 | `Zlib` |
+| cargo | [font-types](https://github.com/googlefonts/fontations) | 0.12.7 | `MIT OR Apache-2.0` |
+| cargo | [fontdb](https://github.com/RazrFalcon/fontdb) | 0.24.0 | `MIT` |
 | cargo | [foreign-types](https://github.com/sfackler/foreign-types) | 0.5.0 | `MIT/Apache-2.0` |
 | cargo | [foreign-types-macros](https://github.com/sfackler/foreign-types) | 0.2.4 | `MIT/Apache-2.0` |
 | cargo | [foreign-types-shared](https://github.com/sfackler/foreign-types) | 0.3.1 | `MIT/Apache-2.0` |
@@ -359,6 +366,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [gtk-sys](https://github.com/gtk-rs/gtk3-rs) | 0.18.2 | `MIT` |
 | cargo | [gtk3-macros](https://github.com/gtk-rs/gtk3-rs) | 0.18.2 | `MIT` |
 | cargo | [h2](https://github.com/hyperium/h2) | 0.4.18 | `MIT` |
+| cargo | [harfrust](https://github.com/harfbuzz/harfrust) | 0.15.0 | `MIT` |
 | cargo | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.12.3 | `MIT OR Apache-2.0` |
 | cargo | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.14.5 | `MIT OR Apache-2.0` |
 | cargo | [hashbrown](https://github.com/rust-lang/hashbrown) | 0.15.5 | `MIT OR Apache-2.0` |
@@ -400,6 +408,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [ident_case](https://github.com/TedDriggs/ident_case) | 1.0.1 | `MIT/Apache-2.0` |
 | cargo | [idna](https://github.com/servo/rust-url/) | 1.1.0 | `MIT OR Apache-2.0` |
 | cargo | [idna_adapter](https://github.com/hsivonen/idna_adapter) | 1.2.2 | `Apache-2.0 OR MIT` |
+| cargo | [imagesize](https://github.com/Roughsketch/imagesize) | 0.15.0 | `MIT` |
 | cargo | [imbl](https://github.com/jneem/imbl) | 6.1.0 | `MPL-2.0+` |
 | cargo | [imbl-sized-chunks](https://github.com/jneem/imbl-sized-chunks) | 0.1.3 | `MPL-2.0+` |
 | cargo | [impartial-ord](https://github.com/Alorel/impartial-ord-rs) | 2.0.0 | `MIT` |
@@ -445,6 +454,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [keyring](https://github.com/open-source-cooperative/keyring-rs) | 4.1.6 | `MIT OR Apache-2.0` |
 | cargo | [keyring-core](https://github.com/open-source-cooperative/keyring-core.git) | 1.0.0 | `MIT OR Apache-2.0` |
 | cargo | [konst](https://github.com/rodrimati1992/konst/) | 0.4.3 | `Zlib` |
+| cargo | [kurbo](https://github.com/linebender/kurbo) | 0.13.1 | `Apache-2.0 OR MIT` |
 | cargo | [language-tags](https://github.com/pyfisch/rust-language-tags) | 0.3.2 | `MIT/Apache-2.0` |
 | cargo | [lazy_static](https://github.com/rust-lang-nursery/lazy-static.rs) | 1.5.0 | `MIT OR Apache-2.0` |
 | cargo | [libappindicator](https://crates.io/crates/libappindicator/0.9.0) | 0.9.0 | `Apache-2.0 OR MIT` |
@@ -569,6 +579,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [phf_generator](https://github.com/rust-phf/rust-phf) | 0.13.1 | `MIT` |
 | cargo | [phf_macros](https://github.com/rust-phf/rust-phf) | 0.13.1 | `MIT` |
 | cargo | [phf_shared](https://github.com/rust-phf/rust-phf) | 0.13.1 | `MIT` |
+| cargo | [pico-args](https://github.com/RazrFalcon/pico-args) | 0.5.0 | `MIT` |
 | cargo | [pin-project-lite](https://github.com/taiki-e/pin-project-lite) | 0.2.17 | `Apache-2.0 OR MIT` |
 | cargo | [pin-utils](https://github.com/rust-lang-nursery/pin-utils) | 0.1.0 | `MIT OR Apache-2.0` |
 | cargo | [piper](https://github.com/smol-rs/piper) | 0.2.5 | `MIT OR Apache-2.0` |
@@ -580,6 +591,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [png](https://github.com/image-rs/image-png) | 0.18.1 | `MIT OR Apache-2.0` |
 | cargo | [polling](https://github.com/smol-rs/polling) | 3.11.0 | `Apache-2.0 OR MIT` |
 | cargo | [poly1305](https://github.com/RustCrypto/universal-hashes) | 0.8.0 | `Apache-2.0 OR MIT` |
+| cargo | [polycool](https://github.com/linebender/kurbo) | 0.4.0 | `MIT OR Apache-2.0` |
 | cargo | [polyval](https://github.com/RustCrypto/universal-hashes) | 0.6.2 | `Apache-2.0 OR MIT` |
 | cargo | [portable-atomic](https://github.com/taiki-e/portable-atomic) | 1.15.0 | `Apache-2.0 OR MIT` |
 | cargo | [portable-atomic-util](https://github.com/taiki-e/portable-atomic-util) | 0.2.7 | `Apache-2.0 OR MIT` |
@@ -619,6 +631,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [rand_xorshift](https://github.com/rust-random/rngs) | 0.4.0 | `MIT OR Apache-2.0` |
 | cargo | [rand_xoshiro](https://github.com/rust-random/rngs) | 0.7.0 | `MIT OR Apache-2.0` |
 | cargo | [raw-window-handle](https://github.com/rust-windowing/raw-window-handle) | 0.6.2 | `MIT OR Apache-2.0 OR Zlib` |
+| cargo | [read-fonts](https://github.com/googlefonts/fontations) | 0.46.0 | `MIT OR Apache-2.0` |
 | cargo | [readlock](https://codeberg.org/jplatte/readlock) | 0.1.11 | `MPL-2.0` |
 | cargo | [readlock-tokio](https://codeberg.org/jplatte/readlock) | 0.1.6 | `MPL-2.0` |
 | cargo | [recvmsg](https://crates.io/crates/recvmsg/1.0.0) | 1.0.0 | `0BSD` |
@@ -634,12 +647,15 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [regex-syntax](https://github.com/rust-lang/regex) | 0.8.11 | `MIT OR Apache-2.0` |
 | cargo | [reqwest](https://github.com/seanmonstar/reqwest) | 0.12.28 | `MIT OR Apache-2.0` |
 | cargo | [reqwest](https://github.com/seanmonstar/reqwest) | 0.13.4 | `MIT OR Apache-2.0` |
+| cargo | [resvg](https://github.com/linebender/resvg) | 0.50.0 | `Apache-2.0 OR MIT` |
 | cargo | [rfc6979](https://github.com/RustCrypto/signatures/tree/master/rfc6979) | 0.4.0 | `Apache-2.0 OR MIT` |
+| cargo | [rgb](https://github.com/kornelski/rust-rgb) | 0.8.53 | `MIT` |
 | cargo | [ring](https://github.com/briansmith/ring) | 0.17.14 | `Apache-2.0 AND ISC` |
 | cargo | [rmcp](https://github.com/modelcontextprotocol/rust-sdk/) | 3.9.0 | `Apache-2.0` |
 | cargo | [rmcp-macros](https://github.com/modelcontextprotocol/rust-sdk/) | 3.9.0 | `Apache-2.0` |
 | cargo | [rmp](https://github.com/3Hren/msgpack-rust) | 0.8.15 | `MIT` |
 | cargo | [rmp-serde](https://github.com/3Hren/msgpack-rust) | 1.3.1 | `MIT` |
+| cargo | [roxmltree](https://github.com/RazrFalcon/roxmltree) | 0.21.2 | `MIT OR Apache-2.0` |
 | cargo | [rsa](https://github.com/RustCrypto/RSA) | 0.9.10 | `MIT OR Apache-2.0` |
 | cargo | [ruma](https://github.com/ruma/ruma) | 0.16.0 | `MIT` |
 | cargo | [ruma-client-api](https://github.com/ruma/ruma) | 0.24.0 | `MIT` |
@@ -715,8 +731,11 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [simd-adler32](https://github.com/mcountryman/simd-adler32) | 0.3.10 | `MIT` |
 | cargo | [simd_cesu8](https://github.com/seancroach/simd_cesu8) | 1.2.0 | `Apache-2.0 OR MIT` |
 | cargo | [simdutf8](https://github.com/rusticstuff/simdutf8) | 0.1.5 | `MIT OR Apache-2.0` |
+| cargo | [simplecss](https://github.com/linebender/simplecss) | 0.2.2 | `Apache-2.0 OR MIT` |
 | cargo | [siphasher](https://github.com/jedisct1/rust-siphash) | 1.0.3 | `MIT/Apache-2.0` |
+| cargo | [skrifa](https://github.com/googlefonts/fontations) | 0.49.0 | `MIT OR Apache-2.0` |
 | cargo | [slab](https://github.com/tokio-rs/slab) | 0.4.12 | `MIT` |
+| cargo | [slotmap](https://github.com/orlp/slotmap) | 1.1.1 | `Zlib` |
 | cargo | [smallvec](https://github.com/servo/rust-smallvec) | 1.15.2 | `MIT OR Apache-2.0` |
 | cargo | [socket2](https://github.com/rust-lang/socket2) | 0.6.5 | `MIT OR Apache-2.0` |
 | cargo | [softbuffer](https://github.com/rust-windowing/softbuffer) | 0.4.8 | `MIT OR Apache-2.0` |
@@ -734,6 +753,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [sqlx-sqlite](https://github.com/launchbadge/sqlx) | 0.9.0 | `MIT OR Apache-2.0` |
 | cargo | [sse-stream](https://github.com/4t145/sse-stream/) | 0.2.6 | `MIT OR Apache-2.0` |
 | cargo | [stable_deref_trait](https://github.com/storyyeller/stable_deref_trait) | 1.2.1 | `MIT OR Apache-2.0` |
+| cargo | [strict-num](https://github.com/RazrFalcon/strict-num) | 0.1.1 | `MIT` |
 | cargo | [string_cache](https://github.com/servo/string-cache) | 0.9.0 | `MIT OR Apache-2.0` |
 | cargo | [string_cache_codegen](https://github.com/servo/string-cache) | 0.6.1 | `MIT OR Apache-2.0` |
 | cargo | [stringprep](https://github.com/sfackler/rust-stringprep) | 0.1.5 | `MIT/Apache-2.0` |
@@ -741,6 +761,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [strum](https://github.com/Peternator7/strum) | 0.28.0 | `MIT` |
 | cargo | [strum_macros](https://github.com/Peternator7/strum) | 0.28.0 | `MIT` |
 | cargo | [subtle](https://github.com/dalek-cryptography/subtle) | 2.6.1 | `BSD-3-Clause` |
+| cargo | [svgtypes](https://github.com/linebender/svgtypes) | 0.16.2 | `Apache-2.0 OR MIT` |
 | cargo | [swift-rs](https://github.com/Brendonovich/swift-rs) | 1.0.8 | `MIT OR Apache-2.0` |
 | cargo | [syn](https://github.com/dtolnay/syn) | 1.0.109 | `MIT OR Apache-2.0` |
 | cargo | [syn](https://github.com/dtolnay/syn) | 2.0.119 | `MIT OR Apache-2.0` |
@@ -780,6 +801,8 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [time-core](https://github.com/time-rs/time) | 0.1.9 | `MIT OR Apache-2.0` |
 | cargo | [time-macros](https://github.com/time-rs/time) | 0.2.32 | `MIT OR Apache-2.0` |
 | cargo | [tiny-keccak](https://crates.io/crates/tiny-keccak/2.0.2) | 2.0.2 | `CC0-1.0` |
+| cargo | [tiny-skia](https://github.com/linebender/tiny-skia) | 0.12.0 | `BSD-3-Clause` |
+| cargo | [tiny-skia-path](https://github.com/linebender/tiny-skia/tree/master/path) | 0.12.0 | `BSD-3-Clause` |
 | cargo | [tinystr](https://github.com/unicode-org/icu4x) | 0.8.4 | `Unicode-3.0` |
 | cargo | [tinyvec](https://github.com/Lokathor/tinyvec) | 1.12.0 | `Zlib OR Apache-2.0 OR MIT` |
 | cargo | [tinyvec_macros](https://github.com/Soveu/tinyvec_macros) | 0.1.1 | `MIT OR Apache-2.0 OR Zlib` |
@@ -829,13 +852,16 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [unicode-ident](https://github.com/dtolnay/unicode-ident) | 1.0.24 | `(MIT OR Apache-2.0) AND Unicode-3.0` |
 | cargo | [unicode-normalization](https://github.com/unicode-rs/unicode-normalization) | 0.1.25 | `MIT OR Apache-2.0` |
 | cargo | [unicode-properties](https://github.com/unicode-rs/unicode-properties) | 0.1.4 | `MIT/Apache-2.0` |
+| cargo | [unicode-script](https://github.com/unicode-rs/unicode-script) | 0.5.9 | `MIT OR Apache-2.0` |
 | cargo | [unicode-segmentation](https://github.com/unicode-rs/unicode-segmentation) | 1.13.3 | `MIT OR Apache-2.0` |
+| cargo | [unicode-vo](https://github.com/RazrFalcon/unicode-vo) | 0.1.0 | `MIT/Apache-2.0` |
 | cargo | [unicode-xid](https://github.com/unicode-rs/unicode-xid) | 0.2.6 | `MIT OR Apache-2.0` |
 | cargo | [universal-hash](https://github.com/RustCrypto/traits) | 0.5.1 | `MIT OR Apache-2.0` |
 | cargo | [untrusted](https://github.com/briansmith/untrusted) | 0.9.0 | `ISC` |
 | cargo | [url](https://github.com/servo/rust-url) | 2.5.8 | `MIT OR Apache-2.0` |
 | cargo | [urlencoding](https://github.com/kornelski/rust_urlencoding) | 2.1.3 | `MIT` |
 | cargo | [urlpattern](https://github.com/denoland/rust-urlpattern) | 0.3.0 | `MIT` |
+| cargo | [usvg](https://github.com/linebender/resvg) | 0.50.0 | `Apache-2.0 OR MIT` |
 | cargo | [utf8_iter](https://github.com/hsivonen/utf8_iter) | 1.0.4 | `Apache-2.0 OR MIT` |
 | cargo | [utf8parse](https://github.com/alacritty/vte) | 0.2.2 | `Apache-2.0 OR MIT` |
 | cargo | [uuid](https://github.com/uuid-rs/uuid) | 1.25.0 | `Apache-2.0 OR MIT` |
@@ -942,6 +968,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [x25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek) | 2.0.1 | `BSD-3-Clause` |
 | cargo | [xattr](https://github.com/Stebalien/xattr) | 1.6.1 | `MIT OR Apache-2.0` |
 | cargo | [xmlparser](https://github.com/RazrFalcon/xmlparser) | 0.13.6 | `MIT/Apache-2.0` |
+| cargo | [xmlwriter](https://github.com/RazrFalcon/xmlwriter) | 0.1.0 | `MIT` |
 | cargo | [xxhash-rust](https://github.com/DoumanAsh/xxhash-rust) | 0.8.18 | `BSL-1.0` |
 | cargo | [yoke](https://github.com/unicode-org/icu4x) | 0.8.3 | `Unicode-3.0` |
 | cargo | [yoke-derive](https://github.com/unicode-org/icu4x) | 0.8.2 | `Unicode-3.0` |
@@ -1680,3 +1707,5 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 ## Bundled data
 
 The control-plane container image includes the DB-IP IP to Country Lite database. The control plane uses it only to turn a request's address into a coarse region for aggregate counts; the address is not stored. [IP Geolocation by DB-IP](https://db-ip.com) is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+The control-plane container image also includes the Noto Sans SC Bold font (`apps/control-plane/assets/fonts/NotoSansSC-Bold.otf`, from [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk) tag `Sans2.004`). The control plane uses it only to draw link preview images for public rooms. Noto Sans SC is licensed under the [SIL Open Font License 1.1](https://openfontlicense.org); the license text ships next to the font as `apps/control-plane/assets/fonts/LICENSE`.
