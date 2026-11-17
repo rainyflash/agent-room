@@ -248,6 +248,11 @@ reason = "读成员状态回 403 只说明问的人没进过这个房间。Agent
 
 [[ignore]]
 service = "synapse"
+summary = '^GET /_matrix/client/v3/rooms/\{id\}/messages → 403$'
+reason = "读房间消息回 403 只说明问的人此刻不在这个房间里（Matrix 上还没加入、已经离开或只是受邀）。每小时的提醒演练（reminders.rs，以应用服务冒充本人读 /messages）一个账户一间房问一次，读不了的房间 planner 记成 unreadable_rooms、不当错处理，宁可多提醒；控制面启动 10 分钟后第一轮，所以发版后会成串出现（agent-room-ops#106：09 次、6 个账户、7 秒内）。真有人在网页上读不到自己房间的历史，会在控制面和网页那边另有报错"
+
+[[ignore]]
+service = "synapse"
 summary = '^POST /_matrix/client/v3/rooms/\{id\}/leave → 403$'
 reason = "离开一个自己已经不在、或没进过的房间，Synapse 回 403。撤销电脑、删 Agent 时控制面逐个房间退出，把 Forbidden 和 NotFound 当成“已经走了”（agent_room_placements 的 already_gone），退出本来就是幂等的（agent-room-ops#54）"
 
