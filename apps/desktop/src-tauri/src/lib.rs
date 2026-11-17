@@ -345,8 +345,8 @@ fn match_window_to_system_theme(app: &tauri::App) {
     if let Some(window) = app.get_webview_window("main")
         && matches!(window.theme(), Ok(tauri::Theme::Dark))
     {
-        // 和 ui-system 夜间的 --ar-canvas（#0f0f11）一样。
-        let _ = window.set_background_color(Some(tauri::window::Color(15, 15, 17, 255)));
+        // 和 ui-system 夜间的 --ar-canvas（#0e1212）一样。
+        let _ = window.set_background_color(Some(tauri::window::Color(14, 18, 18, 255)));
     }
 }
 

@@ -8,8 +8,8 @@
   gap: 24px;
   min-height: 60px;
   padding: 0 32px;
-  border-bottom: 1px solid var(--ar-line);
-  background: var(--ar-canvas);
+  /* 深青的一整块（.ar-nav）：下面不用再画线。 */
+  border-bottom: 0;
 }
 .app-navigation__brand,
 .app-navigation__links,
@@ -40,7 +40,7 @@
   width: 28px;
   height: 28px;
 }
-/* 五个去处：只有字和图标，当前页垫一块浅灰。 */
+/* 五个去处：只有字和图标，当前页垫一层半透明的白，图标是明黄。 */
 .app-navigation__links {
   min-width: 0;
   overflow-x: auto;
@@ -63,6 +63,9 @@
   color: var(--color-ink);
   background: var(--ar-selected);
   font-weight: 600;
+}
+.app-navigation__links a[aria-current='page'] > svg {
+  color: var(--ar-nav-mark);
 }
 .app-navigation__links a:not([aria-current='page']):hover {
   color: var(--color-ink);

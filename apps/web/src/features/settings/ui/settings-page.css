@@ -51,6 +51,7 @@
 }
 
 .settings-nav a[aria-current='page'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
   font-weight: 600;
 }
@@ -165,7 +166,7 @@
 }
 
 .settings-switch:checked {
-  background: var(--color-ink);
+  background: var(--ar-accent);
 }
 
 .settings-switch:checked::after {

@@ -133,6 +133,7 @@
 }
 
 .room-row[aria-current='page'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 
@@ -147,11 +148,8 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--ar-control-radius);
-  background: var(--ar-surface-muted);
-}
-
-.room-row--invitation .room-row__icon {
-  background: var(--ar-surface-muted);
+  color: var(--ar-accent-ink);
+  background: var(--ar-accent-soft);
 }
 
 .room-row__icon > svg {
@@ -331,6 +329,7 @@
 }
 
 .room-row--archived .room-row__icon {
+  color: var(--ar-muted);
   background: var(--ar-surface-muted);
 }
 

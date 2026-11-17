@@ -266,13 +266,18 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 用例里开 Agent 名单、开私聊、回主房间用 `e2e/support/workspace-navigation.ts` 的 `openAgentRoster`、`openDirectConversation`、`openMainRoom`：1100px 以上名单在右栏、私聊在左栏，窄了才从顶栏的按钮打开抽屉，直接点 `View agents` 在宽屏上点不到。
     - 人不在主房间的对话里（在私聊里、在看资料）时来了新消息，条数标在“主房间”“回到主房间”和“对话”标签上（`RoomUnreadCount`）。按钮的名字不带条数，条数在 `aria-describedby` 里，用例照 `toHaveAccessibleDescription` 查。
     - 对话框的无障碍检查在对话版面上比在场景上严：对话框盖在场景上时 axe 算不出底色，对比度的问题报不出来（1b 就这样查出成员一节里一处对比度不够的字）。新加的对话框在对话版面上跑一遍 axe。
-  - 第四稿配色（4C）：维护者 2026-11-17 定了方向 D“深色导航，颜色跟着人”，做法和令牌表在 [room-page.md](./specs/redesign/room-page.md)“风格”一节，对比稿是 Artifact“第四稿配色方向”。还没做，代码里还是第三稿的令牌。分三步：4C-1 令牌、主按钮、导航、选中和链接，连同各处抄的那一份颜色；4C-2 名字和房间小图标的颜色；4C-3 剩下的页面过一遍、截图给维护者看，他点头了再发版。做 4C-1 时把下面 1c 那几条规矩一起改（“一页只有一个黑色的按钮”改成明黄，`--ar-accent` 不再是墨色）。
+  - 第四稿配色（4C）：维护者 2026-11-17 定了方向 D“深色导航，颜色跟着人”，做法和令牌表在 [room-page.md](./specs/redesign/room-page.md)“风格”一节，对比稿是 Artifact“第四稿配色方向”。分三步：4C-1 令牌、主按钮、导航、选中和链接，连同各处抄的那一份颜色（#927）；4C-2 名字和房间小图标的颜色；4C-3 剩下的页面过一遍、截图给维护者看，他点头了再发版。下面 1c 的规矩已经照第四稿改过。4C-1 以后加界面还要留意：
+    - 导航（`AppNavigation` 的顶栏、房间页的左栏）带 `.ar-nav`：在这个容器里 `--color-ink`、`--ar-muted`、`--ar-surface-muted`、`--ar-selected`、`--ar-line`、`--ar-accent` 这些令牌换成了导航的，往里面放东西照旧用这些令牌，别写死颜色，也别用 `--ar-nav-*` 以外的办法另配一套。左栏里的东西手机上会搬进浅底的下拉，所以只在导航里才有的样子（你在的那一项前面的记号是明黄）要挂在 `.room-desk__rail`、`.app-navigation` 这样的容器上。
+    - 导航里“你在的那一项”垫的是一层半透明的白（`--ar-nav-selected`）。导航里次要的字、绿字、红字（`--ar-nav-muted`、`--ar-nav-success`、`--ar-nav-alert`）的值是照“压在这一层上也过 4.5:1”定的，改它们或者改这一层要重算。
+    - 从导航里弹出来的 `<dialog>`、`[popover]` 自动换回内容区的令牌（`--ar-base-*`）。给 `.ar-nav` 里多换一个令牌时，`:root` 的 `--ar-base-*` 和换回来的那一块要一起加，不然弹出来的菜单里那一样是深色的。
+    - `--ar-accent` 是青绿，只给焦点圈、打了勾的框、开关、选中的标签下面那条线；青绿的字（选中的那一项、链接）用深一档的 `--ar-accent-ink`；要墨色直接用 `--color-ink`。主按钮的颜色是 `--ar-primary`、`--ar-on-primary`，白天夜间一样，上面别放白字。
+    - 选中的那一项一律是 `color: var(--ar-accent-ink); background: var(--ar-selected)`。`--ar-selected` 也拿来当浅底按钮悬停时的底，所以它带一点青是有意的。
   - 第 1 块 1c 的第一个 PR（#799）：界面换成白底黑字（第三稿）。令牌在 `packages/ui-system/src/styles.css`，白天、夜间各一套，名字和值见 [room-page.md](./specs/redesign/room-page.md)“风格”一节的表。状态的点、`#` 和锁、头像垫的浅底、提到你的那一行是第二个 PR（#800）。以后加界面：
     - 颜色、圆角、阴影只用令牌，别写死。圆角就三档（`--ar-control-radius` 8、`--ar-radius` 12、`--ar-panel-radius` 16）加药丸（`--ar-pill`）。
-    - 一页只有一个黑色的按钮（`primary`），别的是灰的（`ghost`）或者只有字。列表和卡片上一排排重复的按钮都用灰的。
+    - 一页只有一个明黄的按钮（`primary`，第三稿是黑的），别的是灰的（`ghost`）或者只有字。列表和卡片上一排排重复的按钮都用灰的。
     - 用留白分，不画框：有边的只有输入框、对话框和菜单（`--ar-border`），栏和栏之间一条细线（`--ar-line`）。
-    - 要读的红字、绿字用 `--color-alert`、`--ar-success-ink`；`--ar-coral`、`--ar-success` 只给点和线，拿来写字对比度不够。黄（`--ar-mention`、`--ar-warning-soft`）只给“提到你”和提醒，选中用 `--ar-selected`。
-    - 次要的字 `--ar-muted` 的值是照“在选中的灰底上也过 4.5:1”定的，改它要重算。
+    - 要读的红字、绿字用 `--color-alert`、`--ar-success-ink`；`--ar-coral`、`--ar-success` 只给点和线，拿来写字对比度不够。浅黄（`--ar-mention`、`--ar-warning-soft`）只给“提到你”和提醒，选中用 `--ar-selected`。
+    - 次要的字 `--ar-muted` 的值是照“在选中的底上也过 4.5:1”定的（第四稿选中的底是浅青，4.7:1），改它或者改 `--ar-selected` 要重算。
     - 这套令牌另有几处各抄了一份，改令牌要一起改：登录主题（`agent-room.css`，`test_brand_consistency.py` 卡着）；官网（`site.css`）和分享页（`share.css`），都由 `generate.spec.ts` 的“网站和分享页的颜色和应用一样”卡着；桌面端登录完的回跳页（`auth-return.css`）和验证邮件（`email/html/template.ftl`）没有测试卡着，邮件里用不了变量，颜色是写死的。浏览器顶栏的颜色（`index.html` 和官网 `html.ts` 的 `theme-color`、`vite.config.ts` 清单里的 `theme_color`）和桌面端夜间窗口的底色（`lib.rs` 的 `match_window_to_system_theme`）也是照 `--ar-canvas` 写死的。
     - 画不跟令牌走：登录页左边那幅画用 `--scene-*`，官网首页的房间和机器人用 `--draw-*`，场景（Pixi）自己配色。这几组名字故意不叫 `--ar-`，卡颜色一致的测试才不管它们。
     - 字体是 Geist 加思源黑体（`@fontsource-variable/geist`、`geist-mono`），登录主题和官网各带一份 Geist 的字体文件。

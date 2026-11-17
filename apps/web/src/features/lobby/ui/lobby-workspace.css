@@ -62,6 +62,7 @@
   background: var(--ar-surface-muted);
 }
 .workspace-direct__session[aria-pressed='true'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 .workspace-direct__avatar {
@@ -228,7 +229,7 @@
   font-size: 12px;
 }
 .workspace-view-tabs > button[aria-selected='true'] {
-  color: var(--ar-accent);
+  color: var(--ar-accent-ink);
   font-weight: 600;
 }
 .workspace-view-tabs > button > svg {
@@ -359,6 +360,7 @@
   background: var(--ar-surface-muted);
 }
 .workspace-members .roster-agent[aria-pressed='true'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 .workspace-members .roster-agent__identity > strong {

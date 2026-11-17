@@ -41,10 +41,10 @@
     <p style="margin:0 0 12px;">${greeting}</p>
     <p style="margin:0 0 24px;">${body}</p>
     <p style="margin:0 0 12px;">
-        <a href="${link}" style="display:inline-block;padding:12px 24px;border-radius:8px;background:#18181B;color:#FFFFFF;font-size:15px;font-weight:600;text-decoration:none;">${button}</a>
+        <a href="${link}" style="display:inline-block;padding:12px 24px;border-radius:8px;background:#FFC53D;color:#1D1A05;font-size:15px;font-weight:600;text-decoration:none;">${button}</a>
     </p>
     <p style="margin:0 0 20px;color:#686873;font-size:13px;">${expiresIn}</p>
-    <div style="margin:0 0 20px;padding:12px 14px;border-radius:8px;background:#F4F4F5;font-size:13px;line-height:1.5;">
+    <div style="margin:0 0 20px;padding:12px 14px;border-radius:8px;background:#EEF2F1;font-size:13px;line-height:1.5;">
         <div style="margin:0 0 6px;color:#686873;">${msg("arEmailFallback")}</div>
         <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:12px;line-height:1.45;word-break:break-all;"><a href="${link}" style="color:#686873;">${link}</a></div>
     </div>

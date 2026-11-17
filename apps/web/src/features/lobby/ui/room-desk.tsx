@@ -469,7 +469,7 @@ export function RoomDesk({
         data-rail={rail === null ? 'false' : 'true'}
       >
         {rail === null ? null : (
-          <div className="room-desk__rail">
+          <div className="room-desk__rail ar-nav">
             {mainRoomPlace('rail', stay)}
             {rail(stay)}
           </div>

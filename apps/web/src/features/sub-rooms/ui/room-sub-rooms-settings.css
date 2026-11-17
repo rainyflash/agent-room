@@ -103,7 +103,7 @@
 }
 
 .room-sub-rooms__toggle > input:checked {
-  background: var(--color-ink);
+  background: var(--ar-accent);
 }
 
 .room-sub-rooms__toggle > input:checked::after {

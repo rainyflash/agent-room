@@ -1,6 +1,6 @@
 /*
  * Agent Room 登录主题：和网页端、桌面端一个样子（令牌取自 packages/ui-system，测试卡着）。
- * 白底黑字，不画框：有边的只有输入框；一页一个黑色的按钮。有颜色的只有右边那间房间的画。
+ * 白底黑字，不画框：有边的只有输入框；一页一个明黄的按钮，链接是青绿（第四稿）。右边那间房间是画，颜色是它自己的。
  */
 
 @font-face {
@@ -30,15 +30,19 @@
   --ar-ink: #18181b;
   --ar-paper: #ffffff;
   --ar-canvas: #ffffff;
-  --ar-surface: #fafafa;
-  --ar-surface-muted: #f4f4f5;
-  --ar-selected: #ececef;
+  --ar-surface: #f6f8f8;
+  --ar-surface-muted: #eef2f1;
+  --ar-selected: #dff1ed;
   --ar-muted: #686873;
   --ar-faint: #a4a4ae;
   --ar-line: #ededf0;
   --ar-border: #dcdce1;
-  --ar-accent: #18181b;
-  --ar-accent-hover: #3f3f46;
+  --ar-accent: #0f766e;
+  --ar-accent-hover: #0b5f58;
+  --ar-accent-ink: #0b5f58;
+  --ar-primary: #ffc53d;
+  --ar-primary-hover: #ffb81f;
+  --ar-on-primary: #1d1a05;
   --ar-success-ink: #147a52;
   --ar-warning: #895919;
   --ar-warning-soft: #fff8e1;
@@ -77,9 +81,9 @@ body {
 }
 
 .ar-body a {
-  color: var(--ar-ink);
+  color: var(--ar-accent-ink);
   font-weight: 500;
-  text-decoration-color: var(--ar-border);
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   text-underline-offset: 3px;
 }
 
@@ -293,7 +297,7 @@ textarea.ar-input {
 }
 
 .ar-input:focus {
-  border-color: var(--ar-ink);
+  border-color: var(--ar-accent);
   outline: none;
   box-shadow: 0 0 0 3px var(--ar-selected);
 }
@@ -456,12 +460,12 @@ textarea.ar-input {
 
 .ar-button--primary,
 .ar-body a.ar-button--primary {
-  color: var(--ar-paper);
-  background: var(--ar-ink);
+  color: var(--ar-on-primary);
+  background: var(--ar-primary);
 }
 
 .ar-button--primary:not(:disabled):hover {
-  background: var(--ar-accent-hover);
+  background: var(--ar-primary-hover);
 }
 
 .ar-button--block {

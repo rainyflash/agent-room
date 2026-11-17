@@ -131,7 +131,7 @@
 .room-pins__failure-action {
   padding: 0;
   border: 0;
-  color: var(--ar-accent);
+  color: var(--ar-accent-ink);
   background: none;
   font: inherit;
   font-weight: 600;

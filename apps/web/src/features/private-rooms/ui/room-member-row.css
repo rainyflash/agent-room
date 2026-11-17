@@ -204,8 +204,8 @@
   transition: transform 120ms ease;
 }
 .room-member__switches input:checked {
-  border-color: var(--color-ink);
-  background: var(--color-ink);
+  border-color: var(--ar-accent);
+  background: var(--ar-accent);
 }
 .room-member__switches input:checked::before {
   background: var(--color-paper);

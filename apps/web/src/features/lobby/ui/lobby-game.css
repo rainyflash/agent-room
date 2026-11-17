@@ -240,6 +240,7 @@
   background: var(--ar-warning-soft);
 }
 .room-toolbelt button[aria-pressed='true'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 .room-toolbelt svg {
@@ -307,7 +308,7 @@
   white-space: nowrap;
 }
 .room-panel__header .workspace-view-tabs > button[aria-selected='true'] {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
   font-weight: 600;
 }
@@ -612,11 +613,12 @@
   background: var(--ar-surface-muted);
 }
 .room-empty-presence button[data-tone='primary'] {
-  background: var(--color-ink);
-  color: var(--color-paper);
+  border-color: transparent;
+  background: var(--ar-primary);
+  color: var(--ar-on-primary);
 }
 .room-empty-presence button[data-tone='primary']:hover {
-  background: var(--ar-accent-hover);
+  background: var(--ar-primary-hover);
 }
 .room-empty-presence button svg {
   width: 16px;
