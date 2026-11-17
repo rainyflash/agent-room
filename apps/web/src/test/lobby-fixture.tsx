@@ -136,6 +136,12 @@ import type {
   RoomLiveView,
   RoomLiveViewGateway,
 } from '@/features/private-rooms/domain/room-live-view';
+import {
+  EXCERPT_MAX_MESSAGES,
+  type RoomExcerpt,
+  type RoomExcerptGateway,
+} from '@/features/room-excerpts/domain/room-excerpts';
+import { conversationMessages } from '@/features/conversation/domain/conversation';
 import type { RoomNoticeGateway } from '@/features/room-notice/domain/room-notice';
 import { ROOM_PINS_MAX, type RoomPinsGateway } from '@/features/room-pins/domain/room-pins';
 import type {
@@ -220,6 +226,13 @@ const repositoryLimitFixture =
 // 看得到）、关着、开不了（房间要申请才能进）。和服务器一样，公开设置改回私密、换掉“直接进”时自己关掉；
 // 开不了时开关回 409 `room_live.not_eligible`。
 const liveFixture = privateFixture ? new URLSearchParams(window.location.search).get('live') : null;
+// 放着实况时（`&live=on`）对话里每一句能“分享这一段”，房间“分享”里有分享过的两段（一段是你的，一段是
+// 别人的：夹具里你是房主，看得到全部）。和服务器一样只认开了实况以后、连着的最多 30 句。
+// `&excerptFail=<错误>`：分享时控制面回这个错（`before_live`、`not_found` 是 `invalid_range` 的两种，
+// `rate_limited` 带 20 分钟的 `Retry-After`，别的照 `room_excerpt.<错误>`）。
+const excerptFailFixture = privateFixture
+  ? new URLSearchParams(window.location.search).get('excerptFail')
+  : null;
 // `?private&notice` 里房间有一条 Grace 写的三行须知（时间固定，重新打开还是同一版）；不带时没有须知，
 // 房主能在设置的“须知”里写。加 `&seenElsewhere` 是你在别的设备上看过这一版：个人工作区里记着，这个浏览器
 // 里没有。
@@ -2555,6 +2568,87 @@ const roomLiveViews: RoomLiveViewGateway = {
   },
 };
 
+let fixtureExcerpts: readonly RoomExcerpt[] =
+  liveFixture === 'on'
+    ? [
+        {
+          code: 'Kq7Lm2Zp',
+          url: 'https://agentroom.test/r/aB3xYz/s/Kq7Lm2Zp',
+          messageCount: 4,
+          firstMessageAtUnixMs: Date.now() - 50 * 60_000,
+          sharedAtUnixMs: Date.now() - 45 * 60_000,
+          mine: true,
+        },
+        {
+          code: 'Wd4Rt8Nx',
+          url: 'https://agentroom.test/r/aB3xYz/s/Wd4Rt8Nx',
+          messageCount: 12,
+          firstMessageAtUnixMs: Date.now() - 40 * 60_000,
+          sharedAtUnixMs: Date.now() - 30 * 60_000,
+          mine: false,
+        },
+      ]
+    : [];
+let fixtureExcerptCount = 0;
+function fixtureExcerptFailure(kind: string): PrivateRoomFailure {
+  if (kind === 'before_live' || kind === 'not_found') {
+    return { code: 'room_excerpt.invalid_range', reason: kind, retryable: false };
+  }
+  if (kind === 'rate_limited') {
+    return { code: 'room_excerpt.rate_limited', retryAfterSeconds: 1_200, retryable: false };
+  }
+  return {
+    code: `room_excerpt.${kind}`,
+    correlationId: '0198b601-77a1-7bb8-83eb-a8fe68c97e99',
+    retryable: kind === 'dependency_unavailable' || kind === 'internal',
+  };
+}
+const roomExcerpts: RoomExcerptGateway = {
+  share: (_catalogId, bounds) => {
+    if (excerptFailFixture !== null) {
+      return Promise.resolve(err(fixtureExcerptFailure(excerptFailFixture)));
+    }
+    if (!fixtureLiveView().live) return Promise.resolve(err(fixtureExcerptFailure('not_live')));
+    const read = messages.read(room.roomId);
+    const timeline = conversationMessages(read.ok ? read.value.messages : []);
+    const start = timeline.findIndex((message) => message.matrixEventId === bounds.firstEventId);
+    const end = timeline.findIndex((message) => message.matrixEventId === bounds.lastEventId);
+    const first = timeline[start];
+    if (first === undefined || end < start) {
+      return Promise.resolve(err(fixtureExcerptFailure('not_found')));
+    }
+    if (end - start + 1 > EXCERPT_MAX_MESSAGES) {
+      return Promise.resolve(err(fixtureExcerptFailure('too_long')));
+    }
+    if (first.serverTimestamp < (fixtureLiveSince ?? 0)) {
+      return Promise.resolve(err(fixtureExcerptFailure('before_live')));
+    }
+    fixtureExcerptCount += 1;
+    const code = `Sh${String(fixtureExcerptCount).padStart(6, '0')}`;
+    const url = `https://agentroom.test/r/aB3xYz/s/${code}`;
+    fixtureExcerpts = [
+      {
+        code,
+        url,
+        messageCount: end - start + 1,
+        firstMessageAtUnixMs: first.serverTimestamp,
+        sharedAtUnixMs: Date.now(),
+        mine: true,
+      },
+      ...fixtureExcerpts,
+    ];
+    return Promise.resolve(ok({ code, url }));
+  },
+  list: () => Promise.resolve(ok(fixtureExcerpts)),
+  remove: (_catalogId, code) => {
+    if (!fixtureExcerpts.some((excerpt) => excerpt.code === code)) {
+      return Promise.resolve(err({ code: 'room_excerpt.not_found', retryable: false }));
+    }
+    fixtureExcerpts = fixtureExcerpts.filter((excerpt) => excerpt.code !== code);
+    return Promise.resolve(ok(undefined));
+  },
+};
+
 let fixtureJoinRequests: readonly PendingJoinRequest[] = requestsFixture
   ? [
       {
@@ -2706,7 +2800,7 @@ const services: AppServices = {
         privateRoomInvites,
         privateRoomListings,
         ...(repositoryFixture === null ? {} : { projectRooms }),
-        ...(liveFixture === null ? {} : { roomLiveViews }),
+        ...(liveFixture === null ? {} : { roomLiveViews, roomExcerpts }),
         publicRoomJoins,
         roomNotices,
         roomPins,

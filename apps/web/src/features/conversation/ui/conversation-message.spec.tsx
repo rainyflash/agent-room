@@ -10,6 +10,10 @@ import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import type { AgentDelivery } from '@/features/conversation/domain/message-delivery';
 import { ConversationMessage } from '@/features/conversation/ui/conversation-message';
 import {
+  ExcerptSelectionContext,
+  type ExcerptSelectionActions,
+} from '@/features/room-excerpts/ui/excerpt-selection';
+import {
   RoomPinsActionsContext,
   type RoomPinsActions,
 } from '@/features/room-pins/ui/room-pins-actions';
@@ -278,5 +282,76 @@ describe('房主和管理员在一句话上置顶、取消置顶', () => {
     cleanup();
     renderWithPins(actions(), { ...message, lifecycle: 'redacted' });
     expect(screen.queryByRole('button', { name: 'Pin this message' })).toBeNull();
+  });
+});
+
+describe('房间放着实况时，一句话上的“分享这一段”', () => {
+  function renderWithExcerpts(
+    actions: ExcerptSelectionActions | null,
+    shown: RoomMessageSignal = message,
+  ) {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ExcerptSelectionContext.Provider value={actions}>
+          <ConversationMessage
+            editable
+            message={shown}
+            names={new Map()}
+            onReply={vi.fn()}
+            own={false}
+            parent={undefined}
+            time={new Intl.DateTimeFormat('en', { timeStyle: 'short', timeZone: 'UTC' })}
+          />
+        </ExcerptSelectionContext.Provider>
+      </I18nextProvider>,
+    );
+  }
+  const actions = (overrides: Partial<ExcerptSelectionActions> = {}): ExcerptSelectionActions => ({
+    roomId: message.roomId,
+    selecting: false,
+    shareable: () => true,
+    place: () => undefined,
+    begin: vi.fn(),
+    pick: vi.fn(),
+    ...overrides,
+  });
+
+  it('点了从这一句开始选', () => {
+    const begin = vi.fn<ExcerptSelectionActions['begin']>();
+    renderWithExcerpts(actions({ begin }));
+    fireEvent.click(screen.getByRole('button', { name: 'Share this stretch' }));
+    expect(begin).toHaveBeenCalledWith(message);
+  });
+
+  it('没在放实况、别的房间的、不能分享的句子没有这个按钮', () => {
+    renderWithExcerpts(null);
+    expect(screen.queryByRole('button', { name: 'Share this stretch' })).toBeNull();
+    cleanup();
+    renderWithExcerpts(actions({ roomId: '!other:agent-room.test' }));
+    expect(screen.queryByRole('button', { name: 'Share this stretch' })).toBeNull();
+    cleanup();
+    renderWithExcerpts(actions({ shareable: () => false }));
+    expect(screen.queryByRole('button', { name: 'Share this stretch' })).toBeNull();
+  });
+
+  it('选的时候别的按钮收起来，换成一个勾：选中了是按下的，点它或点这一句都算选它', () => {
+    const pick = vi.fn<ExcerptSelectionActions['pick']>();
+    renderWithExcerpts(actions({ selecting: true, pick, place: () => 'first' }));
+    expect(screen.queryByRole('button', { name: 'Share this stretch' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reply to Rainy' })).toBeNull();
+    const toggle = screen.getByRole('button', { name: /^Select this message: Rainy, / });
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('article')).toHaveAttribute('data-excerpt', 'first');
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByText('Please review the release notes.'));
+    expect(pick.mock.calls).toEqual([[message], [message]]);
+  });
+
+  it('选的时候不能分享的句子什么按钮都没有，点了也不算', () => {
+    const pick = vi.fn<ExcerptSelectionActions['pick']>();
+    renderWithExcerpts(actions({ selecting: true, pick, shareable: () => false }));
+    expect(screen.queryByRole('button')).toBeNull();
+    fireEvent.click(screen.getByText('Please review the release notes.'));
+    expect(pick).not.toHaveBeenCalled();
   });
 });

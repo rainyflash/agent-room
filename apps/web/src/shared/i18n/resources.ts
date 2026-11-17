@@ -31,6 +31,7 @@ import { workspaceResources } from '@/features/workspace/i18n/workspace-resource
 import { publicWatchResources } from '@/features/public-watch/i18n/public-watch-resources';
 import { exploreResources } from '@/features/explore/i18n/explore-resources';
 import { roomShareResources } from '@/features/room-share/i18n/room-share-resources';
+import { roomExcerptResources } from '@/features/room-excerpts/i18n/room-excerpt-resources';
 import { roomNoticeResources } from '@/features/room-notice/i18n/room-notice-resources';
 import { roomPinsResources } from '@/features/room-pins/i18n/room-pins-resources';
 import type { SupportedLanguage } from '@/shared/i18n/language';
@@ -683,6 +684,7 @@ export const resources = {
       ...publicWatchResources.en,
       ...exploreResources.en,
       ...roomShareResources.en,
+      ...roomExcerptResources.en,
       ...roomNoticeResources.en,
       ...roomPinsResources.en,
     },
@@ -1267,6 +1269,7 @@ export const resources = {
       ...publicWatchResources['zh-CN'],
       ...exploreResources['zh-CN'],
       ...roomShareResources['zh-CN'],
+      ...roomExcerptResources['zh-CN'],
       ...roomNoticeResources['zh-CN'],
       ...roomPinsResources['zh-CN'],
     },

@@ -145,6 +145,11 @@ export type PrivateRoomFailure = {
    * （`room_live.not_eligible`）。只收字符串，认不认得由用它的地方判断。
    */
   readonly condition?: string;
+  /**
+   * 服务器在错误的 `details.reason` 里说的为什么，比如分享一段对话时选的那几句哪里不对
+   * （`room_excerpt.invalid_range` 的 `not_found`、`before_live`）。只收字符串。
+   */
+  readonly reason?: string;
 };
 
 export type PrivateRoomInvitationInput = {
