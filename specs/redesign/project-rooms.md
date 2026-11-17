@@ -602,3 +602,22 @@
   - 关掉以后 `/live` 最多再放 5 秒（按分享码查到的“放”在内存里留 5 秒），所以这边轮询到 404 为止（最多 30 秒），别只查一次；再打开以后同理，轮询到那一句出来（最多 90 秒）。网页那边故意去开、开不了的 409，`collectUnhandledFailures` 只放过这两间房的 `live-view`。
   - 没走的：一段对话（3P-9b-2）；被平台拿掉的房间（要平台管理员）；子房间、只能邀请的房间（和这几样在同一个判断里，`application` 的 `tests/room_live_flow.rs` 有）；目录上没记加密、聊天服务器上却有 `m.room.encryption` 时快照封住（要在库里改目录，`public_watch/tests/live_rooms.rs` 有）；不是房主的管理员开关；归档、删账户时自动关。
   - 测试：读实况、按编号找说话人、认 Agent 那一句、看分享页有没有那一块、网页用例要的变量都给了，有 Python 单元测试（`tools/tests/test_vertical_project_rooms.py`）；整轮在 PR 分支上派发 `suite=all` 跑。
+- 2026-11-16 3P-7a-1（#916，分享一段对话的存储、接口和每天的清理，只有控制面和隐私说明页；`/r/<码>/s/<段码>` 那一页是 3P-7a-2，网页上的“分享这一段”是 3P-7b，三步同一版发）：
+  - 迁移 `202611160007_room_excerpt.sql` 建 `room_excerpt`：段码（8 位，和分享码同一套字母和数字）、房间（目录 ID，房间删了跟着删）、那几句的事件 ID（1 到 30 个，按时间先后）、第一句的时间、谁什么时候分享的。不存话。
+  - 接口（`features/room_excerpts.rs`，用例在 `application` 的 `room_excerpts.rs`），回答都是新的：
+    - `POST /private-rooms/{c}/excerpts`，正文 `{ firstEventId, lastEventId }`（多一个字段就 400），回 201 `{ code, url }`，`url` 是 `https://<裸域>/r/<分享码>/s/<段码>`。房间里已加入的人都能分享。
+    - `GET /private-rooms/{c}/excerpts`，回 `{ excerpts: [{ code, url, messageCount, firstMessageAtUnixMs, sharedAtUnixMs, mine }] }`，新分享的在前、最多 200 段。成员只看到自己的，房主和管理员看到这间房的全部，只说是不是自己分享的、不说是谁。
+    - `DELETE /private-rooms/{c}/excerpts/{code}`，回 204。分享的人自己（离开了房间也能删）、房主和管理员能删。
+    - 错误码：`room_excerpt.not_live`（409）、`too_long`（422）、`invalid_range`（422，`details.reason` 是 `not_found` 或 `before_live`）、`not_found`、`forbidden`、`rate_limited`（429，带 `Retry-After`）、`dependency_unavailable`、`internal`、`invalid`、`invalid_origin`、`invalid_resource`。说法是中文，网页按错误码换（3P-7b）。
+  - 分享时：先看房间此刻放不放实况（和 `/r/<码>/live` 同几样，一句 SQL），再算每人每小时 20 段，再以应用服务从最新往回一页页读这间房（`PublicLobbyMatrixReader::messages_before`，一页最多 100 条，最多 500 条，读到开头那一句所在的那一页为止，`public_watch/excerpts.rs`），经实况同一套解析和验签：撤回、隐藏、验不过签名的不算，改过的照原来那一句算。开头和结尾都要在读到的看得见的话里、结尾不在开头前面、最多 30 句、没有一句早于开实况那一刻。读不到开头那一句（太早、撤回了、不在主房间）是 `invalid_range` 的 `not_found`；聊天服务器上加了密当没在放实况。
+  - 记的时候锁着实况那一行（`FOR SHARE`），还得是读房间时那一刻开着的；关实况的几处（`turn_off_live_view`、`disable_live_view`、删账户的 `archive_private_rooms`）先删实况那一行、再另起一句删这间房的段：两边撞上时，要么这边读到那一行没了不记，要么那边第二句看得到刚记下的一起删。
+  - 删：关实况（改加入方式、改回私密、目录记成加密、归档或关掉、房主关掉、删账户关掉他的房间）时在同一个事务里删；删账户时删他分享的；房间删了跟着删；控制面每天清一次（`room_excerpt_cleanup.rs`，启动时一次、之后每 24 小时）：第一句过了房间保留期的（没设按 30 天），实况那一行没了或者开在第一句之后的。
+  - “下载我的数据”加了 `roomExcerpts`：段码、哪间房、几句、第一句的时间、什么时候分享的，不带事件 ID，也没有话。
+  - 和设计不一样、设计里没写的：
+    - 设计写实况关了以后“一起打不开，再开也不回来”，这里直接删：看到的一样，少存一样东西。
+    - 平台冻结、从目录里拿掉时和实况那一行一样留着、打不开（3P-7a-2 的页面照放不放来），解除以后照旧打得开；冻结期间不能分享新的。
+    - 每小时 20 段在读房间之前就算一次，选错了的也算，免得拿它一遍遍读聊天服务器；名额只在这一个控制面进程的内存里，重启就清零，开多个副本时各算各的。
+    - 房主和管理员列出来的看不出是谁分享的，只有 `mine`。
+    - 段码撞上别的换一个再记，最多 3 次。
+    - 隐私说明页在这一步就照 3P-7a 做完的样子改了（存段的表在这一步）：3P-7a-2 没赶上同一版的话，页面上说的“不登录也打得开”还没真有，只多说、不少说。
+  - 测试：应用层流程（`application/tests/room_excerpt_flow.rs`）、接口（`features/room_excerpts/tests.rs`）、往回读（`public_watch/tests/excerpts.rs`，`matrix-provisioning-adapter` 的 `public_lobby.rs`）、每天的清理（`room_excerpt_cleanup.rs`）、隐私说明页的说法（`privacy-page.spec.tsx`）。真实数据库的（`postgres-adapter` 的 `private_rooms/excerpts.rs`，`real_database.rs` 删账户那一条和表的名单）只在派发 `suite=all` 时跑。

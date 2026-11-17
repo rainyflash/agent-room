@@ -12,8 +12,8 @@ use agent_room_domain::{
 use crate::persistence::RepositoryResult;
 
 use super::{
-    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-    MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
+    MatrixBackfillToken, MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult,
+    MatrixRoomId, MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
 };
 
 mod agent_departures;
@@ -30,6 +30,7 @@ mod project_rooms;
 mod provisioning;
 mod public_room_directory;
 mod role_changes;
+mod room_excerpts;
 mod room_live;
 mod room_moderation_grants;
 mod room_pins;
@@ -97,6 +98,11 @@ pub use public_room_directory::{
 };
 pub use role_changes::{
     RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
+};
+pub use room_excerpts::{
+    ExcerptMessageRef, ExcerptRoomRecord, ExcerptTimelineRead, ExcerptTimelineUnavailable,
+    InsertRoomExcerptOutcome, RoomExcerptListing, RoomExcerptRecord, RoomExcerptStore,
+    RoomExcerptTimeline,
 };
 pub use room_live::{
     EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord, RoomEncryptionState,
@@ -310,6 +316,34 @@ pub trait PublicLobbyMatrixReader: Send + Sync {
             ))
         })
     }
+
+    /// 从 `from`（不给就从最新）往回读一页 Agent Room 消息与修订事件，最多 `limit` 条。分享一段对话
+    /// （`specs/redesign/project-rooms.md` 的 3P-7）往回翻页用。默认不支持。
+    fn messages_before<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        from: Option<&'a MatrixBackfillToken>,
+        limit: u16,
+    ) -> PortFuture<'a, MatrixResult<MatrixMessagePage>> {
+        let _ = (room_id, from, limit);
+        Box::pin(async {
+            Err(MatrixFailure::new(
+                MatrixOperation::Backfill,
+                MatrixFailureKind::NotFound,
+            ))
+        })
+    }
+}
+
+/// 往回读的一页。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatrixMessagePage {
+    /// 这一页里的事件，旧的在前。
+    pub events: Vec<MatrixTimelineEvent>,
+    /// 聊天服务器这一页回了几条事件，格式不对、丢掉的也算：往回最多读多少条按它数。
+    pub read: usize,
+    /// 接着往回读的游标；没有更早的了是空的。
+    pub next: Option<MatrixBackfillToken>,
 }
 
 /// 把候选查询、行锁、领域评分与槽位递增封装在同一短事务内。

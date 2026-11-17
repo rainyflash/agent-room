@@ -420,8 +420,8 @@ fn fresh(checked_at: UtcMillis, now: UtcMillis) -> bool {
     now.value().saturating_sub(checked_at.value()) < ELIGIBILITY_TTL_MS
 }
 
-/// 房间状态里有 `m.room.encryption`：不管里面写的什么算法，都算加密。
-fn encrypted(state: &[MatrixTimelineEvent]) -> bool {
+/// 房间状态里有 `m.room.encryption`：不管里面写的什么算法，都算加密。分享一段对话（`excerpts.rs`）也用它。
+pub(super) fn encrypted(state: &[MatrixTimelineEvent]) -> bool {
     state.iter().any(|event| {
         event.event_type().as_str() == ENCRYPTION_EVENT_TYPE && event.state_key() == Some("")
     })

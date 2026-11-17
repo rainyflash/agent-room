@@ -307,7 +307,7 @@ async fn lookup(repositories: &PostgresRepositories, share_code: &str) -> Option
 }
 
 /// 新建时就公开、直接进、不加密的房间。
-async fn listed_room(
+pub(super) async fn listed_room(
     repositories: &PostgresRepositories,
     owner: PrincipalId,
     share_code: &str,
@@ -321,14 +321,17 @@ async fn listed_room(
     (snapshot.catalog().id(), listing)
 }
 
-async fn facts(repositories: &PostgresRepositories, room: RoomCatalogId) -> RoomLiveViewFacts {
+pub(super) async fn facts(
+    repositories: &PostgresRepositories,
+    room: RoomCatalogId,
+) -> RoomLiveViewFacts {
     RoomLiveViewStore::live_view_facts(repositories, room)
         .await
         .expect("可读")
         .expect("有房间")
 }
 
-async fn enable(
+pub(super) async fn enable(
     repositories: &PostgresRepositories,
     room: RoomCatalogId,
     by: PrincipalId,
@@ -351,7 +354,7 @@ async fn assert_not_recorded(
     assert_eq!(facts(repositories, room).await.live_view, None);
 }
 
-async fn hold(pool: &PgPool, room: RoomCatalogId, by: PrincipalId) {
+pub(super) async fn hold(pool: &PgPool, room: RoomCatalogId, by: PrincipalId) {
     sqlx::query(
         r"INSERT INTO agent_room.public_room_platform_hold (catalog_entry_id, held_by, held_at)
           VALUES ($1, $2, now())",

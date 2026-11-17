@@ -7,6 +7,7 @@
 //! - 关了就删：改成要申请或只能邀请、改回私密、目录记成加密（`mark_room_encrypted`）、归档或关掉、删账户时
 //!   关掉他的房间，都在改房间的那个事务里、改完那几行以后删（[`turn_off_live_view`]，`accounts.rs` 的
 //!   `archive_private_rooms` 另有一句按房主删）。平台冻结、拿掉时不删。
+//! - 关实况时以前分享的段一起删（3P-7a，`excerpts.rs`）：再开也不回来。
 //! - 项目房间建好就开着（[`enable_for_project_room`]，建房的那个事务里）。
 //! - 分享页按分享码找放着实况的房间（[`LiveRoomLookup`]，3P-6a-2）：和打开时查的是同几样，再加上
 //!   房间实例在用、开着实况。
@@ -31,7 +32,7 @@ use crate::{
     error::map_sqlx_error,
 };
 
-use super::decode::corrupt_data;
+use super::{decode::corrupt_data, excerpts::delete_room_excerpts};
 
 impl RoomLiveViewStore for PostgresRepositories {
     fn live_view_facts(
@@ -137,9 +138,14 @@ impl RoomLiveViewStore for PostgresRepositories {
     fn disable_live_view(&self, catalog_id: RoomCatalogId) -> PortFuture<'_, RepositoryResult<()>> {
         Box::pin(async move {
             let operation = "room_live.disable";
-            sqlx::query("DELETE FROM agent_room.room_live_view WHERE catalog_entry_id = $1")
-                .bind(catalog_id.as_uuid())
-                .execute(self.pool())
+            let mut transaction = self
+                .pool()
+                .begin()
+                .await
+                .map_err(|error| map_sqlx_error(operation, &error))?;
+            turn_off_live_view(&mut transaction, catalog_id, operation).await?;
+            transaction
+                .commit()
                 .await
                 .map_err(|error| map_sqlx_error(operation, &error))?;
             Ok(())
@@ -198,8 +204,9 @@ impl LiveRoomLookup for PostgresRepositories {
     }
 }
 
-/// 关掉这间房的实况，有就删。要和改动房间的那次存放在同一个事务里，放在改房间目录、公开设置那几句
-/// 之后：同时在开的那一句要么已经存完、这里删得到，要么等这边存完、读到改过的设置。
+/// 关掉这间房的实况，有就删，以前分享的段一起删（3P-7a）。要和改动房间的那次存放在同一个事务里，放在
+/// 改房间目录、公开设置那几句之后：同时在开的那一句要么已经存完、这里删得到，要么等这边存完、读到改过的
+/// 设置。段在删实况那一行之后另起一句删：正在记的一段锁着实况那一行，等它存完，第二句才看得到它。
 pub(super) async fn turn_off_live_view(
     transaction: &mut Transaction<'_, Postgres>,
     catalog_id: RoomCatalogId,
@@ -210,7 +217,7 @@ pub(super) async fn turn_off_live_view(
         .execute(&mut **transaction)
         .await
         .map_err(|error| map_sqlx_error(operation, &error))?;
-    Ok(())
+    delete_room_excerpts(transaction, catalog_id, operation).await
 }
 
 /// 项目房间建好就开着实况（设计“分享页放实况”的默认）：记的是认领的人、建房的那一刻。

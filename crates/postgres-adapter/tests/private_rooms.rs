@@ -29,6 +29,8 @@ use uuid::Uuid;
 mod admins;
 #[path = "private_rooms/description.rs"]
 mod description;
+#[path = "private_rooms/excerpts.rs"]
+mod excerpts;
 #[path = "private_rooms/join_requests.rs"]
 mod join_requests;
 #[path = "private_rooms/listing.rs"]

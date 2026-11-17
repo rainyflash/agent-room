@@ -7,11 +7,13 @@
 //!
 //! 发现页的“最近有人说话”（specs/public-rooms/design.md）也以它的身份读：公开房间都是它建的，只取
 //! 最新一条消息事件的时间，不看内容。
+//!
+//! 分享一段对话（specs/redesign/project-rooms.md 的 3P-7）也以它的身份往回一页页读放着实况的房间。
 
 use agent_room_application::ports::{
-    MatrixFailure, MatrixFailureKind, MatrixOperation, MatrixResult, MatrixRoomId,
-    MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture, PublicLobbyMatrixReader,
-    PublicRoomActivityMatrix, PublicRoomPresenceMatrix,
+    MatrixBackfillToken, MatrixFailure, MatrixFailureKind, MatrixMessagePage, MatrixOperation,
+    MatrixResult, MatrixRoomId, MatrixTimelineEvent, MatrixUserId, MatrixUserPresence, PortFuture,
+    PublicLobbyMatrixReader, PublicRoomActivityMatrix, PublicRoomPresenceMatrix,
 };
 use agent_room_domain::{agent_lifecycle::MatrixPresenceState, time::UtcMillis};
 use reqwest::Url;
@@ -42,6 +44,18 @@ impl MatrixApplicationServiceProvisioner {
         room_id: &MatrixRoomId,
         limit: u16,
     ) -> MatrixResult<Vec<MatrixTimelineEvent>> {
+        self.message_page(room_id, None, limit)
+            .await
+            .map(|page| page.events)
+    }
+
+    /// 从 `from`（不给就从最新）往回读一页消息事件。
+    async fn message_page(
+        &self,
+        room_id: &MatrixRoomId,
+        from: Option<&MatrixBackfillToken>,
+        limit: u16,
+    ) -> MatrixResult<MatrixMessagePage> {
         let operation = MatrixOperation::Backfill;
         let mut url = endpoint_with_segments(
             &self.homeserver_url,
@@ -55,19 +69,36 @@ impl MatrixApplicationServiceProvisioner {
             ],
             operation,
         )?;
-        url.query_pairs_mut()
-            .append_pair("dir", "b")
-            .append_pair("limit", &limit.clamp(1, MAX_MESSAGES_LIMIT).to_string())
-            .append_pair("filter", &json!({"types": MESSAGE_EVENT_TYPES}).to_string());
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("dir", "b")
+                .append_pair("limit", &limit.clamp(1, MAX_MESSAGES_LIMIT).to_string())
+                .append_pair("filter", &json!({"types": MESSAGE_EVENT_TYPES}).to_string());
+            if let Some(from) = from {
+                query.append_pair("from", from.as_str());
+            }
+        }
         let body = self
             .read_as_service(url, operation, MAX_MESSAGES_RESPONSE_BYTES)
             .await?;
         let page: MessagesPage = decode_json(&body, operation)?;
-        // 不给起点就从最新往回翻，新的在前；倒过来按时间先后交出去。越界的事件逐条丢掉。
+        // 往回翻，新的在前；倒过来按时间先后交出去。越界的事件逐条丢掉。
         let mut events: Vec<MatrixTimelineEvent> =
             page.chunk.iter().filter_map(timeline_event).collect();
         events.reverse();
-        Ok(events)
+        // 没有更早的了时聊天服务器不给 `end`。
+        let next = page
+            .end
+            .filter(|_| !page.chunk.is_empty())
+            .map(MatrixBackfillToken::new)
+            .transpose()
+            .map_err(|_| MatrixFailure::new(operation, MatrixFailureKind::InvalidResponse))?;
+        Ok(MatrixMessagePage {
+            events,
+            read: page.chunk.len(),
+            next,
+        })
     }
 
     async fn current_state_internal(
@@ -164,6 +195,15 @@ impl PublicLobbyMatrixReader for MatrixApplicationServiceProvisioner {
         Box::pin(self.current_state_internal(room_id))
     }
 
+    fn messages_before<'a>(
+        &'a self,
+        room_id: &'a MatrixRoomId,
+        from: Option<&'a MatrixBackfillToken>,
+        limit: u16,
+    ) -> PortFuture<'a, MatrixResult<MatrixMessagePage>> {
+        Box::pin(self.message_page(room_id, from, limit))
+    }
+
     fn user_presence<'a>(
         &'a self,
         user_id: &'a MatrixUserId,
@@ -229,11 +269,13 @@ impl PublicRoomPresenceMatrix for MatrixApplicationServiceProvisioner {
     }
 }
 
-/// `/rooms/{roomId}/messages` 的回答里只用得到 `chunk`。
+/// `/rooms/{roomId}/messages` 的回答里只用得到 `chunk` 和往回接着读的 `end`。
 #[derive(Deserialize)]
 struct MessagesPage {
     #[serde(default)]
     chunk: Vec<Value>,
+    #[serde(default)]
+    end: Option<String>,
 }
 
 /// `/presence/{userId}/status` 的回答里只用得到这两样。
@@ -253,7 +295,7 @@ mod tests {
     };
 
     use agent_room_application::ports::{
-        MatrixFailureKind, MatrixOperation, MatrixRoomId, MatrixUserId,
+        MatrixBackfillToken, MatrixFailureKind, MatrixOperation, MatrixRoomId, MatrixUserId,
         PublicLobbyMatrixReader as _, PublicRoomActivityMatrix as _, PublicRoomPresenceMatrix,
         SecretValue,
     };
@@ -401,6 +443,59 @@ mod tests {
                 "io.github.rainyflash.agentroom.message.revision.v2",
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn 往回一页页读_带上起点_交出接着读的游标() {
+        let chunk = json!([
+            {
+                "event_id": "$newer:matrix.test",
+                "sender": "@ada:matrix.test",
+                "type": "io.github.rainyflash.agentroom.message.preview.v2",
+                "origin_server_ts": 1_758_600_000_002_u64,
+                "content": {"schemaVersion": "2.0"}
+            },
+            {"event_id": "$untyped:matrix.test", "content": {}}
+        ]);
+        let (url, seen) = serve(
+            StatusCode::OK,
+            json!({"start": "t9", "end": "t7", "chunk": chunk}),
+            json!([]),
+        )
+        .await;
+        let from = MatrixBackfillToken::new("t9").unwrap();
+
+        let page = reader(&url)
+            .messages_before(&room(), Some(&from), 250)
+            .await
+            .expect("读到一页");
+
+        assert_eq!(page.events.len(), 1, "格式不对的丢掉");
+        assert_eq!(page.read, 2, "丢掉的也算读过");
+        assert_eq!(
+            page.next.as_ref().map(MatrixBackfillToken::as_str),
+            Some("t7")
+        );
+        {
+            let seen = seen.lock().unwrap();
+            let (_, query, _) = &seen.requests[0];
+            assert_eq!(query["from"], "t9");
+            assert_eq!(query["dir"], "b");
+            assert_eq!(query["limit"], "100", "一页最多 100 条");
+        }
+
+        let (url, _) = serve(
+            StatusCode::OK,
+            json!({"start": "t7", "chunk": []}),
+            json!([]),
+        )
+        .await;
+        let last = reader(&url)
+            .messages_before(&room(), None, 100)
+            .await
+            .expect("读到最早的那一页");
+        assert!(last.events.is_empty());
+        assert_eq!(last.next, None, "没有更早的了");
     }
 
     #[tokio::test]

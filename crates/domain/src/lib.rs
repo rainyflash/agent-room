@@ -21,6 +21,7 @@ pub mod private_rooms;
 pub mod project_rooms;
 pub mod reception;
 pub mod regions;
+pub mod room_excerpts;
 pub mod room_invites;
 pub mod room_join_requests;
 pub mod room_listing;

@@ -8,6 +8,7 @@
 //! 看 Agent 最多的那个，和登录的人进大厅去的是同一个。
 
 mod agent_kinds;
+mod excerpts;
 mod live_view;
 mod reading;
 mod rooms;
@@ -18,6 +19,7 @@ mod real_dependency_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use excerpts::{ExcerptTimelineDependencies, ExcerptTimelineReader};
 pub(crate) use rooms::{RoomLiveFailure, RoomLiveSource, RoomLiveWatch, RoomLiveWatchDependencies};
 
 use std::{
