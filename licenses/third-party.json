@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "1bbca3e628484b4fdd4647553a6742b508765727e11bb616f972870a42b766f5",
+    "Cargo.lock": "347f768f4f9572327a203b1204f5469866c089a3eb837ba2e9a9b7b446b39ed7",
     "pnpm-lock.yaml": "f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27"
   },
   "dependencies": [
@@ -158,6 +158,13 @@
       "version": "1.2.3",
       "license": "MIT",
       "source": "https://github.com/orium/archery"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "arrayref",
+      "version": "0.3.9",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/droundy/arrayref"
     },
     {
       "ecosystem": "cargo",
@@ -653,6 +660,13 @@
       "ecosystem": "cargo",
       "name": "bytemuck",
       "version": "1.25.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "source": "https://github.com/Lokathor/bytemuck"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "bytemuck_derive",
+      "version": "1.12.1",
       "license": "Zlib OR Apache-2.0 OR MIT",
       "source": "https://github.com/Lokathor/bytemuck"
     },
@@ -1162,6 +1176,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "data-url",
+      "version": "0.3.2",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/servo/rust-url"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "date_header",
       "version": "1.0.5",
       "license": "MIT/Apache-2.0",
@@ -1547,6 +1568,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "euclid",
+      "version": "0.22.14",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/servo/euclid"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "event-listener",
       "version": "5.4.2",
       "license": "Apache-2.0 OR MIT",
@@ -1659,6 +1687,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "float-cmp",
+      "version": "0.9.0",
+      "license": "MIT",
+      "source": "https://github.com/mikedilger/float-cmp"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "fluent-uri",
       "version": "0.4.1",
       "license": "MIT",
@@ -1691,6 +1726,20 @@
       "version": "0.2.0",
       "license": "Zlib",
       "source": "https://github.com/orlp/foldhash"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "font-types",
+      "version": "0.12.7",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/googlefonts/fontations"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "fontdb",
+      "version": "0.24.0",
+      "license": "MIT",
+      "source": "https://github.com/RazrFalcon/fontdb"
     },
     {
       "ecosystem": "cargo",
@@ -2002,6 +2051,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "harfrust",
+      "version": "0.15.0",
+      "license": "MIT",
+      "source": "https://github.com/harfbuzz/harfrust"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "hashbrown",
       "version": "0.12.3",
       "license": "MIT OR Apache-2.0",
@@ -2286,6 +2342,13 @@
       "version": "1.2.2",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/hsivonen/idna_adapter"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "imagesize",
+      "version": "0.15.0",
+      "license": "MIT",
+      "source": "https://github.com/Roughsketch/imagesize"
     },
     {
       "ecosystem": "cargo",
@@ -2601,6 +2664,13 @@
       "version": "0.4.3",
       "license": "Zlib",
       "source": "https://github.com/rodrimati1992/konst/"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "kurbo",
+      "version": "0.13.1",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/linebender/kurbo"
     },
     {
       "ecosystem": "cargo",
@@ -3472,6 +3542,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "pico-args",
+      "version": "0.5.0",
+      "license": "MIT",
+      "source": "https://github.com/RazrFalcon/pico-args"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "pin-project-lite",
       "version": "0.2.17",
       "license": "Apache-2.0 OR MIT",
@@ -3546,6 +3623,13 @@
       "version": "0.8.0",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/RustCrypto/universal-hashes"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "polycool",
+      "version": "0.4.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/linebender/kurbo"
     },
     {
       "ecosystem": "cargo",
@@ -3822,6 +3906,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "read-fonts",
+      "version": "0.46.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/googlefonts/fontations"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "readlock",
       "version": "0.1.11",
       "license": "MPL-2.0",
@@ -3927,10 +4018,24 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "resvg",
+      "version": "0.50.0",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/linebender/resvg"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "rfc6979",
       "version": "0.4.0",
       "license": "Apache-2.0 OR MIT",
       "source": "https://github.com/RustCrypto/signatures/tree/master/rfc6979"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "rgb",
+      "version": "0.8.53",
+      "license": "MIT",
+      "source": "https://github.com/kornelski/rust-rgb"
     },
     {
       "ecosystem": "cargo",
@@ -3966,6 +4071,13 @@
       "version": "1.3.1",
       "license": "MIT",
       "source": "https://github.com/3Hren/msgpack-rust"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "roxmltree",
+      "version": "0.21.2",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/RazrFalcon/roxmltree"
     },
     {
       "ecosystem": "cargo",
@@ -4494,6 +4606,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "simplecss",
+      "version": "0.2.2",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/linebender/simplecss"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "siphasher",
       "version": "1.0.3",
       "license": "MIT/Apache-2.0",
@@ -4501,10 +4620,24 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "skrifa",
+      "version": "0.49.0",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/googlefonts/fontations"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "slab",
       "version": "0.4.12",
       "license": "MIT",
       "source": "https://github.com/tokio-rs/slab"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "slotmap",
+      "version": "1.1.1",
+      "license": "Zlib",
+      "source": "https://github.com/orlp/slotmap"
     },
     {
       "ecosystem": "cargo",
@@ -4627,6 +4760,13 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "strict-num",
+      "version": "0.1.1",
+      "license": "MIT",
+      "source": "https://github.com/RazrFalcon/strict-num"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "string_cache",
       "version": "0.9.0",
       "license": "MIT OR Apache-2.0",
@@ -4673,6 +4813,13 @@
       "version": "2.6.1",
       "license": "BSD-3-Clause",
       "source": "https://github.com/dalek-cryptography/subtle"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "svgtypes",
+      "version": "0.16.2",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/linebender/svgtypes"
     },
     {
       "ecosystem": "cargo",
@@ -4946,6 +5093,20 @@
       "version": "2.0.2",
       "license": "CC0-1.0",
       "source": "https://crates.io/crates/tiny-keccak/2.0.2"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "tiny-skia",
+      "version": "0.12.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/linebender/tiny-skia"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "tiny-skia-path",
+      "version": "0.12.0",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/linebender/tiny-skia/tree/master/path"
     },
     {
       "ecosystem": "cargo",
@@ -5292,10 +5453,24 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "unicode-script",
+      "version": "0.5.9",
+      "license": "MIT OR Apache-2.0",
+      "source": "https://github.com/unicode-rs/unicode-script"
+    },
+    {
+      "ecosystem": "cargo",
       "name": "unicode-segmentation",
       "version": "1.13.3",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/unicode-rs/unicode-segmentation"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "unicode-vo",
+      "version": "0.1.0",
+      "license": "MIT/Apache-2.0",
+      "source": "https://github.com/RazrFalcon/unicode-vo"
     },
     {
       "ecosystem": "cargo",
@@ -5338,6 +5513,13 @@
       "version": "0.3.0",
       "license": "MIT",
       "source": "https://github.com/denoland/rust-urlpattern"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "usvg",
+      "version": "0.50.0",
+      "license": "Apache-2.0 OR MIT",
+      "source": "https://github.com/linebender/resvg"
     },
     {
       "ecosystem": "cargo",
@@ -6080,6 +6262,13 @@
       "version": "0.13.6",
       "license": "MIT/Apache-2.0",
       "source": "https://github.com/RazrFalcon/xmlparser"
+    },
+    {
+      "ecosystem": "cargo",
+      "name": "xmlwriter",
+      "version": "0.1.0",
+      "license": "MIT",
+      "source": "https://github.com/RazrFalcon/xmlwriter"
     },
     {
       "ecosystem": "cargo",

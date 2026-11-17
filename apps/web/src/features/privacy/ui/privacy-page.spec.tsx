@@ -124,6 +124,19 @@ describe('隐私说明', () => {
     expect(privacyResources['zh-CN']['privacy.delete.removed']).toMatch(/你分享的一段段对话/u);
   });
 
+  it('照实说分享链接的预览图只画本来公开的、不画说的话（specs/redesign/project-rooms.md 的 3P-8a）', () => {
+    renderPage();
+
+    expect(screen.getByText(/comes with a preview image that our server draws/u)).toBeVisible();
+    const english = privacyResources.en['privacy.readers.publicRooms.text'];
+    expect(english).toMatch(/never what’s said/u);
+    expect(english).toMatch(/in memory for 10 minutes/u);
+    const chinese = privacyResources['zh-CN']['privacy.readers.publicRooms.text'];
+    expect(chinese).toMatch(/带一张我们的服务器画的预览图/u);
+    expect(chinese).toMatch(/不画说的话/u);
+    expect(chinese).toMatch(/画好的在服务器内存里留 10 分钟/u);
+  });
+
   it('照实说按粗地区汇总使用的总数，不再说不收集使用统计', () => {
     renderPage();
 
