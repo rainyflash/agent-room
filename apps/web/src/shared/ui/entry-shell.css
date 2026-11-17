@@ -47,14 +47,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  color: var(--color-ink);
-  background: var(--ar-surface-muted);
+  color: var(--ar-accent-ink);
+  background: var(--ar-accent-soft);
 }
 .entry-card__icon svg {
   width: 22px;
   height: 22px;
 }
 .entry-card--alert .entry-card__icon {
+  color: var(--color-alert);
   background: var(--ar-danger-soft);
 }
 .entry-card h1 {

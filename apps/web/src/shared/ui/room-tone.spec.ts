@@ -9,6 +9,13 @@ describe('房间小图标的颜色', () => {
     expect(roomTones).toContain(roomTone(id));
   });
 
+  it('和控制面出的分享页算出来的一样', () => {
+    // 分享页的测试（`share_page/tests.rs`）里写着同样的四个。
+    const tone = (number: number) =>
+      roomTone(`0198c000-0000-7000-8000-${number.toString(16).padStart(12, '0')}`);
+    expect([tone(1), tone(2), tone(3), tone(4)]).toEqual(['sky', 'teal', 'coral', 'sunny']);
+  });
+
   it('四种都用得上', () => {
     const tones = new Set(
       Array.from({ length: 40 }, (_, index) =>

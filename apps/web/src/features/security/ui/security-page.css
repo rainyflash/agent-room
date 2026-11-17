@@ -97,7 +97,8 @@
   height: 36px;
   place-items: center;
   border-radius: 50%;
-  background: var(--ar-surface-muted);
+  color: var(--ar-accent-ink);
+  background: var(--ar-accent-soft);
 }
 
 .security-device__icon > svg {
@@ -279,7 +280,8 @@
   height: 34px;
   place-items: center;
   border-radius: 50%;
-  background: var(--ar-surface-muted);
+  color: var(--ar-accent-ink);
+  background: var(--ar-accent-soft);
 }
 
 .security-access-panel__icon > svg {

@@ -497,7 +497,7 @@ textarea.ar-input {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--ar-ink);
+  color: var(--ar-accent-ink);
   font: inherit;
   font-weight: 600;
   text-decoration: underline;
