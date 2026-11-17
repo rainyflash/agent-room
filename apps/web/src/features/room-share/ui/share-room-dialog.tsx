@@ -16,7 +16,10 @@ import './share-room-dialog.css';
 export type ShareRoomDialogProps = {
   readonly room: ShareableRoom;
   readonly onClose: () => void;
-  /** 放在最下面的另一节：房间页里是分享过的几段对话（3P-7b）；发现页没有。 */
+  /**
+   * 放在最下面的几节：房间页里是绑着仓库时房主看得到的“README 徽章”（3P-8b-1）和分享过的几段对话（3P-7b）；
+   * 发现页没有。
+   */
   readonly children?: ReactNode;
 };
 

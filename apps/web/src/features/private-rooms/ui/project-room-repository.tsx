@@ -403,20 +403,39 @@ function gone(failure: Failure): boolean {
 }
 
 function RepositoryLine({ label, text }: { readonly label: string; readonly text: string }) {
-  const { t } = useTranslation();
   return (
     <div className="room-repository__line">
       <span className="room-repository__label">{label}</span>
-      <CopyBlock
-        copiedLabel={t('projectRooms.copied')}
-        copyLabel={t('projectRooms.copy')}
-        failedLabel={t('projectRooms.copyFailed')}
-        size="compact"
-        text={text}
-        textLabel={label}
-        tone="quiet"
-      />
+      <RepositoryLineCopy text={text} textLabel={label} />
     </div>
+  );
+}
+
+/**
+ * 一行要放进仓库的字（徽章、`AGENTS.md` 那一行）和复制按钮，长的在框里折行。设置里这一组和房间“分享”里的
+ * “README 徽章”（`project-room-badge.tsx`）共用；按钮默认写“复制”。
+ */
+export function RepositoryLineCopy({
+  copyLabel,
+  text,
+  textLabel,
+}: {
+  readonly copyLabel?: string;
+  readonly text: string;
+  readonly textLabel: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <CopyBlock
+      className="room-repository__copy"
+      copiedLabel={t('projectRooms.copied')}
+      copyLabel={copyLabel ?? t('projectRooms.copy')}
+      failedLabel={t('projectRooms.copyFailed')}
+      size="compact"
+      text={text}
+      textLabel={textLabel}
+      tone="quiet"
+    />
   );
 }
 
