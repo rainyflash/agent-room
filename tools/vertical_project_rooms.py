@@ -1,16 +1,19 @@
-"""项目房间的无头验收（`specs/redesign/project-rooms.md` 的 3P-9a、3P-9b-1）。
+"""项目房间的无头验收（`specs/redesign/project-rooms.md` 的 3P-9a、3P-9b-1、3P-9b-2）。
 
 本机回环地址上起一个假的 GitHub（控制面只在 `AGENT_ROOM_ACCEPTANCE_GITHUB_ADDRESS` 配了回环地址时连它，
 见 `vertical.vertical_control_plane_environment`），走一遍：命令行在仓库目录里认领、写 `AGENTS.md`；
 假 GitHub 放上那一行以后，本机 MCP 等到认上、进这间房说话；`/gh/` 页和徽章；访客看页面、看徽章都不读
 GitHub（3P-9a）。接着是分享页的实况和读不到的几条路（3P-9b-1）：不登录看 `/r/<码>/live`，房主在网页上
-关掉、再打开，改成要申请；私密的房间、加密的公开房间开不了（project-room-live.e2e.ts）。一段对话是 3P-9b-2。
+关掉、再打开，改成要申请；私密的房间、加密的公开房间开不了（project-room-live.e2e.ts）。再打开以后、改成
+要申请以前，房主在对话里分享一段，不登录打开 `/r/<码>/s/<段码>`；开头早于开实况的被拒；在房间的“分享”里
+删掉一段，改成要申请（实况关了）以后留着的那段也打不开（3P-9b-2）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from html import unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -41,18 +44,35 @@ ONLINE = re.compile(r">\d+\+? online<")
 ONLINE_ZH = re.compile(r">\d+\+? 在线<")
 LIVE_SPEC = "project-room-live.e2e.ts"
 # 实况那一轮和网页用例靠这几个文件对步子：网页关掉了实况、Agent 在关着时说过了、网页再打开了、
-# 这边看到再打开以后的那句了、网页把房间改成要申请了。
+# 这边看到再打开以后的那句了（Agent 接着说完了要分享的那一段，文件里写着那几句）、网页分享了两段
+# （文件里写着链接）、这边打开过了、网页删掉了一段、这边看到它打不开了、网页把房间改成要申请了。
 LIVE_STEPS: tuple[tuple[str, Path], ...] = (
     ("OFF", v.VERTICAL_ROOT / "project-live-off.json"),
     ("SAID_OFF", v.VERTICAL_ROOT / "project-live-said-off.json"),
     ("ON", v.VERTICAL_ROOT / "project-live-on.json"),
     ("SEEN_ON", v.VERTICAL_ROOT / "project-live-seen-on.json"),
+    ("SHARED", v.VERTICAL_ROOT / "project-live-shared.json"),
+    ("SEEN_SHARED", v.VERTICAL_ROOT / "project-live-seen-shared.json"),
+    ("DELETED", v.VERTICAL_ROOT / "project-live-deleted.json"),
+    ("SEEN_DELETED", v.VERTICAL_ROOT / "project-live-seen-deleted.json"),
     ("REQUEST", v.VERTICAL_ROOT / "project-live-request.json"),
 )
 LIVE_STEP = dict(LIVE_STEPS)
 # 不放实况以后，`/live` 最多 5 秒还按上次查到的回答（`RoomLiveWatch` 的 `ELIGIBILITY_TTL_MS`）。
 LIVE_GONE_SECONDS = 30
 LIVE_SHOWN_SECONDS = 90
+# 一段对话那一页按两个码查到的在内存里留 5 秒（`RoomExcerptPageLookup`）：删掉、关了实况以后最多再放这么久。
+EXCERPT_GONE_SECONDS = 30
+# 网页给的一段对话的链接：`https://<裸域>/r/<分享码>/s/<段码>`。
+EXCERPT_URL = re.compile(r"https?://[^/\s]+/r/([A-Za-z0-9]{6})/s/([A-Za-z0-9]{8})")
+# 一段对话那一页（`share_page/excerpt.rs`）上的每一句和里面的名字、是谁的 Agent、正文。不公开的、只有附件的
+# 那一行是 `share-live-text share-live-text--quiet`，不算正文。
+EXCERPT_MESSAGE = re.compile(r'<li class="share-live-message">(.*?)</li>', re.DOTALL)
+EXCERPT_NAME = re.compile(r'<span class="share-live-name">(.*?)</span>', re.DOTALL)
+EXCERPT_KIND = re.compile(r'<span class="share-live-kind">(.*?)</span>', re.DOTALL)
+EXCERPT_TEXT = re.compile(r'<p class="share-live-text">(.*?)</p>', re.DOTALL)
+# 英文的“谁的 Agent”（`render.rs` 的 `agent_of`）。
+AGENT_OF = re.compile(r"(.+)’s agent")
 
 
 class FakeGithub:
@@ -108,9 +128,10 @@ class FakeGithub:
             return list(self._paths)
 
 
-def get(path: str) -> tuple[int, str, str]:
+def get(path: str, *, language: str | None = None) -> tuple[int, str, str]:
     """不登录、不带 Cookie 地读控制面的一个公开地址：状态码、正文和 Content-Type。"""
-    request = Request(f"{CONTROL_PLANE}{path}", method="GET")
+    headers = {} if language is None else {"Accept-Language": language}
+    request = Request(f"{CONTROL_PLANE}{path}", method="GET", headers=headers)
     try:
         with urlopen(request, timeout=30) as response:
             return response.status, response.read().decode("utf-8"), response.headers.get("Content-Type", "")
@@ -372,6 +393,156 @@ def require_repository_page(project_room: ProjectRoom, *, live: bool) -> None:
         raise v.VerticalFailure(f"/gh/ 页上{state}实况那一块。")
 
 
+@dataclass(frozen=True)
+class Said:
+    """本机 Agent 在房间里说的一句：事件 ID 和正文。"""
+
+    event_id: str
+    text: str
+
+    def payload(self) -> dict[str, str]:
+        return {"eventId": self.event_id, "text": self.text}
+
+
+def write_step(path: Path, payload: Mapping[str, object] | None = None) -> None:
+    """写下这一步：先写旁边的临时文件再换名，网页那边看到文件时内容已经写全了。"""
+    staging = path.with_name(f"{path.name}.tmp")
+    staging.write_text(json.dumps(dict(payload or {}), ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(staging, path)
+
+
+def excerpt_path(url: str, code: str) -> str:
+    """网页给的一段对话的链接换成控制面上的地址（控制面就是裸域上 `/r/*` 转去的地方）；得在这间房的分享链接下面。"""
+    match = EXCERPT_URL.fullmatch(url)
+    if match is None:
+        raise v.VerticalFailure("一段对话的链接不是 /r/<码>/s/<段码>。")
+    if match.group(1) != code:
+        raise v.VerticalFailure("一段对话的链接不在这间房的分享链接下面。")
+    return f"/r/{match.group(1)}/s/{match.group(2)}"
+
+
+def excerpt_author(label: str | None) -> tuple[str, str | None]:
+    """名字旁边那一小块（英文）换成实况里的说法：人没有这一块，网络 Agent、没写主人的 Agent、谁的 Agent。"""
+    if label is None:
+        return "person", None
+    if label == "Network agent":
+        return "networkAgent", None
+    if label == "Agent":
+        return "agent", None
+    match = AGENT_OF.fullmatch(label)
+    if match is None:
+        raise v.VerticalFailure("一段对话那一页上名字旁边写的不是“谁的 Agent”。")
+    return "agent", match.group(1)
+
+
+def excerpt_lines(html: str) -> list[LiveLine]:
+    """一段对话那一页（英文）上的每一句：名字、是谁的 Agent、正文（不公开的、只有附件的没有正文）。"""
+    lines = []
+    for item in EXCERPT_MESSAGE.findall(html):
+        name = EXCERPT_NAME.search(item)
+        if name is None:
+            raise v.VerticalFailure("一段对话那一页上有一句没写名字。")
+        kind = EXCERPT_KIND.search(item)
+        kind_name, owner = excerpt_author(None if kind is None else unescape(kind.group(1)))
+        text = EXCERPT_TEXT.search(item)
+        lines.append(
+            LiveLine(
+                name=unescape(name.group(1)),
+                kind=kind_name,
+                owner=owner,
+                text="" if text is None else unescape(text.group(1)),
+            )
+        )
+    return lines
+
+
+def require_excerpt_page(html: str, project_room: ProjectRoom, stretch: Sequence[Said]) -> None:
+    """一段对话那一页：房间名，“A conversation · N messages”，正好是那几句、照先后，每句都是验收账号的本机
+    Agent 说的（名字带编号、写着主人），下面“去看这间房”回这间房的分享页。"""
+    if f"<h1>{project_room.repository}</h1>" not in html:
+        raise v.VerticalFailure("一段对话那一页上没有房间名。")
+    count = "1 message" if len(stretch) == 1 else f"{len(stretch)} messages"
+    if f"A conversation · {count} · " not in html:
+        raise v.VerticalFailure(f"一段对话那一页上该写着“{count}”。")
+    if f'/r/{project_room.code}"' not in html:
+        raise v.VerticalFailure("一段对话那一页上没有回这间房分享页的链接。")
+    lines = excerpt_lines(html)
+    if [line.text for line in lines] != [said.text for said in stretch]:
+        raise v.VerticalFailure("一段对话那一页上该正好是分享的那几句，照先后，前后的都不在。")
+    for said in stretch:
+        require_said_by_agent(lines, said.text)
+
+
+def read_excerpt(path: str) -> tuple[int, str]:
+    """不登录打开一段对话那一页（英文）：状态码和 HTML。"""
+    status, body, content_type = get(path, language="en")
+    if not content_type.startswith("text/html"):
+        raise v.VerticalFailure(f"一段对话那一页回的不是 HTML（{status}）：{content_type}。")
+    return status, body
+
+
+def require_excerpt_shown(path: str, project_room: ProjectRoom, stretch: Sequence[Said]) -> None:
+    status, body = read_excerpt(path)
+    if status != 200:
+        raise v.VerticalFailure(f"分享的一段该打得开，回了 {status}。")
+    require_excerpt_page(body, project_room, stretch)
+
+
+def wait_for_excerpt_gone(path: str, unknown: str) -> None:
+    """等到这一段那一页和没有的段码回一模一样的 404：按两个码查到的最多再用 5 秒。"""
+    deadline = time.monotonic() + EXCERPT_GONE_SECONDS
+    while True:
+        status, body = read_excerpt(path)
+        if status == 404:
+            if body != unknown:
+                raise v.VerticalFailure("打不开的一段该和没有的段码回同一页 404，不说是哪一种。")
+            return
+        # 429 是这个来源一分钟里打开得太多（和分享页算在一起），等一等接着看。
+        if status not in (200, 429):
+            raise v.VerticalFailure(f"等这一段打不开时回了 {status}。")
+        if time.monotonic() >= deadline:
+            raise v.VerticalFailure(f"{EXCERPT_GONE_SECONDS} 秒内这一段还打得开。")
+        time.sleep(2)
+
+
+def say_stretch(agent: v.McpAgentSession, project_room: ProjectRoom, opening: Said, nonce: str) -> list[Said]:
+    """要分享的那一段：再打开实况以后那句，Agent 接着再说两句；等到最后一句也在实况里。"""
+    stretch = [opening]
+    for text in (f"Second line of the shared stretch ({nonce}).", f"Last line of the shared stretch ({nonce})."):
+        stretch.append(Said(event_id=v.say_in_room(agent, project_room.room_id, text), text=text))
+    lines = wait_for_live(project_room.code, stretch[-1].text)
+    for said in stretch:
+        require_said_by_agent(lines, said.text)
+    return stretch
+
+
+def verify_excerpts(
+    project_room: ProjectRoom, browser: v.BrowserRun, stretch: Sequence[Said], nonce: str
+) -> tuple[str, str]:
+    """一段对话（3P-9b-2）：网页在对话里选了这一段分享，又经接口把最后一句单独分享（开头早于开实况的那次被拒，
+    网页那边查）。不登录打开两段都是那几句；网页在房间的“分享”里删掉第一段：它和没有的段码回同一页 404，
+    第二段还在。回第二段的地址和没有的段码那一页，改成要申请以后接着看。"""
+    shared = v.wait_for_browser_step(
+        LIVE_STEP["SHARED"], browser, timeout_seconds=600, failure="网页 10 分钟内没在对话里分享一段。"
+    )
+    shown = excerpt_path(v.require_text(shared.get("shown"), "对话里分享的一段"), project_room.code)
+    kept = excerpt_path(v.require_text(shared.get("kept"), "经接口分享的一段"), project_room.code)
+    require_excerpt_shown(shown, project_room, stretch)
+    require_excerpt_shown(kept, project_room, stretch[-1:])
+    status, unknown = read_excerpt(f"/r/{project_room.code}/s/Qq{nonce[-6:]}")
+    if status != 404:
+        raise v.VerticalFailure(f"没有的段码该回 404，回了 {status}。")
+    write_step(LIVE_STEP["SEEN_SHARED"])
+
+    v.wait_for_browser_step(
+        LIVE_STEP["DELETED"], browser, timeout_seconds=300, failure="网页 5 分钟内没在房间的“分享”里删掉那一段。"
+    )
+    wait_for_excerpt_gone(shown, unknown)
+    require_excerpt_shown(kept, project_room, stretch[-1:])
+    write_step(LIVE_STEP["SEEN_DELETED"])
+    return kept, unknown
+
+
 def live_browser_environment(
     environment: Mapping[str, str], *, project_catalog: str, former_public_room: str
 ) -> dict[str, str]:
@@ -400,8 +571,9 @@ def verify_live_view(
 ) -> str:
     """分享页放实况（3P-9b-1）：项目房间建好就开着，不登录在 `/r/<码>/live` 看得到 Agent 刚才那句（名字、
     主人），`/gh/` 页上有那一块。房主在网页上关掉：5 秒多一点就 404、那一块没了；关着时 Agent 说一句。再打开：
-    之后说的那句在，打开之前的两句都不在。房主改成要申请：实况自己关了、开不了（网页那边查），这边又是 404。
-    网页那边接着看私密的房间、加密的公开房间开不了。回再打开以后那一句的事件 ID。"""
+    之后说的那句在，打开之前的两句都不在。Agent 接着说完一段，网页分享、删掉（3P-9b-2，`verify_excerpts`）。
+    房主改成要申请：实况自己关了、开不了（网页那边查），这边又是 404，留着的那一段也打不开。网页那边接着看
+    私密的房间、加密的公开房间开不了。回再打开以后那一句的事件 ID。"""
     for _, path in LIVE_STEPS:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.unlink(missing_ok=True)
@@ -419,8 +591,8 @@ def verify_live_view(
     wait_until_not_live(project_room.code)
     require_repository_page(project_room, live=False)
     said_off = f"Said while the live view was off ({nonce})."
-    v.say_in_room(agent, project_room.room_id, said_off)
-    LIVE_STEP["SAID_OFF"].write_text("{}\n", encoding="utf-8")
+    said_off_event_id = v.say_in_room(agent, project_room.room_id, said_off)
+    write_step(LIVE_STEP["SAID_OFF"])
 
     v.wait_for_browser_step(
         LIVE_STEP["ON"], browser, timeout_seconds=300, failure="网页 5 分钟内没把实况再打开。"
@@ -432,13 +604,25 @@ def verify_live_view(
     if {first_line, said_off} & {line.text for line in lines}:
         raise v.VerticalFailure("再打开实况以后，打开之前说的话（关之前的、关着时的）不该在实况里。")
     require_repository_page(project_room, live=True)
-    LIVE_STEP["SEEN_ON"].write_text("{}\n", encoding="utf-8")
+    stretch = say_stretch(agent, project_room, Said(event_id=event_id, text=said_on), nonce)
+    # 网页从再打开以后那句选到最后一句；关着时说的那句没有“分享这一段”，经接口分享也被拒。
+    write_step(
+        LIVE_STEP["SEEN_ON"],
+        {
+            "before": Said(event_id=said_off_event_id, text=said_off).payload(),
+            "first": stretch[0].payload(),
+            "last": stretch[-1].payload(),
+            "count": len(stretch),
+        },
+    )
+    kept, unknown = verify_excerpts(project_room, browser, stretch, nonce)
 
     v.wait_for_browser_step(
         LIVE_STEP["REQUEST"], browser, timeout_seconds=300, failure="网页 5 分钟内没把项目房间改成要申请。"
     )
-    # 网页接着把房间改回直接进：实况不会自己回来，下面两样改回以后也一样。
+    # 网页接着把房间改回直接进：实况不会自己回来，下面两样改回以后也一样。实况一关，分享过的段跟着删了。
     wait_until_not_live(project_room.code)
+    wait_for_excerpt_gone(kept, unknown)
     require_repository_page(project_room, live=False)
     browser.finish(timeout_seconds=600)
     return event_id
@@ -453,8 +637,8 @@ def verify_project_rooms(
 ) -> dict[str, str]:
     """项目房间（3P-9a）：验收账号在仓库目录里用命令行认领，仓库（假 GitHub）里放上那一行以后，他的本机 Agent
     经 MCP 等到认上、进这间房说一句；`/gh/` 页和徽章对得上；只有核对时读了 GitHub，读的只有那两个文件。
-    接着是分享页的实况和读不到的几条路（3P-9b-1，`verify_live_view`）：`former_public_room` 是公开房间那一轮
-    验收账号建的、最后改回私密的房间。"""
+    接着是分享页的实况和读不到的几条路（3P-9b-1，`verify_live_view`），中间分享一段对话（3P-9b-2）：
+    `former_public_room` 是公开房间那一轮验收账号建的、最后改回私密的房间。"""
     nonce = v.new_uuid_v7()[-8:]
     repository = f"{OWNER}/hello-{nonce}"
     first_line = f"Hello from the project room ({nonce})."
@@ -484,7 +668,7 @@ def verify_project_rooms(
                 former_public_room=former_public_room,
             )
         if github.paths() != reads:
-            raise v.VerticalFailure("访客看 /gh/ 页、徽章和实况不该去读 GitHub。")
+            raise v.VerticalFailure("访客看 /gh/ 页、徽章、实况和一段对话不该去读 GitHub。")
     return {
         "projectRoomCatalogId": catalog_id,
         "projectRoomEventId": event_id,
