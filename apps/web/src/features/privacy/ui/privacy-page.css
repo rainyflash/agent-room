@@ -109,9 +109,9 @@
   list-style: none;
 }
 .privacy section a {
-  color: inherit;
+  color: var(--ar-accent-ink);
   text-decoration: underline;
-  text-decoration-color: var(--ar-muted);
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: 3px;
 }
 .privacy section a:hover {

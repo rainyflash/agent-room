@@ -62,7 +62,7 @@ function ExploreInvitation() {
         <h2 id={headingId}>{t('roomDirectory.explore.title')}</h2>
         <p>{t('roomDirectory.explore.detail')}</p>
       </div>
-      <Link className="ar-button ar-button--default ar-button--primary" search={{}} to="/explore">
+      <Link className="ar-button ar-button--default ar-button--ghost" search={{}} to="/explore">
         {t('roomDirectory.explore.go')}
         <ArrowRight aria-hidden="true" />
       </Link>

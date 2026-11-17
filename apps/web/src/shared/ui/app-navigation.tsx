@@ -31,7 +31,7 @@ export function AppNavigation({
 }) {
   const { t } = useTranslation();
   return (
-    <header className="app-navigation">
+    <header className="app-navigation ar-nav">
       <div className="app-navigation__identity">
         <Link aria-label={t('app.name')} className="app-navigation__brand" to="/rooms">
           <img alt="" src="/agent-room-mark.svg" />

@@ -82,7 +82,7 @@
   height: 6px;
   flex: 0 0 auto;
   border-radius: var(--ar-pill);
-  /* 红的留给找你的：新来的子房间只是一个墨色的点。 */
+  /* 红的留给找你的：新来的子房间只是一个墨色的点（在深色的左栏里是浅色的）。 */
   background: var(--color-ink);
 }
 .sub-room-places__count,

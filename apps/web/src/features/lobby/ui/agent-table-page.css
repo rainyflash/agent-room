@@ -115,7 +115,7 @@
   background: var(--ar-surface-muted);
 }
 .agent-page__filter > button[aria-pressed='true'] {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 

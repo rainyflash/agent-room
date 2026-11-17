@@ -44,7 +44,7 @@
 }
 
 .room-repository__state a {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   text-underline-offset: 3px;
 }
 

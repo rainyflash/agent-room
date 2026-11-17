@@ -15,26 +15,50 @@
 }
 
 /*
- * 白底黑字，颜色留给机器人（specs/redesign/room-page.md 的“风格”一节）。
- * 界面自己只有黑、白、灰：底是白的，左栏和须知这类垫一层很浅的灰，悬停和浅底的按钮再深一档，
- * 选中的再深一档。有颜色的只有三样：机器人、表示“在等消息”的绿点、表示“找你”的红。
+ * 深色导航，颜色跟着人（specs/redesign/room-page.md 的“风格”一节，第四稿）。
+ * 内容区白底黑字，浅底、悬停和选中带一点青。一种颜色一个意思，别混着用：
+ *   深青是导航（--ar-nav-*）：房间里面是左栏，别的页面是顶栏；
+ *   明黄是一页一个的主按钮，和导航里“你在这儿”的记号（--ar-primary、--ar-nav-mark）；
+ *   青绿是选中的那一项、链接、焦点圈和打了勾的框（--ar-accent-*）；
+ *   机器人的颜色是“谁”（--ar-tone-* 写名字，--ar-tint-* 垫底）；
+ *   绿点是在等消息，红是找你。
  * 不画框：栏和栏之间一条细线（--ar-line），有边的只有输入框、对话框和菜单（--ar-border）。
  * 浮着的东西（菜单、对话框、输入框）一层很淡的影子。
  */
 :root {
   --ar-canvas: #ffffff;
-  --ar-surface: #fafafa;
-  --ar-surface-muted: #f4f4f5;
-  --ar-selected: #ececef;
+  --ar-surface: #f6f8f8;
+  --ar-surface-muted: #eef2f1;
+  --ar-selected: #dff1ed;
+  /* 次要的字：在浅底、悬停的底和选中的底上都过 4.5:1，改它要重算。 */
   --ar-muted: #686873;
   /* 更淡的一档只给占位的字和图标，不拿来写要读的字（对比度不到 4.5:1）。 */
   --ar-faint: #a4a4ae;
   --ar-line: #ededf0;
   --ar-border: #dcdce1;
-  /* 焦点圈、勾选框、选中的标签：墨色。 */
-  --ar-accent: #18181b;
-  --ar-accent-hover: #3f3f46;
-  --ar-accent-soft: #f4f4f5;
+  /* 青绿：焦点圈、打了勾的框、选中的标签下面那条线用 --ar-accent；要读的字用深一档的 --ar-accent-ink。 */
+  --ar-accent: #0f766e;
+  --ar-accent-hover: #0b5f58;
+  --ar-accent-soft: #e2f3f0;
+  --ar-accent-ink: #0b5f58;
+  --ar-on-accent: #ffffff;
+  /* 明黄：主按钮和发送。上面只放墨色的字和图标；白天夜间一样。 */
+  --ar-primary: #ffc53d;
+  --ar-primary-hover: #ffb81f;
+  --ar-on-primary: #1d1a05;
+  /*
+   * 深青：导航。里面“你在的那一项”是一层半透明的白，字用 --ar-nav-ink，记号用 --ar-nav-mark。
+   * 次要的字、绿字、红字的值是照“压在那一层上也过 4.5:1”定的，改它们或者改那一层要重算。
+   */
+  --ar-nav: #12302e;
+  --ar-nav-ink: #eef6f4;
+  --ar-nav-muted: #a9c3bf;
+  --ar-nav-hover: rgb(255 255 255 / 7%);
+  --ar-nav-selected: rgb(255 255 255 / 14%);
+  --ar-nav-line: rgb(255 255 255 / 9%);
+  --ar-nav-mark: #ffc53d;
+  --ar-nav-success: #3ecf8e;
+  --ar-nav-alert: #ffa3a6;
   /* 绿只表示“在等消息”：点和圈用 --ar-success；要读的字用深一档的 --ar-success-ink。 */
   --ar-success: #1fa672;
   --ar-success-ink: #147a52;
@@ -46,10 +70,19 @@
   --ar-warning: #895919;
   --ar-warning-soft: #fff8e1;
   --ar-danger-soft: #fdeceb;
-  /* 机器人垫的浅底：方、圆、胶囊三种机器人各一种。 */
-  --ar-tint-teal: #e2f3ef;
-  --ar-tint-coral: #fde9e5;
-  --ar-tint-sunny: #fff2cc;
+  /*
+   * 机器人的颜色：方、圆、胶囊三种机器人各一种，天蓝只给房间的小图标凑第四种。
+   * --ar-tone-* 写名字和小图标的记号，--ar-tint-* 是垫的底。每一对是一起定的
+   * （字压在自己的底上 4.5:1 以上），改深浅要两个一起重算。
+   */
+  --ar-tone-teal: #0b7268;
+  --ar-tone-coral: #b83a25;
+  --ar-tone-sunny: #8a5708;
+  --ar-tone-sky: #1d5fa8;
+  --ar-tint-teal: #c5efe5;
+  --ar-tint-coral: #ffdfd6;
+  --ar-tint-sunny: #ffe494;
+  --ar-tint-sky: #d3e6fb;
   --ar-control-radius: 8px;
   --ar-radius: 12px;
   --ar-panel-radius: 16px;
@@ -80,30 +113,54 @@
   --ar-paper-18: color-mix(in srgb, var(--color-paper) 18%, transparent);
   --ar-paper-10: color-mix(in srgb, var(--color-paper) 10%, transparent);
   --ar-shadow-short: var(--ar-float-shadow);
+  /*
+   * 内容区的原值留一份：深色导航里把上面几个令牌换成了导航的（.ar-nav），
+   * 从导航里弹出来的菜单和对话框拿这一份换回来。var() 在这里就算好了，夜间跟着变。
+   */
+  --ar-base-ink: var(--color-ink);
+  --ar-base-paper: var(--color-paper);
+  --ar-base-alert: var(--color-alert);
+  --ar-base-canvas: var(--ar-canvas);
+  --ar-base-surface: var(--ar-surface);
+  --ar-base-surface-muted: var(--ar-surface-muted);
+  --ar-base-selected: var(--ar-selected);
+  --ar-base-muted: var(--ar-muted);
+  --ar-base-faint: var(--ar-faint);
+  --ar-base-line: var(--ar-line);
+  --ar-base-border: var(--ar-border);
+  --ar-base-accent: var(--ar-accent);
+  --ar-base-accent-ink: var(--ar-accent-ink);
+  --ar-base-accent-soft: var(--ar-accent-soft);
+  --ar-base-success-ink: var(--ar-success-ink);
+  --ar-base-coral: var(--ar-coral);
   color-scheme: light;
 }
 
 /*
- * 夜间：跟随系统设置。组件只换令牌、不用逐个改规则；主按钮反过来，浅底深字。
+ * 夜间：跟随系统设置。组件只换令牌、不用逐个改规则；主按钮白天夜间都是明黄。
  * 游戏场景画在画布上读不到这些变量，保持白天的配色。
  */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
     --color-ink: #ededf0;
-    --color-paper: #141416;
+    --color-paper: #121717;
     --color-alert: #ff6b70;
-    --ar-canvas: #0f0f11;
-    --ar-surface: #141416;
-    --ar-surface-muted: #1c1c1f;
-    --ar-selected: #27272b;
+    --ar-canvas: #0e1212;
+    --ar-surface: #121717;
+    --ar-surface-muted: #192020;
+    --ar-selected: #123631;
     --ar-muted: #a0a0ab;
     --ar-faint: #62626c;
-    --ar-line: #222226;
-    --ar-border: #34343a;
-    --ar-accent: #ededf0;
-    --ar-accent-hover: #d4d4d8;
-    --ar-accent-soft: #1c1c1f;
+    --ar-line: #1e2727;
+    --ar-border: #2d3938;
+    --ar-accent: #2fc9b6;
+    --ar-accent-hover: #5ad9c9;
+    --ar-accent-soft: #10302c;
+    --ar-accent-ink: #5ad9c9;
+    --ar-on-accent: #04211d;
+    --ar-nav: #0a1f1d;
+    --ar-nav-line: rgb(255 255 255 / 6%);
     --ar-success: #3ecf8e;
     --ar-success-ink: #3ecf8e;
     --ar-coral: #f2555a;
@@ -111,9 +168,14 @@
     --ar-warning: #f1c46e;
     --ar-warning-soft: #2a2512;
     --ar-danger-soft: #3a1d1f;
-    --ar-tint-teal: #14312d;
-    --ar-tint-coral: #3a1f1b;
-    --ar-tint-sunny: #3a3113;
+    --ar-tone-teal: #4fd6c3;
+    --ar-tone-coral: #ff9482;
+    --ar-tone-sunny: #f2c75c;
+    --ar-tone-sky: #8cc2f7;
+    --ar-tint-teal: #164a42;
+    --ar-tint-coral: #5a2a22;
+    --ar-tint-sunny: #57480f;
+    --ar-tint-sky: #173a5c;
     --ar-float-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 4px 16px rgb(0 0 0 / 30%);
     --ar-panel-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 40%);
     --ar-overlay-shadow: 0 2px 6px rgb(0 0 0 / 40%), 0 24px 64px rgb(0 0 0 / 55%);
@@ -176,8 +238,54 @@ summary {
 }
 
 /*
- * 按钮：一页一个黑色的（primary），别的是浅灰底（ghost）或者只有字（quiet）。
- * 危险的动作是浅灰底上的红字；发送和主按钮一样是黑的。
+ * 导航是一整块深青（房间里面的左栏、别的页面的顶栏都带 .ar-nav）。里面的东西不用逐个改：
+ * 在这个容器里把内容用的几个令牌换成导航的，字、次要的字、悬停、选中、线就都跟着变了。
+ * 只有导航栏自己是深的：从里面弹出来的菜单和对话框换回内容区的令牌。
+ */
+.ar-nav {
+  --color-ink: var(--ar-nav-ink);
+  --color-paper: var(--ar-nav);
+  --color-alert: var(--ar-nav-alert);
+  --ar-canvas: var(--ar-nav);
+  --ar-surface: var(--ar-nav);
+  --ar-surface-muted: var(--ar-nav-hover);
+  --ar-selected: var(--ar-nav-selected);
+  --ar-muted: var(--ar-nav-muted);
+  --ar-faint: var(--ar-nav-muted);
+  --ar-line: var(--ar-nav-line);
+  --ar-border: var(--ar-nav-line);
+  --ar-accent: var(--ar-nav-ink);
+  --ar-accent-ink: var(--ar-nav-ink);
+  --ar-accent-soft: var(--ar-nav-hover);
+  --ar-success-ink: var(--ar-nav-success);
+  --ar-coral: var(--ar-nav-alert);
+  color: var(--ar-nav-ink);
+  background: var(--ar-nav);
+}
+
+.ar-nav :is(dialog, [popover]) {
+  --color-ink: var(--ar-base-ink);
+  --color-paper: var(--ar-base-paper);
+  --color-alert: var(--ar-base-alert);
+  --ar-canvas: var(--ar-base-canvas);
+  --ar-surface: var(--ar-base-surface);
+  --ar-surface-muted: var(--ar-base-surface-muted);
+  --ar-selected: var(--ar-base-selected);
+  --ar-muted: var(--ar-base-muted);
+  --ar-faint: var(--ar-base-faint);
+  --ar-line: var(--ar-base-line);
+  --ar-border: var(--ar-base-border);
+  --ar-accent: var(--ar-base-accent);
+  --ar-accent-ink: var(--ar-base-accent-ink);
+  --ar-accent-soft: var(--ar-base-accent-soft);
+  --ar-success-ink: var(--ar-base-success-ink);
+  --ar-coral: var(--ar-base-coral);
+  color: var(--color-ink);
+}
+
+/*
+ * 按钮：一页一个明黄的（primary），别的是浅灰底（ghost）或者只有字（quiet）。
+ * 危险的动作是浅灰底上的红字；发送和主按钮一样是明黄的。
  */
 .ar-button {
   display: inline-flex;
@@ -222,13 +330,13 @@ summary {
 
 .ar-button--primary,
 .ar-button--send {
-  color: var(--color-paper);
-  background: var(--color-ink);
+  color: var(--ar-on-primary);
+  background: var(--ar-primary);
 }
 
 .ar-button--primary:not(:disabled):hover,
 .ar-button--send:not(:disabled):hover {
-  background: var(--ar-accent-hover);
+  background: var(--ar-primary-hover);
 }
 
 .ar-button--ghost:not(:disabled):hover,
@@ -636,7 +744,7 @@ summary {
 }
 
 .ar-segmented__option[aria-checked='true'] {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   background: var(--ar-canvas);
   box-shadow:
     0 0 0 1px var(--ar-line),

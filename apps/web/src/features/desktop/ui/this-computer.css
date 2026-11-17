@@ -114,7 +114,8 @@
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--ar-control-radius);
-  background: var(--ar-surface-muted);
+  color: var(--ar-accent-ink);
+  background: var(--ar-accent-soft);
 }
 
 .this-computer__icon > svg {
@@ -305,8 +306,8 @@
 }
 
 .this-computer__switch[aria-pressed='true'] {
-  background: var(--color-ink);
-  color: var(--color-paper);
+  background: var(--ar-accent);
+  color: var(--ar-on-accent);
 }
 
 .this-computer__switch:disabled {

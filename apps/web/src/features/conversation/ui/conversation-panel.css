@@ -104,12 +104,11 @@
   padding: 3px 0;
   border: 0;
   background: none;
-  color: var(--ar-muted);
+  color: var(--ar-accent-ink);
   font-size: 11px;
 }
 .conversation-topic-link:hover,
 .conversation-topic-link:focus-visible {
-  color: var(--ar-accent);
   text-decoration: underline;
 }
 .conversation-panel [data-conversation-message-id] {
@@ -164,7 +163,7 @@
   background: var(--ar-surface-muted);
 }
 .conversation-panel__scopes > button[aria-pressed='true'] {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
 }
 /* 没读的、冲着你来的有几条：红底的数字，红只表示“找你”。 */
@@ -543,10 +542,11 @@
 /* 正文里的地址：字的颜色不变，只加一条淡的下划线。长地址在哪儿都能折行。 */
 .chat-markdown__link {
   border-radius: 3px;
+  color: var(--ar-accent-ink);
   cursor: pointer;
   overflow-wrap: anywhere;
   text-decoration: underline;
-  text-decoration-color: var(--ar-muted);
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
   text-underline-offset: 3px;
 }
 .chat-markdown__link:hover {

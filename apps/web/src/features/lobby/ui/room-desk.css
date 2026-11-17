@@ -308,7 +308,7 @@
   background: var(--ar-surface);
 }
 .room-desk__rail {
-  border-right: 1px solid var(--ar-line);
+  border-right: 0;
 }
 .room-desk__side {
   border-left: 1px solid var(--ar-line);
@@ -372,8 +372,16 @@ a.room-desk__place {
   text-decoration: none;
 }
 .room-desk__place[aria-current='page'] {
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
   font-weight: 600;
+}
+.room-desk__place[aria-current='page'] > .ar-room-glyph {
+  color: inherit;
+}
+/* 左栏是深色的导航（.ar-nav）：你在的那一项前面的记号是明黄。收进下拉里时是浅底，照上面的来。 */
+.room-desk__rail .room-desk__place[aria-current='page'] > :is(.ar-room-glyph, svg) {
+  color: var(--ar-nav-mark);
 }
 .room-desk__place > .ar-room-glyph {
   flex: 0 0 auto;

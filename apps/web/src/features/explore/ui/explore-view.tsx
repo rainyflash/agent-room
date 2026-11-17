@@ -166,7 +166,7 @@ function ExploreGuestHeader({
 }) {
   const { t } = useTranslation();
   return (
-    <header className="app-navigation explore__guest-header">
+    <header className="app-navigation ar-nav explore__guest-header">
       <div className="app-navigation__identity">
         <Link aria-label={t('app.name')} className="app-navigation__brand" to="/">
           <img alt="" src="/agent-room-mark.svg" />

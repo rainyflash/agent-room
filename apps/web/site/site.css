@@ -1,7 +1,8 @@
 /*
  * agentroom.chat 静态网站的样式。令牌的值和 packages/ui-system/src/styles.css 一样（测试卡着），
- * 网站和应用看起来是一家：白底黑字，不画框，一页一个黑色的按钮。有颜色的只有画：首页那间房间、
- * 三扇门和对话里的机器人，它们的墨线和颜色是画自己的（--draw-*），不跟界面的令牌走。没有脚本也完整。
+ * 网站和应用看起来是一家：白底黑字，不画框，一页一个明黄的按钮，链接和选中是青绿（第四稿）。
+ * 网站没有应用那块深色的导航。首页那间房间、三扇门和对话里的机器人是画，它们的墨线和颜色是画自己的
+ * （--draw-*），不跟界面的令牌走。没有脚本也完整。
  */
 @font-face {
   font-family: 'Geist Variable';
@@ -18,15 +19,19 @@
   --color-ink: #18181b;
   --color-paper: #ffffff;
   --ar-canvas: #ffffff;
-  --ar-surface: #fafafa;
-  --ar-surface-muted: #f4f4f5;
-  --ar-selected: #ececef;
+  --ar-surface: #f6f8f8;
+  --ar-surface-muted: #eef2f1;
+  --ar-selected: #dff1ed;
   --ar-muted: #686873;
   --ar-faint: #a4a4ae;
   --ar-line: #ededf0;
   --ar-border: #dcdce1;
-  --ar-accent: #18181b;
-  --ar-accent-hover: #3f3f46;
+  --ar-accent: #0f766e;
+  --ar-accent-hover: #0b5f58;
+  --ar-accent-ink: #0b5f58;
+  --ar-primary: #ffc53d;
+  --ar-primary-hover: #ffb81f;
+  --ar-on-primary: #1d1a05;
   /* 画里的墨线和颜色。--draw-edge 是画和页面交界的那条线，夜间换成浅的才看得见。 */
   --draw-ink: #2a2733;
   --draw-edge: #2a2733;
@@ -50,17 +55,18 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-ink: #ededf0;
-    --color-paper: #141416;
-    --ar-canvas: #0f0f11;
-    --ar-surface: #141416;
-    --ar-surface-muted: #1c1c1f;
-    --ar-selected: #27272b;
+    --color-paper: #121717;
+    --ar-canvas: #0e1212;
+    --ar-surface: #121717;
+    --ar-surface-muted: #192020;
+    --ar-selected: #123631;
     --ar-muted: #a0a0ab;
     --ar-faint: #62626c;
-    --ar-line: #222226;
-    --ar-border: #34343a;
-    --ar-accent: #ededf0;
-    --ar-accent-hover: #d4d4d8;
+    --ar-line: #1e2727;
+    --ar-border: #2d3938;
+    --ar-accent: #2fc9b6;
+    --ar-accent-hover: #5ad9c9;
+    --ar-accent-ink: #5ad9c9;
     --draw-edge: #62626c;
     color-scheme: dark;
   }
@@ -95,9 +101,9 @@ img {
 }
 
 a {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   text-underline-offset: 0.18em;
-  text-decoration-color: var(--ar-border);
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   font-weight: 500;
 }
 
@@ -216,12 +222,12 @@ code {
 }
 
 .site-button--primary {
-  background: var(--color-ink);
-  color: var(--color-paper);
+  background: var(--ar-primary);
+  color: var(--ar-on-primary);
 }
 
 .site-button--primary:hover {
-  background: var(--ar-accent-hover);
+  background: var(--ar-primary-hover);
 }
 
 .site-button--large {
@@ -254,14 +260,18 @@ main.landing + .site-footer {
 .day {
   --color-ink: #18181b;
   --color-paper: #ffffff;
-  --ar-surface: #fafafa;
-  --ar-surface-muted: #f4f4f5;
-  --ar-selected: #ececef;
+  --ar-surface: #f6f8f8;
+  --ar-surface-muted: #eef2f1;
+  --ar-selected: #dff1ed;
   --ar-muted: #686873;
   --ar-line: #ededf0;
   --ar-border: #dcdce1;
-  --ar-accent: #18181b;
-  --ar-accent-hover: #3f3f46;
+  --ar-accent: #0f766e;
+  --ar-accent-hover: #0b5f58;
+  --ar-accent-ink: #0b5f58;
+  --ar-primary: #ffc53d;
+  --ar-primary-hover: #ffb81f;
+  --ar-on-primary: #1d1a05;
   color: var(--color-ink);
 }
 

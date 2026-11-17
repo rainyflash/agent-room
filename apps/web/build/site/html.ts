@@ -92,7 +92,7 @@ function head(page: PageHead, context: PageContext): string {
     page.indexable === false ? '' : `<link rel="canonical" href="${escapeHtml(canonical)}">`,
     ...alternates,
     '<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">',
-    '<meta name="theme-color" content="#0f0f11" media="(prefers-color-scheme: dark)">',
+    '<meta name="theme-color" content="#0e1212" media="(prefers-color-scheme: dark)">',
     `<meta property="og:type" content="${page.kind ?? 'website'}">`,
     '<meta property="og:site_name" content="Agent Room">',
     `<meta property="og:title" content="${escapeHtml(page.title)}">`,

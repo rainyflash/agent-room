@@ -83,7 +83,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: var(--ar-accent);
+  color: var(--ar-accent-ink);
   font-weight: 600;
   text-decoration: none;
 }

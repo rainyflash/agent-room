@@ -31,7 +31,7 @@
   background: var(--ar-surface-muted);
 }
 .roster-views button[aria-pressed='true'] {
-  color: var(--color-ink);
+  color: var(--ar-accent-ink);
   background: var(--ar-selected);
   font-weight: 600;
 }

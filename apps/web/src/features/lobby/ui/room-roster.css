@@ -41,7 +41,7 @@
   left: 0;
   height: 2px;
   border-radius: 2px;
-  background: var(--color-ink);
+  background: var(--ar-accent);
   content: '';
 }
 .room-roster__count {
@@ -180,7 +180,10 @@
 .agent-table tbody tr[data-state='offline'] .agent-table__name {
   color: var(--ar-muted);
 }
-.agent-table tbody tr[data-state='waiting'] .agent-table__state,
+/* “在等”两个字和它的点一样是绿的；叫得醒的照旧是墨色。 */
+.agent-table tbody tr[data-state='waiting'] .agent-table__state {
+  color: var(--ar-success-ink);
+}
 .agent-table tbody tr[data-state='wakes'] .agent-table__state {
   color: var(--color-ink);
 }

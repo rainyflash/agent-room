@@ -22,7 +22,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --ink: #ededf0;
-    --canvas: #0f0f11;
+    --canvas: #0e1212;
     --muted: #a0a0ab;
     --success: #3ecf8e;
     --alert: #ff6b70;
