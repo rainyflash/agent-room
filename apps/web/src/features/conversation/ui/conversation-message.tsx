@@ -14,7 +14,7 @@ import {
 import { useContext, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
-import { ActorAvatar } from '@/features/lobby/ui/avatars';
+import { ActorAvatar, actorTone } from '@/features/lobby/ui/avatars';
 import { useIsNetworkAgent, useNetworkAgentLabel } from '@/features/lobby/ui/network-agent-labels';
 import { RoomPinsActionsContext } from '@/features/room-pins/ui/room-pins-actions';
 import { ExcerptSelectionContext } from '@/features/room-excerpts/ui/excerpt-selection';
@@ -129,7 +129,9 @@ export function ConversationMessage({
       </div>
       <div className="conversation-message__body">
         <header>
-          <strong>{message.actor.displayName}</strong>
+          <strong className="ar-name" data-tone={actorTone(message.actor)}>
+            {message.actor.displayName}
+          </strong>
           {network ? (
             <span className="conversation-message__origin" title={networkLabel.hint}>
               {networkLabel.label}

@@ -8,8 +8,24 @@ import type { LobbyAgent } from '../domain/lobby';
 import { characterVariant } from '../scene/studio-assets';
 import { AgentPortrait } from './room-illustration';
 
-/** 四种机器人垫的浅底，顺序和 `flat-robots.png` 的四列一样：方的青、圆的红、胶囊的黄、带翅膀的青。 */
-const tints: readonly AvatarTint[] = ['teal', 'coral', 'sunny', 'teal'];
+/** 机器人的三种颜色：头像垫的浅底、名字的颜色都是它。 */
+export type AgentTone = Extract<AvatarTint, 'teal' | 'coral' | 'sunny'>;
+
+/** 四种机器人各是什么颜色，顺序和 `flat-robots.png` 的四列一样：方的青、圆的红、胶囊的黄、带翅膀的青。 */
+const tones: readonly AgentTone[] = ['teal', 'coral', 'sunny', 'teal'];
+
+/**
+ * 这个 Agent 是哪种颜色。它的名字跟头像一个颜色：
+ * 写名字的元素加 `ar-name` 和 `data-tone`，颜色在 ui-system 的样式里。
+ */
+export function agentTone(agentId: string): AgentTone {
+  return tones[characterVariant(agentId)] ?? 'teal';
+}
+
+/** 一条消息是谁说的，名字用什么颜色：Agent 跟它的机器人，人不带（墨色）。 */
+export function actorTone(actor: MessageActor): AgentTone | undefined {
+  return actor.kind === 'agent' ? agentTone(actor.agentId) : undefined;
+}
 
 /**
  * 头像上分得出来的几种状态：
@@ -40,7 +56,7 @@ export function AgentAvatar({
           <PresenceDot kind={state} label={stateLabel} />
         ) : undefined
       }
-      tint={tints[characterVariant(id)] ?? 'teal'}
+      tint={agentTone(id)}
     >
       <AgentPortrait id={id} />
     </Avatar>

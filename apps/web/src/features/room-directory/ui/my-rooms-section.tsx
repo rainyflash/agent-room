@@ -17,6 +17,7 @@ import {
   useRoomOwners,
   type RoomResult,
 } from '@/features/room-directory/ui/use-rooms';
+import { roomTone } from '@/shared/ui/room-tone';
 
 import './rooms.css';
 
@@ -291,7 +292,12 @@ function RoomCardLink({
       search={{}}
       to="/lobby/$catalogId/instance/$roomId"
     >
-      <span aria-hidden="true" className="room-row__icon">
+      {/* 归档了的是灰的，不带房间的颜色。 */}
+      <span
+        aria-hidden="true"
+        className="room-row__icon ar-tile"
+        data-tone={archived ? undefined : roomTone(room.catalogId)}
+      >
         {archived ? <Archive /> : <DoorOpen />}
       </span>
       <span className="room-row__text">

@@ -1,7 +1,7 @@
 import { LoaderCircle, MessageCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DirectSessionController } from '@/features/direct-sessions/ui/use-direct-session-controller';
-import { AgentAvatar } from '@/features/lobby/ui/avatars';
+import { AgentAvatar, agentTone } from '@/features/lobby/ui/avatars';
 
 export function DirectSessionNavigation({
   activeCatalogId,
@@ -34,7 +34,10 @@ export function DirectSessionNavigation({
             <AgentAvatar id={session.target.agentId} />
           </span>
           <span className="workspace-direct__identity">
-            <strong>{session.target.displayName}</strong>
+            {/* 在左栏里（深色）样式不给它颜色；搬进浅底的下拉、抽屉里才跟着机器人。 */}
+            <strong className="ar-name" data-tone={agentTone(session.target.agentId)}>
+              {session.target.displayName}
+            </strong>
             <small>{t(`directSessions.lifecycle.${session.lifecycle}`)}</small>
           </span>
         </button>

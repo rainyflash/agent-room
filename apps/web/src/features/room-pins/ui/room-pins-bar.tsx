@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp, Pin, PinOff, X } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { ActorAvatar } from '@/features/lobby/ui/avatars';
+import { ActorAvatar, actorTone } from '@/features/lobby/ui/avatars';
 import type { RoomMessageSignal } from '@/features/messages/domain/message';
 import { useRoomMessages } from '@/features/messages/ui/room-messages-context';
 import type { RoomPin, RoomPins } from '@/features/room-pins/domain/room-pins';
@@ -195,7 +195,9 @@ function PinnedItem({
             <ActorAvatar actor={message.actor} />
           </span>
           <span className="room-pins__meta">
-            <strong>{message.actor.displayName}</strong>
+            <strong className="ar-name" data-tone={actorTone(message.actor)}>
+              {message.actor.displayName}
+            </strong>
             <time dateTime={new Date(message.serverTimestamp).toISOString()}>
               {formatDateTime(message.serverTimestamp, language)}
             </time>

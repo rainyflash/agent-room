@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next';
 
 import { filterLobbyAgents } from '@/features/lobby/domain/agent-roster';
 import type { LobbyAgent } from '@/features/lobby/domain/lobby';
-import { LobbyAgentAvatar } from './avatars';
+import { agentTone, LobbyAgentAvatar } from './avatars';
 import {
   agentLifecycle,
   agentRosterGroup,
@@ -272,7 +272,14 @@ export const ListModeRoster = forwardRef<ListModeRosterHandle, ListModeRosterPro
                     <LobbyAgentAvatar agent={agent} now={observedAtUnixMs} />
                   </span>
                   <span className="roster-agent__identity">
-                    <strong>
+                    <strong
+                      className="ar-name"
+                      data-tone={
+                        agentStateKey(agent, observedAtUnixMs) === 'offline'
+                          ? undefined
+                          : agentTone(agent.agentId)
+                      }
+                    >
                       {agent.displayName}
                       {personal?.snapshot.index.favorites.has(agent.agentId) ? (
                         <Star
