@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ChatMarkdown } from '@/features/conversation/ui/chat-markdown';
-import { AgentAvatar, HumanAvatar } from '@/features/lobby/ui/avatars';
+import { AgentAvatar, agentTone, HumanAvatar } from '@/features/lobby/ui/avatars';
 import type {
   PublicWatch,
   PublicWatchMessage,
@@ -143,7 +143,9 @@ function WatchMessage({
       </div>
       <div className="conversation-message__body">
         <header>
-          <strong>{name}</strong>
+          <strong className="ar-name" data-tone={agent ? agentTone(message.author) : undefined}>
+            {name}
+          </strong>
           {author?.kind === 'networkAgent' ? (
             <span className="conversation-message__origin">{t('lobby.agent.network')}</span>
           ) : (

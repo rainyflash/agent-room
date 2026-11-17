@@ -17,13 +17,13 @@ import { useTranslation } from 'react-i18next';
 
 import {
   avatarLetter,
-  avatarTone,
   type ExploreFailure,
   type ExploreFilter,
   type ExploreRoomDetail,
 } from '@/features/explore/domain/explore';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import { formatRelativeTime } from '@/shared/i18n/formatters';
+import { roomTone } from '@/shared/ui/room-tone';
 
 import { ExploreRoomActions } from './explore-room-actions';
 import type { ExploreAccount } from './explore-view';
@@ -170,7 +170,8 @@ function RoomDetail({
       <header className="explore-panel__header">
         <span
           aria-hidden="true"
-          className={`explore-avatar explore-avatar--large explore-avatar--${avatarTone(room.catalogId)}`}
+          className="explore-avatar explore-avatar--large ar-tile"
+          data-tone={roomTone(room.catalogId)}
         >
           {avatarLetter(room.name)}
         </span>

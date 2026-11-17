@@ -146,7 +146,7 @@
   margin: 0;
 }
 
-/* 头像：名字的第一个字，底色按房间号挑。 */
+/* 头像：名字的第一个字。颜色按房间号挑（`ar-tile` 加 `data-tone`），这里的浅青是没挑时的样子。 */
 .explore-avatar {
   display: grid;
   place-items: center;

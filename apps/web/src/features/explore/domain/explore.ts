@@ -222,18 +222,6 @@ export function exploreSearchParams(filter: ExploreFilter, cursor: string | null
   return params;
 }
 
-/** 头像底色按房间号挑：同一间房在哪里都是同一个颜色。 */
-export const exploreAvatarTones = ['sunny', 'sky', 'mint', 'coral', 'accent-soft'] as const;
-export type ExploreAvatarTone = (typeof exploreAvatarTones)[number];
-
-export function avatarTone(catalogId: string): ExploreAvatarTone {
-  let hash = 0;
-  for (const character of catalogId) {
-    hash = (hash * 31 + (character.codePointAt(0) ?? 0)) >>> 0;
-  }
-  return exploreAvatarTones[hash % exploreAvatarTones.length] ?? 'sunny';
-}
-
 /** 头像上写名字的第一个字：按字形切，带肤色的表情、组合的字母都算一个。 */
 export function avatarLetter(name: string): string {
   const segments = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(name.trim());

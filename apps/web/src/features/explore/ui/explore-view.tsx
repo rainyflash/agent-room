@@ -19,7 +19,6 @@ import { useTranslation } from 'react-i18next';
 
 import {
   avatarLetter,
-  avatarTone,
   EXPLORE_SEARCH_MAX_LENGTH,
   exploreQuickFilters,
   exploreSearchFromFilter,
@@ -34,6 +33,7 @@ import type { PublicRoomSummary } from '@/features/room-directory/domain/public-
 import { WebHeaderLinks } from '@/features/updates/ui/web-header-links';
 import { formatRelativeTime } from '@/shared/i18n/formatters';
 import { AppNavigation } from '@/shared/ui/app-navigation';
+import { roomTone } from '@/shared/ui/room-tone';
 
 import { ExploreRoomActions } from './explore-room-actions';
 import { ExploreRoomPanel, type ExploreRoomDetailState } from './explore-room-panel';
@@ -289,7 +289,11 @@ function LobbyRow({
       <ul className="explore__lobbies">
         {lobbies.map((lobby) => (
           <li className="explore-lobby" key={lobby.catalogId}>
-            <span aria-hidden="true" className="explore-avatar explore-avatar--lobby">
+            <span
+              aria-hidden="true"
+              className="explore-avatar explore-avatar--lobby ar-tile"
+              data-tone={roomTone(lobby.catalogId)}
+            >
               {avatarLetter(lobby.name)}
             </span>
             <span className="explore-lobby__text">
@@ -458,7 +462,8 @@ function ExploreRoomCard({
     <li className="explore-room">
       <span
         aria-hidden="true"
-        className={`explore-avatar explore-avatar--${avatarTone(room.catalogId)}`}
+        className="explore-avatar ar-tile"
+        data-tone={roomTone(room.catalogId)}
       >
         {avatarLetter(room.name)}
       </span>

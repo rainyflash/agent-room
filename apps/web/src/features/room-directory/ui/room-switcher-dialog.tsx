@@ -24,6 +24,7 @@ import {
   type RoomListState,
   type RoomResult,
 } from '@/features/room-directory/ui/use-rooms';
+import { roomTone } from '@/shared/ui/room-tone';
 
 export type RoomSwitcherDialogProps = {
   readonly currentCatalogId?: string | undefined;
@@ -242,7 +243,11 @@ export function RoomSwitcherView({
                 }}
                 type="button"
               >
-                <span aria-hidden="true" className="room-row__icon">
+                <span
+                  aria-hidden="true"
+                  className="room-row__icon ar-tile"
+                  data-tone={roomTone(room.catalogId)}
+                >
                   <DoorOpen />
                 </span>
                 <RoomText description={room.description} name={room.name} />
@@ -272,7 +277,11 @@ export function RoomSwitcherView({
                 search={{}}
                 to="/lobby/$catalogId"
               >
-                <span aria-hidden="true" className="room-row__icon">
+                <span
+                  aria-hidden="true"
+                  className="room-row__icon ar-tile"
+                  data-tone={roomTone(room.catalogId)}
+                >
                   <Globe2 />
                 </span>
                 <RoomText description={room.description} name={room.name} />

@@ -563,6 +563,55 @@ summary {
   opacity: 0.5;
 }
 
+/*
+ * 名字跟着它的机器人：Agent 的名字和它头像垫的底是同一种颜色（`data-tone`），人的名字不带、是墨色。
+ * 导航是深色的，名字在里面照旧是导航的字色；从导航里弹出来的换回来。
+ */
+.ar-name[data-tone='teal'] {
+  --ar-name-tone: var(--ar-tone-teal);
+}
+
+.ar-name[data-tone='coral'] {
+  --ar-name-tone: var(--ar-tone-coral);
+}
+
+.ar-name[data-tone='sunny'] {
+  --ar-name-tone: var(--ar-tone-sunny);
+}
+
+.ar-name[data-tone] {
+  color: var(--ar-name-tone);
+}
+
+.ar-nav .ar-name[data-tone] {
+  color: inherit;
+}
+
+.ar-nav :is(dialog, [popover]) .ar-name[data-tone] {
+  color: var(--ar-name-tone);
+}
+
+/* 房间的小图标：垫的底和上面的字、记号按房间号挑一种（`data-tone`），同一间房到哪儿都是同一种。 */
+.ar-tile[data-tone='teal'] {
+  color: var(--ar-tone-teal);
+  background: var(--ar-tint-teal);
+}
+
+.ar-tile[data-tone='coral'] {
+  color: var(--ar-tone-coral);
+  background: var(--ar-tint-coral);
+}
+
+.ar-tile[data-tone='sunny'] {
+  color: var(--ar-tone-sunny);
+  background: var(--ar-tint-sunny);
+}
+
+.ar-tile[data-tone='sky'] {
+  color: var(--ar-tone-sky);
+  background: var(--ar-tint-sky);
+}
+
 .ar-avatar__mark {
   position: absolute;
   right: -2px;

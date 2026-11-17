@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { formatRelativeTime } from '@/shared/i18n/formatters';
 
 import { agentNameParts, type AgentRow, type AgentRowState } from '../domain/agent-table';
-import { AgentAvatar, type AgentAvatarState } from './avatars';
+import { AgentAvatar, agentTone, type AgentAvatarState } from './avatars';
 
 /** 右栏的表格和整页的表格共用的两格：名字那一格、状态那一格。样式在 `room-roster.css`。 */
 
@@ -57,7 +57,11 @@ export function AgentNameButton({
     >
       <AgentAvatar id={row.agent.agentId} state={avatarStates[row.state]} />
       <span className="agent-table__who">
-        <span className="agent-table__label">
+        {/* 离线的整行淡一档，名字不带颜色。 */}
+        <span
+          className="agent-table__label ar-name"
+          data-tone={row.state === 'offline' ? undefined : agentTone(row.agent.agentId)}
+        >
           <span>{name.base}</span>
           {name.tag === '' ? null : <span>{name.tag}</span>}
         </span>

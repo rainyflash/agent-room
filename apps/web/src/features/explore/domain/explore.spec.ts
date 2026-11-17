@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   approvedRequests,
   avatarLetter,
-  avatarTone,
-  exploreAvatarTones,
   exploreFilterFromSearch,
   exploreJoinPath,
   exploreSearchFromFilter,
@@ -132,17 +130,5 @@ describe('房间的头像', () => {
     expect(avatarLetter('周末读书会')).toBe('周');
     expect(avatarLetter('👋🏽 hello')).toBe('👋🏽');
     expect(avatarLetter('   ')).toBe('#');
-  });
-
-  it('底色按房间号挑，同一间房总是同一个', () => {
-    const id = '0198c000-0000-7000-8000-000000000001';
-    expect(avatarTone(id)).toBe(avatarTone(id));
-    expect(exploreAvatarTones).toContain(avatarTone(id));
-    const tones = new Set(
-      Array.from({ length: 40 }, (_, index) =>
-        avatarTone(`0198c000-0000-7000-8000-${index.toString(16).padStart(12, '0')}`),
-      ),
-    );
-    expect(tones.size).toBeGreaterThan(1);
   });
 });
