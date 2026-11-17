@@ -90,7 +90,9 @@ describe('分享过的几段', () => {
   it('成员只看得到自己的：标题是“你分享过的”，不标“你的”', async () => {
     renderSection(gateway([MINE]), { manages: false, live: true });
     const section = await screen.findByRole('region', { name: 'Stretches you’ve shared' });
-    expect(section).toHaveTextContent('Only you see this list.');
+    expect(section).toHaveTextContent(
+      'The owner and admins can see and delete them too, but not who shared them.',
+    );
     const row = await within(section).findByRole('group', { name: /^4 messages · / });
     expect(row).not.toHaveTextContent('Yours');
     expect(

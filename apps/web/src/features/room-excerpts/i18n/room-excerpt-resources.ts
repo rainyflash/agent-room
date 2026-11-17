@@ -60,7 +60,7 @@ const en = {
   'roomExcerpt.list.title.mine': 'Stretches you’ve shared',
   'roomExcerpt.list.title.room': 'Shared from this room',
   'roomExcerpt.list.detail.mine':
-    'Only you see this list. Anyone with a link can open it until you delete it or the live view is turned off.',
+    'Anyone with a link can open these until you delete them or the live view is turned off. The owner and admins can see and delete them too, but not who shared them.',
   'roomExcerpt.list.detail.room':
     'As the owner or an admin, you see every stretch shared from this room, but not who shared it. Yours are marked.',
   'roomExcerpt.list.empty':
@@ -132,7 +132,7 @@ export const roomExcerptResources = {
     'roomExcerpt.list.title.mine': '我分享过的',
     'roomExcerpt.list.title.room': '这间房分享过的',
     'roomExcerpt.list.detail.mine':
-      '只有你看得到这些。拿到链接的人都打得开，直到你删掉，或者实况关掉。',
+      '拿到链接的人都打得开，直到你删掉，或者实况关掉。房主和管理员也看得到、删得掉，但看不出是谁分享的。',
     'roomExcerpt.list.detail.room':
       '你是房主或管理员，看得到这间房分享出去的每一段，但看不出是谁分享的；标着“你分享的”是你自己的。',
     'roomExcerpt.list.empty': '还没有。在对话里指着一句，点“分享这一段”。',
