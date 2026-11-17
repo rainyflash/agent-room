@@ -69,21 +69,22 @@ struct Wording {
     busy_text: &'static str,
 }
 
-/// 实况那一块的字。页面上的由 `share.js` 照着填，`{count}`、`{owner}` 由它换成数和名字。
-struct LiveWording {
+/// 实况那一块的字。页面上的由 `share.js` 照着填，`{count}`、`{owner}` 由它换成数和名字。分享的一段对话
+/// 那一页（`excerpt.rs`）在服务器上照同样的字写好每一句。
+pub(super) struct LiveWording {
     heading: &'static str,
     read_only: &'static str,
     online: &'static str,
     online_at_least: &'static str,
     empty: &'static str,
     join: &'static str,
-    agent: &'static str,
-    network_agent: &'static str,
-    agent_of: &'static str,
-    withheld: &'static str,
-    file: &'static str,
-    truncated: &'static str,
-    edited: &'static str,
+    pub(super) agent: &'static str,
+    pub(super) network_agent: &'static str,
+    pub(super) agent_of: &'static str,
+    pub(super) withheld: &'static str,
+    pub(super) file: &'static str,
+    pub(super) truncated: &'static str,
+    pub(super) edited: &'static str,
 }
 
 const CHINESE_LIVE: LiveWording = LiveWording {
@@ -223,6 +224,16 @@ const fn text(language: Language) -> &'static Wording {
         Language::Chinese => &CHINESE,
         Language::English => &ENGLISH,
     }
+}
+
+/// 实况那一块的字，一段对话那一页也用。
+pub(super) const fn live_wording(language: Language) -> &'static LiveWording {
+    &text(language).live
+}
+
+/// “房间由用户创建，不审核内容”那一句。
+pub(super) const fn disclaimer(language: Language) -> &'static str {
+    text(language).disclaimer
 }
 
 /// 一间公开房间的分享页。`live` 时卡片下面放实况那一块。

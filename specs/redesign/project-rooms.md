@@ -621,3 +621,13 @@
     - 段码撞上别的换一个再记，最多 3 次。
     - 隐私说明页在这一步就照 3P-7a 做完的样子改了（存段的表在这一步）：3P-7a-2 没赶上同一版的话，页面上说的“不登录也打得开”还没真有，只多说、不少说。
   - 测试：应用层流程（`application/tests/room_excerpt_flow.rs`）、接口（`features/room_excerpts/tests.rs`）、往回读（`public_watch/tests/excerpts.rs`，`matrix-provisioning-adapter` 的 `public_lobby.rs`）、每天的清理（`room_excerpt_cleanup.rs`）、隐私说明页的说法（`privacy-page.spec.tsx`）。真实数据库的（`postgres-adapter` 的 `private_rooms/excerpts.rs`，`real_database.rs` 删账户那一条和表的名单）只在派发 `suite=all` 时跑。
+- 2026-11-16 3P-7a-2（#917，分享的一段对话那一页 `/r/<码>/s/<段码>`，只有控制面和隐私说明页；和 3P-7a-1、网页的 3P-7b 同一版发）：
+  - 页面（`features/share_page.rs` 的 `excerpt_page`，HTML 在 `share_page/excerpt.rs`）：房间名，“一段对话 · 6 句 · 11 月 16 日”，那几句照实况的样子（名字、是谁的 Agent、时间，正文开头 280 个字，不公开的只说一句、附件只说有、改过的带“（改过）”），下面“去看这间房”回分享页，再一句“房间由用户创建，不审核内容”。每一句在服务器上写好，没有脚本也看得到；时间和日期先按 UTC 写，`share.js` 换成看的人那里的。房间名、名字、正文一律转义。
+  - 读（`public_watch/excerpt_pages.rs` 的 `RoomExcerptPages`）：每次按分享码和段码查库（`RoomExcerptPageLookup`，一句 SQL：房间要和实况认的同几样，段码是这间房的，第一句不早于这次开实况），查到的、没查到的都在内存里留 5 秒；再以应用服务往回读到第一句（和分享时同一个 `ExcerptTimelineReader`），只留存着的那几句里此刻看得见、不早于开实况的。读到的样子按段码和开实况那一刻存 60 秒，最多 500 段；同时最多读 4 段，等不到算暂时打不开。
+  - 回答：看得到 200、缓存 60 秒；读不到第一句（500 条以外）或者那几句都没了 410“这段对话现在看不了了”，带“去看这间房”，也缓存 60 秒；不放实况、分享码或段码写得不对、没有这一段、这一段早于这次开实况、聊天服务器上加了密，都是分享页“没有这个码”那一页（同一个 404、不缓存，谁看都一样）；库或聊天服务器不通 503、不缓存。和分享页一样先按来源限流（名额和分享页、发现页算在一起）、`noindex`、自带内容安全策略，语言照 `Accept-Language`，没说的看房间名里有没有中文。
+  - 和设计不一样、设计里没写的：
+    - 预览图（`og:image`）先用分享页那张通用的，`/r/<码>/s/<段码>/preview.png` 是 3P-8。
+    - 每句开头 280 个字，和实况一样：分享出去的本来就是实况上看得到的，不多漏。
+    - 不是今年的日期带上年份。
+    - 隐私说明页“公开房间”那一条原来写“每次打开都重新读”，改成“读到的在内存里留一分钟”“照实况的样子显示”。
+  - 测试：读（`public_watch/tests/excerpt_pages.rs`）、页面（`share_page/excerpt_tests.rs`：转义、内容安全策略、缓存、410、和分享页一模一样的 404、503、限流、语言、年份）、隐私说明页的说法。真实数据库的按码查（`postgres-adapter` 的 `private_rooms/excerpts.rs`）只在派发 `suite=all` 时跑。

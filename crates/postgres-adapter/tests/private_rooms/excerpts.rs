@@ -1,11 +1,13 @@
 //! 分享一段对话（`specs/redesign/project-rooms.md`“分享一段对话”，3P-7a，表 `room_excerpt`）：放着实况的房间
 //! 才找得到；记的时候还是读房间时那一刻开着的实况才记；关实况、改成要申请、改回私密、归档时一起删；平台
 //! 拿掉时和实况那一行一样留着；每天按保留期和实况清；导出里有。删账户时删他分享的、他房间里的在
-//! `real_database.rs` 的删除那一条里查。
+//! `real_database.rs` 的删除那一条里查。打开一段（3P-7a-2）按分享码和段码查，只认此刻放着实况的房间里开
+//! 实况以后的段。
 
 use agent_room_application::ports::{
-    AccountDeletionRepository, ExcerptRoomRecord, InsertRoomExcerptOutcome, MatrixEventId,
-    PrivateRoomListingRecord, RoomExcerptRecord, RoomExcerptStore, RoomLiveViewStore,
+    AccountDeletionRepository, ExcerptPageRecord, ExcerptRoomRecord, InsertRoomExcerptOutcome,
+    MatrixEventId, PrivateRoomListingRecord, RoomExcerptPageLookup, RoomExcerptRecord,
+    RoomExcerptStore, RoomLiveViewStore,
 };
 use agent_room_domain::{
     room_excerpts::RoomExcerptCode,
@@ -291,6 +293,92 @@ async fn 导出里是自己分享的_只有码_房间_几句和时间() {
     );
 
     database.close().await;
+}
+
+#[tokio::test]
+#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
+async fn 打开一段只认此刻放着实况的那间房里_开实况以后的段() {
+    let database = TestDatabase::connect().await;
+    let repositories = PostgresRepositories::new(database.runtime.clone());
+    let owner = seed_principal(&database.runtime, "excerpt-page").await;
+    let other_owner = seed_principal(&database.runtime, "excerpt-page-b").await;
+    let (room, _) = listed_room(&repositories, owner, "Exc007").await;
+    let (other, _) = listed_room(&repositories, other_owner, "Exc008").await;
+    enable(&repositories, room, owner, 2_000).await;
+    enable(&repositories, other, other_owner, 2_000).await;
+    shared(&repositories, room, owner, "Page0001", 3_000).await;
+
+    let found = page(&repositories, "Exc007", "Page0001")
+        .await
+        .expect("放着实况就打得开");
+    assert_eq!(found.catalog_id, room);
+    assert_eq!(found.room_name, "隔离项目室");
+    assert!(found.matrix_room_id.as_str().starts_with("!private"));
+    assert_eq!(found.enabled_at, time(2_000));
+    assert_eq!(found.first_event_at, time(3_000));
+    assert_eq!(
+        found
+            .event_ids
+            .iter()
+            .map(MatrixEventId::as_str)
+            .collect::<Vec<_>>(),
+        ["$first:matrix.test", "$second:matrix.test"],
+        "按时间先后"
+    );
+    assert_eq!(
+        page(&repositories, "Exc008", "Page0001").await,
+        None,
+        "别的房间的分享码不认"
+    );
+    assert_eq!(page(&repositories, "Exc007", "Page0009").await, None);
+
+    // 这一段早于这次开实况（不经关实况的那几处留下的）：开实况挪到第一句之后 5 秒。
+    sqlx::query(
+        "UPDATE agent_room.room_live_view SET enabled_at = enabled_at + interval '5 seconds' \
+         WHERE catalog_entry_id = $1",
+    )
+    .bind(room.as_uuid())
+    .execute(&database.migration)
+    .await
+    .expect("改开实况的时间");
+    assert_eq!(page(&repositories, "Exc007", "Page0001").await, None);
+    sqlx::query(
+        "UPDATE agent_room.room_live_view SET enabled_at = enabled_at - interval '5 seconds' \
+         WHERE catalog_entry_id = $1",
+    )
+    .bind(room.as_uuid())
+    .execute(&database.migration)
+    .await
+    .expect("改回来");
+    assert_eq!(
+        page(&repositories, "Exc007", "Page0001")
+            .await
+            .map(|found| found.enabled_at),
+        Some(time(2_000))
+    );
+
+    hold(&database.migration, room, owner).await;
+    assert_eq!(
+        page(&repositories, "Exc007", "Page0001").await,
+        None,
+        "平台拿掉时打不开"
+    );
+
+    database.close().await;
+}
+
+async fn page(
+    repositories: &PostgresRepositories,
+    share_code: &str,
+    code: &str,
+) -> Option<ExcerptPageRecord> {
+    RoomExcerptPageLookup::excerpt_page(
+        repositories,
+        &RoomShareCode::parse(share_code).unwrap(),
+        &RoomExcerptCode::parse(code).unwrap(),
+    )
+    .await
+    .expect("可读")
 }
 
 /// 清一次，核对回答的条数和库里少了的一样。

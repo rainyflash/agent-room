@@ -190,9 +190,9 @@ pub use rooms::{
     RoomLiveViewFacts, RoomLiveViewRecord, RoomLiveViewStore,
 };
 pub use rooms::{
-    ExcerptMessageRef, ExcerptRoomRecord, ExcerptTimelineRead, ExcerptTimelineUnavailable,
-    InsertRoomExcerptOutcome, MatrixMessagePage, RoomExcerptListing, RoomExcerptRecord,
-    RoomExcerptStore, RoomExcerptTimeline,
+    ExcerptMessageRef, ExcerptPageRecord, ExcerptRoomRecord, ExcerptTimelineRead,
+    ExcerptTimelineUnavailable, InsertRoomExcerptOutcome, MatrixMessagePage, RoomExcerptListing,
+    RoomExcerptPageLookup, RoomExcerptRecord, RoomExcerptStore, RoomExcerptTimeline,
 };
 pub use rooms::{
     NewSubRoom, SubRoomAdmission, SubRoomCreationBlock, SubRoomCreationCheck, SubRoomDoorChange,

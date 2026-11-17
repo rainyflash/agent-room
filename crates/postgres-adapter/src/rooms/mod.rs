@@ -4,6 +4,7 @@ mod decode;
 mod departures;
 mod direct_sessions;
 mod directory;
+mod excerpt_pages;
 mod excerpts;
 mod invite_links;
 mod join_requests;

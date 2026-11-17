@@ -282,6 +282,35 @@ pub(super) fn all_visible_messages<'a>(
 
 /// 一条消息回给网页的样子，正文最多 `max_characters` 个字符。
 pub(super) fn message_view(message: &Shown<'_>, keys: &Keys, max_characters: usize) -> MessageView {
+    let body = message_body(message, max_characters);
+    MessageView {
+        key: keys.message(message.original.message_id),
+        author: keys.participant(author_id(&message.original.actor)),
+        text: body.text,
+        truncated: body.truncated,
+        withheld: body.withheld,
+        attachment: body.attachment,
+        edited: body.edited,
+        reply_to: message.original.relation.map(|relation| match relation {
+            MessageRelation::ReplyTo(target) => keys.message(target),
+        }),
+        sent_at_unix_ms: body.sent_at_unix_ms,
+    }
+}
+
+/// 一条消息给人看的那部分：正文最多 `max_characters` 个字符；敏感、受限的不给正文。
+// 几个互不相干的标记平铺着最好读，和 `MessageView` 一样。
+#[allow(clippy::struct_excessive_bools)]
+pub(super) struct MessageBody {
+    pub(super) text: String,
+    pub(super) truncated: bool,
+    pub(super) withheld: bool,
+    pub(super) attachment: bool,
+    pub(super) edited: bool,
+    pub(super) sent_at_unix_ms: i64,
+}
+
+pub(super) fn message_body(message: &Shown<'_>, max_characters: usize) -> MessageBody {
     let withheld = message.current.sensitivity() != MessageSensitivity::Normal;
     let (text, attachment) = if withheld {
         (String::new(), false)
@@ -289,17 +318,12 @@ pub(super) fn message_view(message: &Shown<'_>, keys: &Keys, max_characters: usi
         text_of(message.current)
     };
     let (text, truncated) = truncate(text, max_characters);
-    MessageView {
-        key: keys.message(message.original.message_id),
-        author: keys.participant(author_id(&message.original.actor)),
+    MessageBody {
         text,
         truncated,
         withheld,
         attachment,
         edited: message.edited,
-        reply_to: message.original.relation.map(|relation| match relation {
-            MessageRelation::ReplyTo(target) => keys.message(target),
-        }),
         sent_at_unix_ms: sent_at(message),
     }
 }

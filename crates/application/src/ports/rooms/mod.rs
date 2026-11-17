@@ -100,9 +100,9 @@ pub use role_changes::{
     RoomRoleChange, RoomRoleChangeLog, RoomRoleChangeRecord, RoomRoleChangeSubRoom,
 };
 pub use room_excerpts::{
-    ExcerptMessageRef, ExcerptRoomRecord, ExcerptTimelineRead, ExcerptTimelineUnavailable,
-    InsertRoomExcerptOutcome, RoomExcerptListing, RoomExcerptRecord, RoomExcerptStore,
-    RoomExcerptTimeline,
+    ExcerptMessageRef, ExcerptPageRecord, ExcerptRoomRecord, ExcerptTimelineRead,
+    ExcerptTimelineUnavailable, InsertRoomExcerptOutcome, RoomExcerptListing,
+    RoomExcerptPageLookup, RoomExcerptRecord, RoomExcerptStore, RoomExcerptTimeline,
 };
 pub use room_live::{
     EnableRoomLiveViewOutcome, LiveRoomLookup, LiveRoomRecord, RoomEncryptionState,

@@ -20,11 +20,15 @@
 //! 由 `share.js` 每 5 秒问一次 `GET /r/{分享码}/live`（[`crate::public_watch::RoomLiveWatch`]）。
 //! 这几页的内容安全策略由这里自己带（[`PAGE_POLICY`]），比裸域网站那一份多一句 `connect-src 'self'`；
 //! Caddy 不给 `/r/*`、`/gh/*` 再加一份（两份都在时浏览器两份都照着办）。
+//!
+//! 分享的一段对话（3P-7a-2）：`GET /r/{分享码}/s/{段码}` 出那几句（[`crate::public_watch::RoomExcerptPages`]）。
+//! 和分享页一样按来源限流、`noindex`、缓存 60 秒；房间不放实况、码不对、这一段早于这次开实况，都回和分享页
+//! “没有这个码”一模一样的 404；读不到第一句了、那几句都没了回 410。
 
 use std::sync::Arc;
 
 use agent_room_application::{
-    ports::Clock,
+    ports::{Clock, PortFuture},
     project_rooms::RepositoryRoomPages,
     public_room_directory::{
         PublicDirectoryFailureKind, PublicRoomDetailView, PublicRoomDirectoryUseCases,
@@ -32,6 +36,7 @@ use agent_room_application::{
 };
 use agent_room_domain::{
     project_rooms::GithubRepository,
+    room_excerpts::RoomExcerptCode,
     room_listing::{RoomJoinMode, RoomShareCode},
 };
 use agent_room_protocol_conformance::generated::ErrorCategory;
@@ -46,6 +51,7 @@ use axum::{
 };
 
 mod badge;
+mod excerpt;
 mod render;
 mod unclaimed;
 
@@ -58,7 +64,9 @@ use crate::{
     correlation::CorrelationId,
     error::ApiError,
     features::{anonymous_limits::AnonymousLimiter, authentication::no_store},
-    public_watch::{RoomLiveFailure, RoomLiveSource},
+    public_watch::{
+        ExcerptPage, ExcerptPageFailure, RoomExcerptPageSource, RoomLiveFailure, RoomLiveSource,
+    },
 };
 
 const STYLESHEET: &str = include_str!("share_page/share.css");
@@ -90,6 +98,8 @@ pub(crate) struct SharePageHttpState {
     app_origin: Arc<str>,
     /// 分享页放的实况。
     live: Arc<dyn RoomLiveSource>,
+    /// 分享的一段对话。没接上（[`SharePageHttpState::with_excerpts`]）时哪一段都没有。
+    excerpts: Arc<dyn RoomExcerptPageSource>,
 }
 
 impl SharePageHttpState {
@@ -107,11 +117,18 @@ impl SharePageHttpState {
             badges: BadgeCounts::new(repositories.clone(), clock.clone()),
             repositories,
             live,
+            excerpts: Arc::new(NoExcerptPages),
             clock,
             limits,
             site_origin: site_origin(server_name).into(),
             app_origin: frontend_origin.origin().ascii_serialization().into(),
         }
+    }
+
+    /// 接上分享的一段对话。
+    pub(crate) fn with_excerpts(mut self, excerpts: Arc<dyn RoomExcerptPageSource>) -> Self {
+        self.excerpts = excerpts;
+        self
     }
 
     fn origins(&self) -> Origins<'_> {
@@ -128,6 +145,7 @@ pub(crate) fn router(state: SharePageHttpState) -> Router {
         .route("/r/_/share.js", get(script))
         .route("/r/{share_code}", get(page))
         .route("/r/{share_code}/live", get(live))
+        .route("/r/{share_code}/s/{excerpt}", get(excerpt_page))
         .route("/gh/{owner}/{repo}", get(repository_page))
         .route("/gh/{owner}/{repo}/badge.svg", get(badge::badge))
         .layer(middleware::map_response(with_page_policy))
@@ -316,6 +334,76 @@ fn live_failure(failure: RoomLiveFailure, correlation_id: CorrelationId) -> Resp
     no_store(error.into_response())
 }
 
+/// 分享的一段对话。不放实况、码不对、没有这一段、这一段早于这次开实况，都是分享页“没有这个码”那一页，
+/// 谁看都一样、不缓存；读不到第一句了、那几句都没了是 410。
+async fn excerpt_page(
+    State(state): State<SharePageHttpState>,
+    Path((share_code, code)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let accepted = accepted_language(&headers);
+    if let Some(busy) = admit(&state, &headers, accepted) {
+        return busy;
+    }
+    let not_found = || {
+        html_response(
+            StatusCode::NOT_FOUND,
+            "no-store",
+            render::gone_page(accepted.unwrap_or(Language::English), &state.origins()),
+        )
+    };
+    let (Ok(share_code), Ok(code)) = (
+        RoomShareCode::parse(&share_code),
+        RoomExcerptCode::parse(&code),
+    ) else {
+        return not_found();
+    };
+    match state.excerpts.page(&share_code, &code).await {
+        Ok(page) => match page.as_ref() {
+            ExcerptPage::Shown(excerpt) => {
+                let language = accepted.unwrap_or_else(|| guess_language(&excerpt.room_name));
+                let html = excerpt::excerpt_page(
+                    excerpt,
+                    share_code.as_str(),
+                    language,
+                    &state.origins(),
+                    state.clock.now(),
+                );
+                html_response(StatusCode::OK, ROOM_CACHE, html)
+            }
+            ExcerptPage::Gone { room_name } => {
+                let language = accepted.unwrap_or_else(|| guess_language(room_name));
+                let html = excerpt::gone_excerpt_page(
+                    room_name,
+                    share_code.as_str(),
+                    language,
+                    &state.origins(),
+                );
+                html_response(StatusCode::GONE, ROOM_CACHE, html)
+            }
+        },
+        Err(ExcerptPageFailure::NotFound) => not_found(),
+        Err(ExcerptPageFailure::Unavailable) => html_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no-store",
+            render::unavailable_page(accepted.unwrap_or(Language::English), &state.origins()),
+        ),
+    }
+}
+
+/// 没接上一段对话时：哪一段都没有。
+struct NoExcerptPages;
+
+impl RoomExcerptPageSource for NoExcerptPages {
+    fn page<'a>(
+        &'a self,
+        _share_code: &'a RoomShareCode,
+        _code: &'a RoomExcerptCode,
+    ) -> PortFuture<'a, Result<Arc<ExcerptPage>, ExcerptPageFailure>> {
+        Box::pin(async { Err(ExcerptPageFailure::NotFound) })
+    }
+}
+
 /// 按来源限流：这个来源一分钟里打开得太多时回“等一分钟”那一页，不去查。
 fn admit(
     state: &SharePageHttpState,
@@ -438,6 +526,8 @@ fn guess_language(name: &str) -> Language {
     }
 }
 
+#[cfg(test)]
+mod excerpt_tests;
 #[cfg(test)]
 mod live_tests;
 #[cfg(test)]

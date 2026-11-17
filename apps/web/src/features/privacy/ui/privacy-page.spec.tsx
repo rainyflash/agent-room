@@ -109,9 +109,12 @@ describe('隐私说明', () => {
     expect(english).toMatch(/never the text/u);
     expect(english).toMatch(/doesn’t say who shared it/u);
     expect(english).toMatch(/older than the room’s retention period/u);
+    // 打开时读到的在控制面内存里留 60 秒（3P-7a-2 的 `public_watch/excerpt_pages.rs`）。
+    expect(english).toMatch(/in memory for a minute/u);
     const chinese = privacyResources['zh-CN']['privacy.readers.publicRooms.text'];
     expect(chinese).toMatch(/连着的最多 30 句分享成一个单独的链接/u);
     expect(chinese).toMatch(/不存话/u);
+    expect(chinese).toMatch(/读到的在内存里留一分钟/u);
     expect(chinese).toMatch(/页面上不写是谁分享的/u);
     expect(privacyResources.en['privacy.delete.how']).toMatch(/conversation excerpts you shared/u);
     expect(privacyResources['zh-CN']['privacy.delete.how']).toMatch(/你分享的一段段对话/u);

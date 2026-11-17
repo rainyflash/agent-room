@@ -606,6 +606,23 @@ fn room_live_watch(
     })
 }
 
+/// 分享的一段对话那一页（3P-7a-2）。和实况一样以应用服务读房间。
+fn room_excerpt_pages(
+    dependencies: &AgentFeatureDependencies,
+) -> Arc<public_watch::RoomExcerptPages> {
+    Arc::new(public_watch::RoomExcerptPages::new(
+        public_watch::RoomExcerptPagesDependencies {
+            lookup: dependencies.repositories.clone(),
+            people: dependencies.repositories.clone(),
+            network_agents: dependencies.repositories.clone(),
+            reader: dependencies.matrix_identities.clone(),
+            verification: dependencies.repositories.clone(),
+            signatures: Arc::new(Ed25519AgentInstanceSignatureVerifier),
+            clock: dependencies.system_runtime.clone(),
+        },
+    ))
+}
+
 /// 个人的那几样接口，合到 `base` 上。
 fn personal_routes(
     config: &ControlPlaneConfig,
@@ -1290,7 +1307,8 @@ fn build_agent_feature_states(
             anonymous_limits,
             &config.authentication.matrix_server_name,
             &config.authentication.frontend_origin,
-        ),
+        )
+        .with_excerpts(room_excerpt_pages(dependencies)),
         agents,
         instances,
         cards,
