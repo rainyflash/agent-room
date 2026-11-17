@@ -22,6 +22,14 @@
   --ar-primary-hover: #ffb81f;
   --ar-on-primary: #1d1a05;
   --ar-warning-soft: #fff8e1;
+  --ar-tone-teal: #0b7268;
+  --ar-tone-coral: #b83a25;
+  --ar-tone-sunny: #8a5708;
+  --ar-tone-sky: #1d5fa8;
+  --ar-tint-teal: #c5efe5;
+  --ar-tint-coral: #ffdfd6;
+  --ar-tint-sunny: #ffe494;
+  --ar-tint-sky: #d3e6fb;
   --radius-control: 8px;
   --radius-card: 12px;
   --page: 640px;
@@ -48,6 +56,14 @@
     --ar-accent-hover: #5ad9c9;
     --ar-accent-ink: #5ad9c9;
     --ar-warning-soft: #2a2512;
+    --ar-tone-teal: #4fd6c3;
+    --ar-tone-coral: #ff9482;
+    --ar-tone-sunny: #f2c75c;
+    --ar-tone-sky: #8cc2f7;
+    --ar-tint-teal: #164a42;
+    --ar-tint-coral: #5a2a22;
+    --ar-tint-sunny: #57480f;
+    --ar-tint-sky: #173a5c;
     color-scheme: dark;
   }
 }
@@ -176,6 +192,27 @@ p {
   background: var(--ar-surface-muted);
   font-size: 1.5rem;
   font-weight: 600;
+}
+
+/* 颜色按房间号挑（控制面算好写在 `data-tone` 上），和应用里这间房的小图标是同一种。 */
+.share-avatar[data-tone='teal'] {
+  color: var(--ar-tone-teal);
+  background: var(--ar-tint-teal);
+}
+
+.share-avatar[data-tone='coral'] {
+  color: var(--ar-tone-coral);
+  background: var(--ar-tint-coral);
+}
+
+.share-avatar[data-tone='sunny'] {
+  color: var(--ar-tone-sunny);
+  background: var(--ar-tint-sunny);
+}
+
+.share-avatar[data-tone='sky'] {
+  color: var(--ar-tone-sky);
+  background: var(--ar-tint-sky);
 }
 
 .share-owner,

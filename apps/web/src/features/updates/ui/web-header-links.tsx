@@ -44,7 +44,8 @@ function WebHeaderLinkList({ config }: { readonly config: DownloadConfiguration 
       </a>
       {download.url === null ? null : (
         <a
-          className="ar-button ar-button--primary ar-button--default app-navigation__external app-navigation__external--download"
+          // 浅底的，不是主按钮：它每一页都在，明黄留给这一页自己的那一个。
+          className="ar-button ar-button--ghost ar-button--default app-navigation__external app-navigation__external--download"
           href={download.url}
           onClick={() => {
             reportStep({ step: 'desktop_download' });

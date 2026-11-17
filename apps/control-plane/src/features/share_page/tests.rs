@@ -338,6 +338,26 @@ async fn 语言按浏览器_没说的看房间名里有没有中文() {
 }
 
 #[test]
+fn 房间小图标的颜色和网页算出来的一样() {
+    // 这四个取值是网页的 `roomTone` 算的，`room-tone.spec.ts` 里写着同样的四个。
+    for (number, tone) in [(1, "sky"), (2, "teal"), (3, "coral"), (4, "sunny")] {
+        let catalog_id = format!("0198c000-0000-7000-8000-{number:012x}");
+        assert_eq!(super::render::room_tone(&catalog_id), tone, "{catalog_id}");
+    }
+}
+
+#[tokio::test]
+async fn 分享页上房间的小图标带着这间房的颜色() {
+    let room = detail("读书会", "", RoomJoinMode::Open, true);
+    let (_, _, html) = get(FakeDirectory::new(room), "/r/aB3xYz", None).await;
+    assert!(
+        html.contains(
+            "<div class=\"share-avatar\" data-tone=\"coral\" aria-hidden=\"true\">读</div>"
+        )
+    );
+}
+
+#[test]
 fn 两种语言的预览图都在网页的静态文件里() {
     let public = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/public");
     for language in ["en", "zh-CN"] {

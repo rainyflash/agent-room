@@ -381,8 +381,10 @@ fn room_panel(
         .unwrap_or_default();
     let mut panel = format!(
         "<section class=\"share-panel\"><div class=\"share-room-head\">\
-         <div class=\"share-avatar\" aria-hidden=\"true\">{initial}</div><div><h1>{name}</h1>\
+         <div class=\"share-avatar\" data-tone=\"{tone}\" aria-hidden=\"true\">{initial}</div>\
+         <div><h1>{name}</h1>\
          <p class=\"share-owner\">{owner_label} {owner}</p></div></div>",
+        tone = room_tone(&room.catalog_id.to_string()),
         initial = escape(&initial),
         name = escape(&room.name),
         owner_label = escape(text.owner),
@@ -431,6 +433,16 @@ fn room_panel(
         escape(text.disclaimer)
     );
     panel
+}
+
+/// 房间小图标的颜色按房间号挑，和网页的 `roomTone`（`apps/web/src/shared/ui/room-tone.ts`）是同一条
+/// 算法：同一间房在分享页和应用里是同一种。改一边要改另一边，两边的测试写着同样的四个取值。
+pub(super) fn room_tone(catalog_id: &str) -> &'static str {
+    const TONES: [&str; 4] = ["teal", "coral", "sunny", "sky"];
+    let hash = catalog_id.chars().fold(0_u32, |hash, character| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(character))
+    });
+    TONES[(hash % 4) as usize]
 }
 
 fn stats(detail: &PublicRoomDetailView, text: &Wording, now: UtcMillis) -> String {
