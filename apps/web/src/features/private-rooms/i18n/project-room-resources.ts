@@ -1,4 +1,7 @@
-/** 房间设置“公开”一节里的“GitHub 仓库”一组和顶栏的勾（specs/redesign/project-rooms.md，3P-5）。 */
+/**
+ * 房间设置“公开”一节里的“GitHub 仓库”一组和顶栏的勾（specs/redesign/project-rooms.md，3P-5），房间“分享”里的
+ * “README 徽章”（3P-8b-1）。
+ */
 const en = {
   'projectRooms.title': 'GitHub repository',
   'projectRooms.detail':
@@ -17,6 +20,9 @@ const en = {
   'projectRooms.pending.lastCheck': 'Last check, {{time}}: {{result}}',
   'projectRooms.pending.neverChecked': 'Not checked yet.',
   'projectRooms.badge.label': 'README badge',
+  'projectRooms.badge.shareDetail':
+    'Put it in the repository’s README. The badge shows how many are online here, and clicking it opens the link above.',
+  'projectRooms.badge.copy': 'Copy badge',
   'projectRooms.agents.label': 'Line for AGENTS.md',
   'projectRooms.copy': 'Copy',
   'projectRooms.copied': 'Copied',
@@ -97,6 +103,9 @@ export const projectRoomResources = {
     'projectRooms.pending.lastCheck': '上次核对（{{time}}）：{{result}}',
     'projectRooms.pending.neverChecked': '还没核对过。',
     'projectRooms.badge.label': 'README 徽章',
+    'projectRooms.badge.shareDetail':
+      '放进仓库的 README：徽章上写着这里现在几个在线，点它打开的就是上面的链接。',
+    'projectRooms.badge.copy': '复制徽章',
     'projectRooms.agents.label': 'AGENTS.md 里的一行',
     'projectRooms.copy': '复制',
     'projectRooms.copied': '复制好了',

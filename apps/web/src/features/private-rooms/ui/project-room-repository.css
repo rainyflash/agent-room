@@ -68,10 +68,32 @@
   font-weight: 600;
 }
 
-/* 那两行很长：在框里折行，别把对话框撑宽。 */
-.room-repository__line .ar-copy-block__text {
+/* 那两行很长：在框里折行，别把对话框撑宽（房间“分享”里的徽章也是）。 */
+.room-repository__copy .ar-copy-block__text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* 房间“分享”对话框里的“README 徽章”一节（3P-8b-1）：和下面分享过的几段一样，上面一条线隔开。 */
+.repository-badge-share {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ar-line);
+}
+
+.repository-badge-share h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.repository-badge-share__note {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }
 
 .room-repository__result {

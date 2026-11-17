@@ -2,12 +2,13 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
-import { openRoomSettings } from './support/workspace-navigation';
+import { openRoomSettings, roomAction } from './support/workspace-navigation';
 
 /**
- * 房间设置“公开”一节里的“GitHub 仓库”一组和房间名旁边的勾（specs/redesign/project-rooms.md，3P-5）。
- * 夹具 `?private&listed&repository=none|pending|bound` 给出还没绑、在等核对、绑上了三种样子；在等的认领由
- * 夹具的 `claims()` 给（服务器上列自己在等的认领），`&asAdmin` 是房间里不是房主的人。
+ * 房间设置“公开”一节里的“GitHub 仓库”一组和房间名旁边的勾（specs/redesign/project-rooms.md，3P-5），房间
+ * “分享”里的“README 徽章”（3P-8b-1）。夹具 `?private&listed&repository=none|pending|bound` 给出还没绑、在等
+ * 核对、绑上了三种样子；在等的认领由夹具的 `claims()` 给（服务器上列自己在等的认领），`&asAdmin` 是房间里
+ * 不是房主的人。夹具的 `binding()` 不管是谁都回绑定，所以不是房主时看不到徽章靠的是网页自己不去问。
  */
 const roomFixture = '/e2e/fixtures/lobby-scene.html?private&listed';
 
@@ -19,6 +20,13 @@ async function expectAccessible(page: Page, selector: string): Promise<void> {
   expect(
     scan.violations.map(({ id, nodes }) => ({ id, targets: nodes.map(({ target }) => target) })),
   ).toEqual([]);
+}
+
+async function openShare(page: Page) {
+  await (await roomAction(page, 'Share')).click();
+  const dialog = page.getByRole('dialog', { name: 'Share this room' });
+  await expect(dialog.getByRole('textbox', { name: 'Link' })).toBeVisible();
+  return dialog;
 }
 
 async function repositoryGroup(page: Page, state: 'none' | 'pending' | 'bound', extra = '') {
@@ -134,8 +142,51 @@ for (const width of [1440, 390]) {
       });
       expect(failures).toEqual([]);
     });
+
+    test('房间“分享”：绑着仓库时房主多“README 徽章”一节，复制的是服务器给的那一行', async ({
+      context,
+      page,
+    }, testInfo) => {
+      const failures = collectPageFailures(page);
+      await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+      await page.goto(`${roomFixture}&repository=bound`);
+      const dialog = await openShare(page);
+
+      const badge = dialog.getByRole('region', { name: 'README badge' });
+      await badge.scrollIntoViewIfNeeded();
+      await expect(badge).toContainText(
+        'Put it in the repository’s README. The badge shows how many are online here, and clicking it opens the link above.',
+      );
+      const markdown =
+        '[![Agent Room](https://agentroom.test/gh/rainyflash/agent-room/badge.svg)](https://agentroom.test/r/aB3xYz)';
+      await expect(badge.getByLabel('README badge')).toHaveText(markdown);
+      await badge.getByRole('button', { name: 'Copy badge' }).click();
+      await expect(badge.getByRole('button', { name: 'Copied' })).toBeVisible();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(markdown);
+      await expectNoHorizontalOverflow(page);
+      await expectAccessible(page, '.ar-dialog');
+      await page.screenshot({
+        path: testInfo.outputPath(`share-readme-badge-${String(width)}.png`),
+        fullPage: true,
+      });
+      expect(failures).toEqual([]);
+    });
   });
 }
+
+test('房间“分享”里的“README 徽章”：没绑、在等核对、不是房主都没有', async ({ page }) => {
+  for (const query of ['&repository=none', '&repository=pending', '&repository=bound&asAdmin']) {
+    await page.goto(`${roomFixture}${query}`);
+    // 不是房主时房间照样绑着（勾在），只是网页不去问房主才问得到的那一份。
+    await expect(
+      page.getByRole('link', { name: 'Verified GitHub repository rainyflash/agent-room' }),
+    ).toHaveCount(query.includes('bound') ? 1 : 0);
+    const dialog = await openShare(page);
+    await expect(dialog.getByRole('heading', { name: 'How it looks when posted' })).toBeVisible();
+    await expect(dialog.getByRole('region', { name: 'README badge' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Copy badge' })).toHaveCount(0);
+  }
+});
 
 test('没绑仓库的房间顶栏没有勾；不是房主看不到“GitHub 仓库”一组', async ({ page }) => {
   await page.goto(`${roomFixture}&repository=none&asAdmin`);

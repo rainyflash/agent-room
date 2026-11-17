@@ -97,6 +97,7 @@ import { useRoomRepositoryMark } from '@/features/private-rooms/data/project-roo
 import { useRoomLiveView } from '@/features/private-rooms/data/room-live-view-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
 import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
+import { RepositoryBadgeShare } from '@/features/private-rooms/ui/project-room-badge';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
 import { ArchivedSubRoomNotice } from '@/features/sub-rooms/ui/archived-sub-room-notice';
 import { NewSubRoomDialog } from '@/features/sub-rooms/ui/new-sub-room-dialog';
@@ -339,6 +340,18 @@ function ReadyLobby({
           repository: repositoryQuery.data.value.repository,
           url: repositoryQuery.data.value.repositoryUrl,
         }
+      : null;
+  // 房间“分享”里的“README 徽章”只给房主：那一行在只有房主问得到的绑定那一份里，别人问回 403。勾说绑着仓库
+  // 时才去问，没绑的房间不多问一次。
+  const repositoryBadge =
+    projectRooms !== undefined &&
+    repository !== null &&
+    principal !== null &&
+    privateRoomList.data?.ok === true &&
+    privateRoomList.data.value.some(
+      (entry) => entry.catalogId === catalogId && entry.ownerPrincipalId === principal.principalId,
+    )
+      ? projectRooms
       : null;
   // 分享页放着实况时，房间名旁边那一小句说不登录也看得到（specs/redesign/project-rooms.md）。房间里的人都
   // 读得到；只在公开着的房间里问，公共大厅、私聊、私密的房间不问。
@@ -751,6 +764,9 @@ function ReadyLobby({
           }}
           room={shareRoom}
         >
+          {repositoryBadge === null ? null : (
+            <RepositoryBadgeShare catalogId={catalogId} gateway={repositoryBadge} />
+          )}
           {roomExcerpts === undefined || principal === null ? null : (
             <SharedExcerpts
               catalogId={catalogId}
