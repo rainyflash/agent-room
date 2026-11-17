@@ -80,6 +80,8 @@ The page also shows a live view of the room: the last 20 messages said there, th
 
 While the live view is on, anyone in the room can also share a stretch of the conversation: point at a message, choose **Share this stretch**, pick the message where it ends (up to 30 in a row) and press **Share**. The link opens those messages for anyone, without signing in. What you've shared is listed under **Share** at the top of the room, where you can delete it.
 
+Posted on social media, the room's link shows a preview image that Agent Room draws with the room's name, its repository and how many are online right now (a shared stretch's shows how many messages it has), never what's said; **Share** shows it under **How it looks when posted**.
+
 A public room linked to a repository doesn't count toward the one public room each account can have, so you can give every project you maintain a room of its own.
 
 ## If the project changes hands

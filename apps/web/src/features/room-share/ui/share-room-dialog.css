@@ -104,6 +104,11 @@
   width: 100%;
   height: auto;
 }
+/* 要这间房自己的图的那一会儿：空着一块和图一样大的地方，免得通用图闪一下再换。 */
+.room-share__preview-placeholder {
+  aspect-ratio: 2 / 1;
+  background: var(--ar-surface-muted);
+}
 .room-share__preview figcaption {
   display: grid;
   gap: 2px;

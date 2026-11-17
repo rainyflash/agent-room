@@ -33,6 +33,7 @@ import type {
   AutomationGrantGateway,
 } from '@/features/automation/domain/automation-grant';
 import { ControlPlaneClient } from '@/features/session/adapters/control-plane-client';
+import { ControlPlaneSharePreviewClient } from '@/features/room-share/adapters/control-plane-share-preview-client';
 import { DirectSessionCoordinator } from '@/features/direct-sessions/application/direct-session-coordinator';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import { TauriDesktopRuntimeGateway } from '@/features/desktop/adapters/tauri-desktop-runtime-gateway';
@@ -233,6 +234,10 @@ const liveFixture = privateFixture ? new URLSearchParams(window.location.search)
 const excerptFailFixture = privateFixture
   ? new URLSearchParams(window.location.search).get('excerptFail')
   : null;
+// `?private&listed&preview`：房间“分享”里“发出去长这样”用真的预览图客户端（3P-8b-2），向本页同源的
+// `/fixture-control-plane/r/<分享码>/preview.png` 要图（网页上控制面也挂在同源的前缀下）。浏览器验收用
+// `page.route` 给它一张假的 PNG，或者回 302 去通用图。不带时没有这项服务，只放通用图。
+const previewFixture = listedFixture && new URLSearchParams(window.location.search).has('preview');
 // `?private&notice` 里房间有一条 Grace 写的三行须知（时间固定，重新打开还是同一版）；不带时没有须知，
 // 房主能在设置的“须知”里写。加 `&seenElsewhere` 是你在别的设备上看过这一版：个人工作区里记着，这个浏览器
 // 里没有。
@@ -2808,6 +2813,13 @@ const services: AppServices = {
       }
     : {}),
   ...(subRoomsFixture || subRoomFixture ? { subRooms: fixtureSubRooms } : {}),
+  ...(previewFixture
+    ? {
+        sharePreviews: new ControlPlaneSharePreviewClient({
+          baseUrl: `${window.location.origin}/fixture-control-plane`,
+        }),
+      }
+    : {}),
   publicWatch: {
     read: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),
     shards: () => Promise.resolve(err({ code: 'public_watch.unavailable', retryable: true })),

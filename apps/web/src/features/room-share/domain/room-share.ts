@@ -7,6 +7,23 @@ export type ShareableRoom = {
   readonly description: string;
   /** 服务器拼好的整条分享链接（裸域上的 `/r/<分享码>`）。 */
   readonly shareUrl: string;
+  /** 链接里的分享码，拿它去要这间房自己的预览图；不知道时是 `null`，只给通用图。 */
+  readonly shareCode: string | null;
+};
+
+/** 分享码：6 位大小写字母和数字（控制面 `RoomShareCode`）。不像的不去问服务器。 */
+export const SHARE_CODE_PATTERN = /^[A-Za-z0-9]{6}$/u;
+
+/**
+ * 这间房自己的预览图（`specs/redesign/project-rooms.md`“预览图”，3P-8b-2）：控制面的
+ * `GET /r/<分享码>/preview.png`，和分享页的 `og:image` 是同一张。
+ */
+export type SharePreviewGateway = {
+  /**
+   * 此刻的那张 PNG。没有（不公开了、服务器忙着给通用图、连不上、超时）一律是 `null`，界面照旧放通用图；
+   * 不抛错。`signal` 停了也是 `null`。
+   */
+  roomImage(shareCode: string, signal: AbortSignal): Promise<Blob | null>;
 };
 
 /** 默认那段话里简介最多取这么多字。 */
@@ -25,8 +42,8 @@ export function shareExcerpt(description: string, max: number): string | null {
 }
 
 /**
- * 发到社交媒体上用哪张通用的预览图。抓预览的爬虫多半不带 `Accept-Language`，分享页这时看房间名里有没有
- * 中文字（控制面 `share_page.rs` 的 `guess_language`），这里照同一条规则，预览才和发出去的一样。
+ * 通用的那张预览图：这间房自己的图要不到时放它，和控制面画不了时 302 去的是同一张。控制面看房间名里有没有
+ * 中文字（`share_page.rs` 的 `guess_language`）选语言，这里照同一条规则，预览才和发出去的一样。
  */
 export function sharePreviewImage(roomName: string): string {
   return /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/u.test(roomName)
@@ -49,7 +66,10 @@ export type ShareTargets = {
  * 三家自己的分享网址：只是打开一个新标签页，不加载它们的脚本，它们也不知道是谁点的。话里没写字时
  * 用房间名。
  */
-export function shareTargets(room: ShareableRoom, text: string): ShareTargets {
+export function shareTargets(
+  room: Pick<ShareableRoom, 'name' | 'shareUrl'>,
+  text: string,
+): ShareTargets {
   const words = withoutLink(text, room.shareUrl) || room.name;
   const x = new URL('https://x.com/intent/post');
   x.searchParams.set('text', words);

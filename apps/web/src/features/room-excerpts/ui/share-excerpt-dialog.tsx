@@ -77,7 +77,7 @@ export function ShareExcerptDialog({
             <>
               <ShareLinkField url={state.url} />
               <ShareTargetLinks
-                room={{ description: '', name: roomName, shareUrl: state.url }}
+                room={{ name: roomName, shareUrl: state.url }}
                 text={t('roomExcerpt.dialog.message', { name: roomName })}
               />
             </>

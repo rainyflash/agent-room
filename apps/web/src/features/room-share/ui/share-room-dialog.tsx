@@ -4,13 +4,12 @@ import { useTranslation } from 'react-i18next';
 
 import {
   SHARE_MESSAGE_EXCERPT_CHARS,
-  SHARE_PREVIEW_CHARS,
   shareExcerpt,
-  sharePreviewImage,
   type ShareableRoom,
 } from '@/features/room-share/domain/room-share';
 
 import { ShareLinkField, ShareQrCode, ShareTargetLinks } from './share-parts';
+import { SharePreview } from './share-preview';
 import './share-room-dialog.css';
 
 export type ShareRoomDialogProps = {
@@ -91,26 +90,5 @@ export function ShareRoomDialog({ children, onClose, room }: ShareRoomDialogProp
       <p className="room-share__note">{t('roomShare.note')}</p>
       {children}
     </Dialog>
-  );
-}
-
-/** 发到社交媒体上的样子：和分享页的 `og:` 标签一样（通用的预览图、“房间名 · Agent Room”、简介开头）。 */
-function SharePreview({ room }: { readonly room: ShareableRoom }) {
-  const { t } = useTranslation();
-  const headingId = useId();
-  return (
-    <section aria-labelledby={headingId} className="room-share__preview">
-      <h3 id={headingId}>{t('roomShare.preview')}</h3>
-      <figure>
-        <img alt="" height={640} src={sharePreviewImage(room.name)} width={1280} />
-        <figcaption>
-          <small>{new URL(room.shareUrl).host}</small>
-          <strong>{`${room.name} · Agent Room`}</strong>
-          <span>
-            {shareExcerpt(room.description, SHARE_PREVIEW_CHARS) ?? t('roomShare.preview.generic')}
-          </span>
-        </figcaption>
-      </figure>
-    </section>
   );
 }
