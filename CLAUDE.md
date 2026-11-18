@@ -516,7 +516,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 公开房间的“分享”对话框里屏幕上的二维码已经换成卡片，别再加回一个单独的二维码；分享一段对话的对话框照旧用 `ShareQrCode`，那张卡片要画的是那几句话，以后另做。
   - jsdom 没有画布：单元测试里把 `share-card-canvas` 整个 mock 掉。`loadStudioCharacters` 要不到图集时卡片不画机器人，别改成整张画不出来。
   - 复制图片要在点击的那一下里交给剪贴板（图是提前画好的），别改成点了再画。
-- 装好的桌面端上“复制图片”“保存图片”还没点过（保存走页面自己的下载，和“下载我的数据”同一条路，`shared/browser/save-file.ts`）：下一次发版实机验收时各点一次。
+- 装好的桌面端上“复制图片”“保存图片”还没点过（保存走页面自己的下载，和“下载我的数据”同一条路，`shared/browser/save-file.ts`）。Alpha 97 的实机验收没点：验收工具不点这两个按钮，经调试端口点，保存和剪贴板走的也不一定是人真点时那条路。要人在装好的桌面端上真点一次，或者约个时间由编码 Agent 在维护者看着的时候点。
 
 ### 新用户走到哪一步
 
@@ -974,11 +974,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 97 正在发布（2026-11-18，维护者说“现在就发”）：邀请卡片和公开房间的分享卡片（#937、#938），网页上接入 Agent 先请人装桌面应用（#936），周报加“一周后又说了话”一列（#935），一条噪音规则（#933）和 picomatch 公告的精确例外（#940，跟踪 #939）。
-  - 发版前在 #938 的分支上派发了一次 `suite=all`：“供应链与物料清单”红在当天更新的 picomatch 公告上（GHSA-fc5q-39xc-vjpf，只有开发工具带进来，还没有修复版本）。#940 加了精确例外，合并以后才开版本 PR。`cargo deny check advisories` 查不到 Node 的公告，开版本 PR 之前本机再跑一遍 `corepack pnpm@10.28.0 audit:node`。
-  - Alpha 96 以后没改登录相关路径，复用 Alpha 96 那台长期验收设备，不要设备码。没有迁移，没改 Rust 代码，部署配置没加新变量，回滚可以退到 Alpha 96。没改告警规则，发完不用跑 `telemetry-apply`。
-  - 周报的新一列要这一版部署以后才有：下一期是 11-23（周一）。
-  - 实机验收时在装好的桌面端上各点一次邀请卡片的“复制图片”“保存图片”。
+- Alpha 97 已于 2026-11-18 公开，见 [发布记录](./specs/agent-access/alpha97-release.md)。
+  - 邀请卡片和公开房间的分享卡片（#937、#938），网页上接入 Agent 先请人装桌面应用（#936），周报加“一周后又说了话”一列（#935），一条噪音规则（#933）和 picomatch 公告的精确例外（#940，跟踪 #939）。
+  - 发版前在 #938 的分支上派发了一次 `suite=all`：“供应链与物料清单”红在当天更新的 picomatch 公告上（GHSA-fc5q-39xc-vjpf，只有开发工具带进来，还没有修复版本）。#940 加了精确例外，合并以后才开版本 PR，发布提交上一次就过。
+  - 发布提交的完整 CI 第 1 次红在一条靠运气的 Rust 测试上（网络 Agent 撞名后换的随机编号正好抽回原来那个，一万次里一次）。发布链看到红的作业就停，单个作业又要等整轮跑完才能重跑，用一次性的 `rerun_then_restart.py` 接上，多等约 7 分钟。#942 修了：换的编号不再抽到这一次试过的。
+  - 升级验收停过一次，是编码 Agent 自己弄的：等 CI 时清理一个临时工作树，`git worktree remove --force` 顺着 `node_modules` 的 junction 删掉了主检出里装好的一部分包，`tools/cdp_run.mjs` 起不来，验收报“调试端口没开页面”。主检出里离线重装以后从 `upgrade` 接着跑（`qa_resume.py`），一次通过，约 7 分钟。
+  - 没改登录相关路径，复用 Alpha 96 那台长期验收设备，没要设备码。没有迁移，没改 Rust 代码，部署配置没加新变量，回滚可以退到 Alpha 96。没改告警规则，没跑 `telemetry-apply`。
+  - 部署后在服务器上不带 `--post` 试跑了一次周报，新的一列出来了；正式的下一期是 11-23（周一）。
+  - 邀请卡片的“复制图片”“保存图片”在装好的桌面端上还没点过，见上面“邀请卡片”。
+  - 版本 PR #941 合并到网页上线约 1 小时 14 分钟。
 - Alpha 96 已于 2026-11-17 公开，见 [发布记录](./specs/agent-access/alpha96-release.md)。版本号从 Alpha 94 直接到 Alpha 96，Alpha 95 没有公开。
   - 重新设计的第 1、2 块（房间页重排、子房间、房间的身份和管理员），第 4 块的须知与置顶、网页通知、接入时默认开后台回复和提醒的演练，第 3 块的项目房间、分享页的实况、分享一段对话、README 徽章和预览图（#792–#924）；第四稿配色“深色导航，颜色跟着人”（#926–#929）；另有几处修复（#789、#881、#883）、一条噪音规则（#925）和 chrono 公告的精确例外（#932，跟踪 #931）。
   - Alpha 95（发布提交 `49af7846`）当天早些时候实机验收过了，维护者装上以后说界面太素，停在公开前：那时服务端已经部署成 Alpha 95，网页和下载还是 Alpha 94，`release/v0.1.0-alpha.95` 分支已经建了、删不掉，所以这一版叫 96。GitHub 上 `v0.1.0-alpha.95` 的草稿和那个分支留着没动，删不删由维护者定。
@@ -1226,8 +1230,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 生产上我们自己的镜像每版多 3 个（控制面、网页、身份服务），2026-11-01 攒到 105 个、13.7 GiB。维护者同意后只留当前和上一版（回滚用），删了 99 个、腾出 8.6 GB。发布目录的 `cleanup_old_images.py` 做这件事：按部署目录里的 `compose.images.json` 认当前和上一版，只删我们自己的，第三方的一个不碰（`alpine`、`rclone`、`golang` 平时没容器在用，别用 `docker image prune -a`）。派生发布脚本时带上，发完和 `cleanup_old_releases.py` 一起跑。
 - 发布链经 WMI 启动，应用退出带不走它，可 Windows 结束登录会话时一样带走（2026-11-04 Alpha 88，`bash` 报 `dofork … 0xC000026B`，网页晚了 7 个多小时才上线）。新会话接手发版，先看发布目录的日志停在哪、进程还在不在，再从停下的那一步接着跑（`publish_resume.sh`）。
 - GitHub 故障时运行状态可能不更新：Alpha 88 的公开作业 `16:17Z` 已经跑完，`gh run view`、`gh run watch` 到 `16:29Z` 还说 `waiting`。说“还没公开”之前连作业的步骤和 Release 本身一起看。
-- 开版本 PR 之前先在本机跑一次 `cargo deny check advisories`（几秒钟）：上游当天新出的公告只有版本 PR 的 CI 才撞上，Alpha 94、Alpha 96 都因此多等了一轮。有新公告就先开加例外或升级的 PR，合了再开版本 PR。
-- 下一版的发布脚本从 `artifacts/releases/alpha96` 派生。Alpha 96 那次“公开的上一版”（94）和“服务端、本机装着的”（95 候选）不是同一个，`derive_alpha96.py` 把它们分开写了；下一版这两样又都是 96，留着的 94 和明着写的 95 都挪到 96，文件头写着。
+- 开版本 PR 之前先在本机跑一次 `cargo deny check advisories`（几秒钟）和 `corepack pnpm@10.28.0 audit:node`（cargo-deny 查不到 Node 的公告）：上游当天新出的公告只有版本 PR 的 CI 才撞上，Alpha 94、Alpha 96 都因此多等了一轮，Alpha 97 是发版前那次 `suite=all` 抓到的。有新公告就先开加例外或升级的 PR，合了再开版本 PR。
+- 下一版的发布脚本从 `artifacts/releases/alpha97` 派生，回到平常的写法（上一版 97、这一版 98）：Alpha 96、97 那两次“公开的上一版”和“服务端、本机装着的”分开写的地方不用再管。Alpha 97 一次性的 `rerun_then_restart.py`、`qa_resume.py`、`start_qa_resume.ps1` 别带。
+- 发布提交的 CI 里某个作业偶发红了：发布链（`release_watch.py`）马上停，可单个作业要等整轮跑完才能重跑（跑着的时候 API 回 403）。先看清是不是偶发，再等这一轮完、`gh run rerun <运行> --failed`，把 `after_candidate` 和 `publish_chain` 的旧日志改名后重新拉起（Alpha 97 的 `rerun_then_restart.py` 是这样做的）。
+- 发布途中别做清理这类不急的事。临时工作树的 `node_modules` 要是连到主检出的 junction，`git worktree remove --force`、`git clean` 会顺着链接删掉主检出里装好的包（Git for Windows 把 junction 当普通目录）：先逐个摘掉链接再删目录，`cmd /c rmdir` 只摘链接。弄坏了就在主检出里 `corepack pnpm@10.28.0 install --frozen-lockfile --offline --force`。
+- 实机验收报“桌面应用 90 秒内没有通过调试端口打开页面”时，先单独跑一次 `node tools/cdp_run.mjs --port 14222 --url-prefix http://tauri.localhost`：工具自己起不来（缺包）也是报这一句。
 - 发布工具 `target/release/agent-room-release-tool.exe` 是本机编的，清了编译缓存就没了，`verify_candidate.py` 会失败（Alpha 88）。本机发布目录的 `after_candidate.py` 现在先编好它。
 - 错误汇总的定时器 Alpha 81 公开时由发布脚本最后一步装上了（`install_error_digest_schedule.py`），之后跟着源码走，以后的版本不用再装，派生发布脚本时去掉这一步。换了服务器才要重装，命令在 `infra/production/README.md`。
 - 通道清单签名后 30 天过期（`tools/release_ci.py` 的 `MANIFEST_LIFETIME_SECONDS`，2026-11-01 以前是 7 天）。过期只是查不了更新：设置里写“暂时查不到新版本，下次发版以后就好”（`desktop.update.manifest_expired`），应用照常用，不用为它赶着发版。已装的桌面端最多认 30 天，别再加长。
