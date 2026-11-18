@@ -831,6 +831,7 @@ function ReadyLobby({
       principal !== null &&
       privateRoomInvites !== undefined ? (
         <PrivateRoomInviteDialog
+          inviterName={principal.displayName}
           invites={privateRoomInvites}
           onClose={() => {
             setPeopleInviteOpen(false);

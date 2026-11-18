@@ -1,7 +1,7 @@
 import { Banner, Button, CopyBlock, Details, Dialog, Spinner } from '@agent-room/ui-system';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link2, Link2Off, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -25,10 +25,16 @@ import { invitableBy } from '@/features/private-rooms/domain/room-roles';
 import { PrivateRoomAccountInvite } from '@/features/private-rooms/ui/private-room-account-invite';
 import { PrivateRoomCapabilityEditor } from '@/features/private-rooms/ui/private-room-capability-editor';
 import { PrivateRoomFailureNotice } from '@/features/private-rooms/ui/private-room-failure-notice';
-import { formatDateTime } from '@/shared/i18n/formatters';
+import type { ShareCardContent } from '@/features/room-share/domain/share-card';
+import { ShareCard } from '@/features/room-share/ui/share-card';
+import { ShareMessageField } from '@/features/room-share/ui/share-parts';
+import { formatDateTime, formatMonthDay } from '@/shared/i18n/formatters';
 import { err, type Result } from '@/shared/result';
+import { roomTone } from '@/shared/ui/room-tone';
 
 export type PrivateRoomInviteDialogProps = {
+  /** 邀请卡片上写的“谁邀请你”：发邀请的人的昵称。没有就不写名字。 */
+  readonly inviterName?: string | undefined;
   readonly invites: PrivateRoomInviteGateway;
   readonly onClose: () => void;
   readonly principalId: string;
@@ -44,9 +50,11 @@ const forbiddenCodes = new Set(['invite_link.forbidden', 'private_room.forbidden
 
 /**
  * 房间页“接入 Agent”旁边的“邀请人”（`specs/room-people/design.md`）：一条链接，复制了发给朋友，
- * 他们登录后就能进来；能换一条、能停用。链接给的权限收在“设置”里，按账户 ID 邀请收在折叠里。
+ * 他们登录后就能进来；能换一条、能停用。有链接时旁边是一张带二维码的邀请卡片，能复制、存下来发到聊天
+ * 软件里（`specs/share-card/design.md`）。链接给的权限收在“设置”里，按账户 ID 邀请收在折叠里。
  */
 export function PrivateRoomInviteDialog({
+  inviterName,
   invites,
   onClose,
   principalId,
@@ -54,15 +62,23 @@ export function PrivateRoomInviteDialog({
   rooms,
 }: PrivateRoomInviteDialogProps) {
   const { t } = useTranslation();
+  // 有链接时多一栏卡片，对话框跟着宽一档；和下面那一节是同一份查询。
+  const link = usePrivateRoomInviteLink(invites, room.catalogId);
   return (
     <Dialog
       className="private-room-invite-dialog"
       closeLabel={t('privateRooms.inviteLink.close')}
       description={t('privateRooms.inviteLink.subtitle', { room: room.name })}
       onClose={onClose}
+      size={link.data?.ok === true ? 'wide' : 'default'}
       title={t('privateRooms.inviteLink.title')}
     >
-      <InviteLinkSection invites={invites} principalId={principalId} room={room} />
+      <InviteLinkSection
+        inviterName={inviterName}
+        invites={invites}
+        principalId={principalId}
+        room={room}
+      />
       <Details summary={t('privateRooms.inviteLink.account.summary')}>
         <PrivateRoomAccountInvite
           heading={false}
@@ -76,10 +92,11 @@ export function PrivateRoomInviteDialog({
 }
 
 function InviteLinkSection({
+  inviterName,
   invites,
   principalId,
   room,
-}: Pick<PrivateRoomInviteDialogProps, 'invites' | 'principalId' | 'room'>) {
+}: Pick<PrivateRoomInviteDialogProps, 'inviterName' | 'invites' | 'principalId' | 'room'>) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const key = privateRoomInviteLinkQueryKey(room.catalogId);
@@ -96,6 +113,35 @@ function InviteLinkSection({
       ? intersectPermissions(DEFAULT_INVITE_PERMISSIONS, grantable)
       : withoutManage(current.permissions));
   const [autoCopied, setAutoCopied] = useState(false);
+  // 一起发的那段话：改过才记下，记的是给哪条链接改的。换了一条，旧的那段带着作废的地址，不留。
+  const [edited, setEdited] = useState<{ readonly url: string; readonly text: string } | null>(
+    null,
+  );
+  const language = i18n.resolvedLanguage;
+  const name = inviterName?.trim() ?? '';
+  const card = useMemo<ShareCardContent | null>(
+    () =>
+      current === null
+        ? null
+        : {
+            action: t('privateRooms.inviteLink.card.action'),
+            lead:
+              name === ''
+                ? t('privateRooms.inviteLink.card.leadAnonymous')
+                : t('privateRooms.inviteLink.card.lead', { name }),
+            notes: [
+              t('privateRooms.inviteLink.card.signIn'),
+              t('privateRooms.inviteLink.card.valid', {
+                date: formatMonthDay(current.expiresAtUnixMs, language),
+              }),
+            ],
+            roomName: room.name,
+            tagline: t('roomShare.card.tagline'),
+            tone: roomTone(room.catalogId),
+            url: current.url,
+          },
+    [current, language, name, room.catalogId, room.name, t],
+  );
 
   const create = useMutation({
     mutationFn: async () => await invites.createInviteLink(room.catalogId, shown),
@@ -179,45 +225,67 @@ function InviteLinkSection({
           {autoCopied ? (
             <Banner tone="success">{t('privateRooms.inviteLink.copied')}</Banner>
           ) : null}
-          <CopyBlock
-            copiedLabel={t('privateRooms.inviteLink.copied')}
-            copyLabel={t('privateRooms.inviteLink.copy')}
-            failedLabel={t('privateRooms.inviteLink.copyFailed')}
-            text={current.url}
-            textLabel={t('privateRooms.inviteLink.label')}
-          />
-          <p className="private-room-invite-link__note">
-            {t('privateRooms.inviteLink.valid', {
-              date: formatDateTime(current.expiresAtUnixMs, i18n.resolvedLanguage),
-            })}
-          </p>
-          <div className="private-room-invite-link__actions">
-            <Button
-              disabled={busy}
-              icon={<RefreshCw aria-hidden="true" />}
-              onClick={() => {
-                create.mutate();
-              }}
-              size="compact"
-              tone="ghost"
-            >
-              {t('privateRooms.inviteLink.replace')}
-            </Button>
-            <Button
-              disabled={busy}
-              icon={<Link2Off aria-hidden="true" />}
-              onClick={() => {
-                disable.mutate();
-              }}
-              size="compact"
-              tone="alert"
-            >
-              {t('privateRooms.inviteLink.disable')}
-            </Button>
+          <div className="private-room-invite-link__send">
+            <div className="private-room-invite-link__text">
+              <CopyBlock
+                copiedLabel={t('privateRooms.inviteLink.copied')}
+                copyLabel={t('privateRooms.inviteLink.copy')}
+                failedLabel={t('privateRooms.inviteLink.copyFailed')}
+                text={current.url}
+                textLabel={t('privateRooms.inviteLink.label')}
+              />
+              <p className="private-room-invite-link__note">
+                {t('privateRooms.inviteLink.valid', {
+                  date: formatDateTime(current.expiresAtUnixMs, language),
+                })}
+              </p>
+              <ShareMessageField
+                onChange={(text) => {
+                  setEdited({ text, url: current.url });
+                }}
+                text={
+                  edited?.url === current.url
+                    ? edited.text
+                    : `${t('privateRooms.inviteLink.message.default', { room: room.name })}\n${current.url}`
+                }
+              />
+              <div className="private-room-invite-link__actions">
+                <Button
+                  disabled={busy}
+                  icon={<RefreshCw aria-hidden="true" />}
+                  onClick={() => {
+                    create.mutate();
+                  }}
+                  size="compact"
+                  tone="ghost"
+                >
+                  {t('privateRooms.inviteLink.replace')}
+                </Button>
+                <Button
+                  disabled={busy}
+                  icon={<Link2Off aria-hidden="true" />}
+                  onClick={() => {
+                    disable.mutate();
+                  }}
+                  size="compact"
+                  tone="alert"
+                >
+                  {t('privateRooms.inviteLink.disable')}
+                </Button>
+              </div>
+              <p className="private-room-invite-link__hint">
+                {t('privateRooms.inviteLink.replaceNote')}
+              </p>
+            </div>
+            {card === null ? null : (
+              <ShareCard
+                alt={t('privateRooms.inviteLink.card.alt', { room: room.name })}
+                content={card}
+                detail={t('privateRooms.inviteLink.card.detail')}
+                heading={t('privateRooms.inviteLink.card.title')}
+              />
+            )}
           </div>
-          <p className="private-room-invite-link__hint">
-            {t('privateRooms.inviteLink.replaceNote')}
-          </p>
         </>
       )}
       {failure === null ? null : <PrivateRoomFailureNotice failure={failure} />}

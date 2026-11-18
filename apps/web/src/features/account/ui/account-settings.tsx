@@ -16,6 +16,7 @@ import type { DesktopRuntimeController } from '@/features/desktop/ui/use-desktop
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
+import { saveBlob } from '@/shared/browser/save-file';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import './account-settings.css';
 
@@ -385,14 +386,5 @@ function DeletionConfirmation({
 }
 
 function saveTextFile(fileName: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-  const anchor = document.createElement('a');
-  anchor.download = fileName;
-  anchor.href = url;
-  anchor.rel = 'noopener';
-  anchor.click();
-  // 点击后浏览器才开始读这个地址，晚一点再释放。
-  globalThis.setTimeout(() => {
-    URL.revokeObjectURL(url);
-  }, 60_000);
+  saveBlob(new Blob([text], { type: 'application/json' }), fileName);
 }
