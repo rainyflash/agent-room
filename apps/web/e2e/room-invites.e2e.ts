@@ -1,9 +1,8 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { encode } from 'uqr';
 
-import { shareCardQrLayout } from '../src/features/room-share/domain/share-card';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { expectShareCardFor } from './support/share-card';
 import { roomAction } from './support/workspace-navigation';
 
 const roomFixture = '/e2e/fixtures/lobby-scene.html';
@@ -33,46 +32,9 @@ function inviteCard(dialog: Locator): Locator {
   });
 }
 
-/** 卡片那张图上的二维码，一格一格读出来：格子正中是黑的算黑。 */
-async function cardQrModules(card: Locator, modules: number): Promise<boolean[][]> {
-  return await card.evaluate(
-    (image: HTMLImageElement, layout) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      const context = canvas.getContext('2d');
-      if (context === null) throw new Error('2D canvas unavailable');
-      context.drawImage(image, 0, 0);
-      const rows: boolean[][] = [];
-      for (let row = 0; row < layout.modules; row += 1) {
-        const cells: boolean[] = [];
-        for (let column = 0; column < layout.modules; column += 1) {
-          const [red = 255, green = 255, blue = 255] = context.getImageData(
-            layout.x + column * layout.cell + Math.floor(layout.cell / 2),
-            layout.y + row * layout.cell + Math.floor(layout.cell / 2),
-            1,
-            1,
-          ).data;
-          cells.push(red + green + blue < 384);
-        }
-        rows.push(cells);
-      }
-      return rows;
-    },
-    { ...shareCardQrLayout(modules), modules },
-  );
-}
-
-/** 图画好了（1080×1350），上面的二维码就是这条链接。 */
+/** 邀请卡片画好了，上面的二维码就是这条链接。 */
 async function expectCardFor(dialog: Locator, url: string): Promise<void> {
-  const card = inviteCard(dialog);
-  const qr = encode(url, { border: 0, ecc: 'M' });
-  await expect(async () => {
-    expect(
-      await card.evaluate((image: HTMLImageElement) => [image.naturalWidth, image.naturalHeight]),
-    ).toEqual([1080, 1350]);
-    expect(await cardQrModules(card, qr.size)).toEqual(qr.data);
-  }).toPass();
+  await expectShareCardFor(inviteCard(dialog), url);
 }
 
 for (const width of [1440, 390]) {

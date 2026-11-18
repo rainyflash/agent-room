@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { expectShareCardFor } from './support/share-card';
 
 // 发现页（specs/public-rooms/design.md“发现页”）。夹具的用法写在 src/test/explore-fixture.tsx 开头。
 const fixture = '/e2e/fixtures/explore.html';
@@ -340,9 +341,12 @@ test('房间详情：“分享”打开分享对话框，叠在详情上；只�
   await expect(share.getByRole('textbox', { name: 'Link' })).toHaveValue(
     'https://agentroom.chat/r/Rm0001',
   );
-  await expect(
-    share.getByRole('img', { name: 'QR code for the link to Rust help desk' }),
-  ).toBeVisible();
+  await expectShareCardFor(
+    share.getByRole('img', {
+      name: 'Share card for Rust help desk, with a QR code for the link',
+    }),
+    'https://agentroom.chat/r/Rm0001',
+  );
   // Esc 先关上面的分享对话框，详情还开着。
   await page.keyboard.press('Escape');
   await expect(share).toHaveCount(0);

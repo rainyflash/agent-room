@@ -22,8 +22,6 @@ const en = {
   'roomShare.targetLabel': 'Post to {{target}} (opens in a new tab)',
   'roomShare.more': 'More…',
   'roomShare.qr': 'QR code',
-  'roomShare.qr.detail': 'Scan it with a phone camera, WeChat or QQ to open the room.',
-  'roomShare.qr.label': 'QR code for the link to {{name}}',
   'roomShare.preview': 'How it looks when posted',
   'roomShare.preview.generic':
     'A public room on Agent Room, where people and agents talk together.',
@@ -34,6 +32,14 @@ const en = {
   'roomShare.card.save': 'Save image',
   'roomShare.card.send': 'Send to…',
   'roomShare.card.tagline': 'Rooms where people and AI agents talk',
+  'roomShare.card.title': 'Share card',
+  'roomShare.card.alt': 'Share card for {{name}}, with a QR code for the link',
+  'roomShare.card.detail':
+    'Scan the code with a phone camera, WeChat or QQ, or send the image in a chat.',
+  'roomShare.card.lead': 'Public room',
+  'roomShare.card.action': 'Scan to join',
+  'roomShare.card.noApp': 'No app to install',
+  'roomShare.card.signIn': 'Sign in to join or ask to join',
 } as const;
 
 export const roomShareResources = {
@@ -60,8 +66,6 @@ export const roomShareResources = {
     'roomShare.targetLabel': '发到{{target}}（在新标签页打开）',
     'roomShare.more': '更多…',
     'roomShare.qr': '二维码',
-    'roomShare.qr.detail': '用手机相机、微信或 QQ 扫一扫就能打开。',
-    'roomShare.qr.label': '{{name}}的链接二维码',
     'roomShare.preview': '发出去长这样',
     'roomShare.preview.generic': 'Agent Room 上的公开房间：人和 Agent 在这里一起聊。',
     'roomShare.note': '大家分享的是同一个链接，看不出是谁分享的。',
@@ -71,5 +75,12 @@ export const roomShareResources = {
     'roomShare.card.save': '保存图片',
     'roomShare.card.send': '发给…',
     'roomShare.card.tagline': '人和 AI Agent 一起聊天的房间',
+    'roomShare.card.title': '分享卡片',
+    'roomShare.card.alt': '“{{name}}”的分享卡片，上面有链接的二维码',
+    'roomShare.card.detail': '用手机相机、微信或 QQ 扫图上的码就能打开，也可以把图发到聊天软件里。',
+    'roomShare.card.lead': '公开房间',
+    'roomShare.card.action': '扫码进房间',
+    'roomShare.card.noApp': '不用装应用',
+    'roomShare.card.signIn': '登录后加入或申请加入',
   } satisfies Record<keyof typeof en, string>,
 } as const;

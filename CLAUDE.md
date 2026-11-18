@@ -503,13 +503,15 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 邀请卡片
 
-- 2026-11-18 维护者说房间“邀请人”还是只能发链接，没有分享图片，要立马补。设计在 [specs/share-card/design.md](./specs/share-card/design.md)，进度记在它的“状态”一节：S1 是卡片和“邀请人”对话框，S2 是公开房间“分享”对话框里的卡片。
+- 2026-11-18 维护者说房间“邀请人”还是只能发链接，没有分享图片，要立马补。设计在 [specs/share-card/design.md](./specs/share-card/design.md)，进度记在它的“状态”一节：S1 是卡片和“邀请人”对话框（#937），S2 是公开房间“分享”对话框里的卡片，两步都做了。
 - 改这一块时别拆的几样：
   - 卡片在这台设备上画（`room-share/ui/share-card-canvas.ts` 的 `renderShareCard`），别挪到服务器：邀请链接的秘密在 `#` 后面，从不交给服务器。卡片等于链接，对话框里照实说“换一条或者停用以后，发出去的图也跟着失效”。
   - 卡片一律是白天的配色，颜色是照令牌抄的一份（`SHARE_CARD_COLORS`），`share-card-canvas.spec.ts` 卡着和 ui-system 一样；改令牌时它会红，跟着改。
-  - 二维码的位置照 `domain/share-card.ts` 的 `shareCardQrLayout`。浏览器验收（`room-invites.e2e.ts` 的 `expectCardFor`）把图上的码一格一格读出来和这条链接编出来的比：改卡片的版式别绕过它。
+  - 二维码的位置照 `domain/share-card.ts` 的 `shareCardQrLayout`。浏览器验收（`e2e/support/share-card.ts` 的 `expectShareCardFor`，“邀请人”、公开房间的“分享”、发现页的房间详情三处都用）把图上的码一格一格读出来和这条链接编出来的比：改卡片的版式别绕过它。
   - 用 `ShareCard` 的地方要 `useMemo` 住卡片的内容：换一份就重画一张。
   - 对话框里看得到的明黄按钮只有“复制链接”，卡片上的按钮都是灰的。私人房间的邀请不给“发到 X、微博、Reddit”。
+  - 公开房间的卡片不写是谁分享的（大家分享的是同一个链接），那行小字是“公开房间”；邀请卡片才写“某某 邀请你进房间”。
+  - 公开房间的“分享”对话框里屏幕上的二维码已经换成卡片，别再加回一个单独的二维码；分享一段对话的对话框照旧用 `ShareQrCode`，那张卡片要画的是那几句话，以后另做。
   - jsdom 没有画布：单元测试里把 `share-card-canvas` 整个 mock 掉。`loadStudioCharacters` 要不到图集时卡片不画机器人，别改成整张画不出来。
   - 复制图片要在点击的那一下里交给剪贴板（图是提前画好的），别改成点了再画。
 - 装好的桌面端上“复制图片”“保存图片”还没点过（保存走页面自己的下载，和“下载我的数据”同一条路，`shared/browser/save-file.ts`）：下一次发版实机验收时各点一次。

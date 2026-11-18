@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { fakePng } from './support/fake-png';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
+import { expectShareCardFor } from './support/share-card';
 import { openRoomSettings, roomAction } from './support/workspace-navigation';
 
 const roomFixture = '/e2e/fixtures/lobby-scene.html';
@@ -212,7 +213,7 @@ for (const width of [1440, 390]) {
 }
 
 for (const width of [1440, 390]) {
-  test(`公开房间的“分享”：链接、能改的话、三家的分享网址和二维码：${String(width)}`, async ({
+  test(`公开房间的“分享”：链接、能改的话、三家的分享网址和分享卡片：${String(width)}`, async ({
     page,
   }, testInfo) => {
     const failures = collectPageFailures(page);
@@ -233,7 +234,13 @@ for (const width of [1440, 390]) {
     );
     expect(x.searchParams.get('text')).toBe('Come say hi!');
     expect(x.searchParams.get('url')).toBe('https://agentroom.test/r/aB3xYz');
-    await expect(dialog.getByRole('img', { name: /^QR code for the link to / })).toBeVisible();
+    // 分享卡片在本机画，上面的二维码就是这间房的分享链接；按钮都是灰的。
+    await expectShareCardFor(
+      dialog.getByRole('img', { name: /^Share card for .+, with a QR code for the link$/u }),
+      'https://agentroom.test/r/aB3xYz',
+    );
+    await expect(dialog.getByRole('button', { name: 'Save image' })).toBeEnabled();
+    await expect(dialog.locator('.share-card .ar-button--primary')).toHaveCount(0);
     await expect(dialog.getByRole('heading', { name: 'How it looks when posted' })).toBeVisible();
     // 预览图真的加载出来了：文件名和 `public/` 里的对不上时这里是 0。
     await expect(dialog.locator('.room-share__preview img')).toHaveJSProperty(

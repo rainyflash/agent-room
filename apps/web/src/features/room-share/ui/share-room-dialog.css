@@ -1,6 +1,6 @@
 .room-share__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   gap: 24px;
   align-items: start;
 }
@@ -93,6 +93,8 @@
   gap: 8px;
 }
 .room-share__preview figure {
+  /* 预览是给人看个样子的，不用和左栏一样宽。 */
+  max-width: 320px;
   margin: 0;
   overflow: hidden;
   border: 1px solid var(--ar-line);
@@ -143,6 +145,9 @@
   }
   .room-share__link {
     flex-wrap: wrap;
+  }
+  .share-card__figure {
+    max-width: 280px;
   }
 }
 /* 发给人的那张卡片（specs/share-card）：图本身一律是白天的样子，这里只是摆它的地方。 */
