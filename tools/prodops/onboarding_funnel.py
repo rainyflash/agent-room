@@ -35,7 +35,10 @@ STEPS = (
     ("agent_spoke", "Agent 说过话"),
     ("spoke", "自己说过话"),
     ("came_back", "一周后还来"),
+    ("spoke_again", "一周后又说了话"),
 )
+# 注册满 7 天才算得出来的那几列；没满的那一周写“—”。
+LATER_STEPS = ("came_back", "spoke_again")
 
 
 class Databases(Protocol):
@@ -63,6 +66,7 @@ class Person:
     agent_spoke: bool = False
     spoke: bool = False
     last_used: datetime | None = None
+    last_spoke: datetime | None = None
 
     @property
     def registered(self) -> bool:
@@ -73,6 +77,12 @@ class Person:
         if now - self.registered_at < COMEBACK_AFTER:
             return None
         return self.last_used is not None and self.last_used >= self.registered_at + COMEBACK_AFTER
+
+    def spoke_again(self, now: datetime) -> bool | None:
+        """注册 7 天以后他自己又发过消息。比“还来”严：网页开着、桌面端挂着不算。"""
+        if now - self.registered_at < COMEBACK_AFTER:
+            return None
+        return self.last_spoke is not None and self.last_spoke >= self.registered_at + COMEBACK_AFTER
 
 
 def _moment(value: str) -> datetime | None:
@@ -175,7 +185,8 @@ def _chat(databases: Databases, people: dict[str, Person]) -> None:
         person = people.get(sender)
         if person is not None:
             person.spoke = True
-            person.last_used = _later(person.last_used, _moment(last_sent))
+            person.last_spoke = _later(person.last_spoke, _moment(last_sent))
+            person.last_used = _later(person.last_used, person.last_spoke)
     for room, users in members.items():
         joined_agents = users & agents
         if not joined_agents:
@@ -212,8 +223,8 @@ def section(people: Sequence[Person], now: datetime) -> list[str]:
         total = len(cohort)
         cells = []
         for key, _ in STEPS:
-            if key == "came_back":
-                answers = [person.came_back(now) for person in cohort]
+            if key in LATER_STEPS:
+                answers = [getattr(person, key)(now) for person in cohort]
                 if total and all(answer is None for answer in answers):
                     cells.append("—")
                     continue
@@ -226,8 +237,10 @@ def section(people: Sequence[Person], now: datetime) -> list[str]:
         [
             "",
             "- “Agent 进了房间”“Agent 说过话”看他在的房间（不算公共大厅），本机的和网络的 Agent 都算，别人带进来的也算。",
-            "- “一周后还来”：注册 7 天以后发过消息、网页登录用过或者电脑用过；注册还没满 7 天的写“—”，"
-            "上一周注册的人能“还来”的时间还短，这个数会偏小，下周再看。",
+            "- “一周后还来”：注册 7 天以后发过消息、网页登录用过或者电脑用过。网页一直开着、桌面端挂在托盘里也算，"
+            "所以这个数偏大。",
+            "- “一周后又说了话”：注册 7 天以后他自己又发过消息，看留存看这一列。",
+            "- 这两列注册还没满 7 天的写“—”；上一周注册的人能回来的时间还短，数会偏小，下周再看。",
             "- 维护者自己的账户和发版验收用的都算在里面；人数少于 5 的那一周不写百分比。",
             "",
         ]

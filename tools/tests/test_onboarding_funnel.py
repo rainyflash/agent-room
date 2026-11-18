@@ -48,7 +48,8 @@ class FakeDatabases:
             ["!r1:agentroom.chat", "@agent-x:agentroom.chat", millis("2026-10-20T09:00:00")],
             ["!r1:agentroom.chat", "@a:agentroom.chat", millis("2026-10-21T09:00:00")],
             [LOBBY, "@agent-x:agentroom.chat", millis("2026-10-21T09:00:00")],
-            [LOBBY, "@b:agentroom.chat", millis("2026-10-21T09:10:00")],
+            # 每个房间每个人只有最后一次说话的时间。乙两周以后还在说：算“一周后又说了话”。
+            [LOBBY, "@b:agentroom.chat", millis("2026-11-05T09:10:00")],
         ]
         self.statements: list[tuple[str, str]] = []
 
@@ -72,11 +73,12 @@ class OnboardingFunnelTests(unittest.TestCase):
         section = "\n".join(report_section(databases, NOW))
 
         self.assertIn("## 新用户走到哪一步", section)
-        # 注册 | 验证 | 进应用 | 桌面端 | Agent 进房间 | Agent 说话 | 自己说话 | 一周后还来
-        self.assertIn("| 10-19 起 | 3 | 2 | 2 | 1 | 1 | 1 | 2 | 1 |", section)
-        self.assertIn("| 10-26 起 | 5 | 4（80%） | 0 | 0 | 0 | 0 | 0 | 0 |", section)
-        self.assertIn("| 11-02 起 | 1 | 1 | 1 | 0 | 1 | 0 | 0 | — |", section)
-        self.assertIn("| 10-05 起 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
+        # 注册 | 验证 | 进应用 | 桌面端 | Agent 进房间 | Agent 说话 | 自己说话 | 一周后还来 | 一周后又说了话
+        # 甲只是网页登录还续着（算“还来”），乙两周后又说了一句（两列都算）。
+        self.assertIn("| 10-19 起 | 3 | 2 | 2 | 1 | 1 | 1 | 2 | 2 | 1 |", section)
+        self.assertIn("| 10-26 起 | 5 | 4（80%） | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
+        self.assertIn("| 11-02 起 | 1 | 1 | 1 | 0 | 1 | 0 | 0 | — | — |", section)
+        self.assertIn("| 10-05 起 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
         self.assertNotIn("11-09 起", section.split("| 10-05 起")[0])
         for secret in ("kc-", "@a:", "@agent-x", "!r1", "agentroom.chat"):
             self.assertNotIn(secret, section)
@@ -98,7 +100,7 @@ class OnboardingFunnelTests(unittest.TestCase):
         databases = FakeDatabases()
         databases.accounts = []
         section = report_section(databases, NOW)
-        self.assertIn("| 11-09 起 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
+        self.assertIn("| 11-09 起 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
         self.assertEqual([database for database, _ in databases.statements], ["keycloak"])
 
     def test_unreadable_database_only_costs_this_section(self) -> None:
