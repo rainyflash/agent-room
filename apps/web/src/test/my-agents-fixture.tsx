@@ -102,6 +102,8 @@ function ready<T>(value: T) {
   return Promise.resolve(ok(value));
 }
 const desktop = !new URLSearchParams(location.search).has('browser');
+// ?computers=none 这个账号还没有装着 Agent Room 的电脑：网页上接入 Agent 时先请人装桌面应用。
+const noComputers = new URLSearchParams(location.search).get('computers') === 'none';
 // ?matrix=failed 停在“聊天登录没拿到”，看消息没连上时提示栈里的那一条。
 const matrixState = new URLSearchParams(location.search).get('matrix');
 const principal: WebSession = {
@@ -667,7 +669,7 @@ async function bootstrapFixture() {
     privateRooms: { ...runtime.services.privateRooms, list: () => ready(fixturePrivateRooms) },
     roomDirectory: { list: () => ready([lobby, nightMarket]) },
     accessManagement: {
-      listProductDevices: () => ready(fixtureDevices),
+      listProductDevices: () => ready(noComputers ? [] : fixtureDevices),
       listAgentInstances: () => ready(fixtureAgents.length === 0 ? [] : fixtureInstances),
       revokeAgentInstance: (agentInstanceId: string) => {
         if (!staleScenario) return unavailable();

@@ -49,6 +49,37 @@
   justify-self: stretch;
 }
 
+/* 网页端“先装桌面应用”那一步：垫一块浅底，里面一句为什么、一个下载、一条不装的退路。 */
+.agent-invite__setup {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--ar-radius);
+  background: var(--ar-surface-muted);
+}
+
+.agent-invite__setup h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.agent-invite__setup p {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.agent-invite__setup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .agent-invite__waiting {
   display: flex;
   align-items: center;

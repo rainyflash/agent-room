@@ -29,6 +29,7 @@ export function AgentArrivalsPanel({
   background = null,
   copiedAt,
   observable,
+  slowHint = 'agentInvite.arrival.slow',
   unavailable,
   firstReply,
   startConversation,
@@ -40,6 +41,9 @@ export function AgentArrivalsPanel({
   readonly copiedAt: number | null;
   /** 能不能看到它进来：网络方式又不在房间里时看不到。 */
   readonly observable: boolean;
+  /** 复制后迟迟没人进来时说的那一句：按接入方式说该看哪儿。 */
+  readonly slowHint?:
+    'agentInvite.arrival.slow' | 'agentInvite.arrival.slowNetwork' | 'agentInvite.arrival.slowWeb';
   /** 读不到这台电脑上的 Agent 会话。 */
   readonly unavailable: boolean;
   readonly firstReply: FirstReply | null;
@@ -62,7 +66,7 @@ export function AgentArrivalsPanel({
         ) : (
           <p className="agent-invite__waiting">
             <Spinner />
-            {t(slow ? 'agentInvite.arrival.slow' : 'agentInvite.arrival.waiting')}
+            {t(slow ? slowHint : 'agentInvite.arrival.waiting')}
           </p>
         )}
         {unavailable ? (

@@ -26,6 +26,7 @@ import { AgentArrivalsPanel } from './agent-arrivals-panel';
 import { useDesktopRuntimeController } from './desktop-runtime-provider';
 import { LocalAgentInvite } from './local-agent-invite';
 import { NetworkAgentInvite } from './network-agent-invite';
+import { useAccountComputer } from './use-account-computer';
 import { useInviteBackground } from './use-invite-background';
 import './agent-invite-dialog.css';
 
@@ -67,11 +68,12 @@ const uuid = new BrowserUuidV7Factory();
 const noAgents: readonly PresentAgent[] = [];
 
 /**
- * 上次选的接入方式存在本机；没选过或读不到（隐私模式等）时，桌面端从排第一的命令行开始。网页端
- * 看不到 Agent 那台电脑装没装 Agent Room，围观页的人还没有账号，从哪儿都能用的网络开始。
+ * 上次选的接入方式存在本机；没选过或读不到（隐私模式等）时从排第一的命令行开始：桌面端装着它，
+ * 网页端有访客这个系统的安装包时先请人装桌面应用（2026-11-18 起，`specs/onboarding-funnel/design.md`
+ * 的“状态”：网页上从网络开始时，复制了的多数等不来 Agent）。装不了的（手机、Linux）还从网络开始。
  */
-function readInviteMethod(storage: Storage | null, desktop: boolean): InviteMethod {
-  const fallback = desktop ? 'cli' : 'network';
+function readInviteMethod(storage: Storage | null, installable: boolean): InviteMethod {
+  const fallback = installable ? 'cli' : 'network';
   try {
     const saved = storage?.getItem(inviteMethodKey);
     return inviteMethods.find((method) => method === saved) ?? fallback;
@@ -159,7 +161,12 @@ function InviteBody({
       : { principalId: principal.principalId, displayName: principal.displayName });
   const [storage] = useState(localStorageOrNull);
   const { available, receptionAvailable } = useDesktopRuntimeController();
-  const [method, setMethod] = useState<InviteMethod>(() => readInviteMethod(storage, available));
+  const [method, setMethod] = useState<InviteMethod>(() =>
+    readInviteMethod(storage, available || downloadUrl !== null),
+  );
+  // 网页端：这个账号有没有装着 Agent Room 的电脑，点没点过下载。切方式时留着。
+  const computer = useAccountComputer(!available && downloadUrl !== null);
+  const [downloadStarted, setDownloadStarted] = useState(false);
   const [background, setBackground] = useState(() => readInviteBackground(storage));
   const [openedAt] = useState(() => Date.now());
   const [copiedAt, setCopiedAt] = useState<number | null>(null);
@@ -258,6 +265,16 @@ function InviteBody({
           method={method}
           onCopied={copied}
           room={room}
+          web={{
+            computer,
+            started: downloadStarted,
+            onStarted: () => {
+              setDownloadStarted(true);
+            },
+            onUseNetwork: () => {
+              chooseMethod('network');
+            },
+          }}
         />
       )}
       {/* 不用一个个复制：同一段话能发给好几个 Agent，已经接入的叫它换房间就行。 */}
@@ -267,6 +284,7 @@ function InviteBody({
         background={backgroundOn ? backgroundStates : null}
         copiedAt={copiedAt}
         observable={room !== null || local}
+        slowHint={slowHintKey(method, desktop)}
         onDone={onStartConversation ?? onClose}
         startConversation={onStartConversation !== undefined}
         firstReply={
@@ -314,6 +332,12 @@ function InviteBackgroundOption({
       </div>
     </div>
   );
+}
+
+/** 复制后迟迟没来时提醒看哪儿：网络方式多半是它发不了请求，网页上的本机方式多半是那台电脑没装好。 */
+function slowHintKey(method: InviteMethod, desktop: boolean) {
+  if (method === 'network') return 'agentInvite.arrival.slowNetwork';
+  return desktop ? 'agentInvite.arrival.slow' : 'agentInvite.arrival.slowWeb';
 }
 
 /** 话里写了名字就只发给一个 Agent：发给几个，它们全叫同一个名字。 */

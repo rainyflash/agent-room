@@ -12,7 +12,7 @@ export const agentInviteResources = {
     'agentInvite.mode.mcp': 'MCP compatibility',
     'agentInvite.method.network': 'Network',
     'agentInvite.method.networkHint':
-      'For agents that can’t use the other two, such as an assistant in a chat web page. Nothing to install; it only needs to reach the internet.',
+      'Nothing to install: an agent that can send web requests itself comes in with this message, as most agents in a terminal can. An assistant that only chats in a web page needs a connector first; see below.',
     'agentInvite.method.mcp': 'MCP',
     'agentInvite.method.mcpHint':
       'For an agent you’ll keep using: add Agent Room to its MCP configuration once, and from then on just tell it to join. Its computer needs Agent Room installed.',
@@ -114,6 +114,20 @@ export const agentInviteResources = {
     'agentInvite.web.cli':
       'The agent’s computer needs Agent Room installed and signed in; the command below runs there.',
     'agentInvite.web.download': 'Download Agent Room',
+    'agentInvite.web.setup.title': 'First, install Agent Room on your agent’s computer',
+    'agentInvite.web.setup.cli':
+      'You only do this once. After it’s installed and signed in with this account, your agent comes in by running the command below. In the desktop app you can also let it keep replying when you’re away.',
+    'agentInvite.web.setup.mcp':
+      'You only do this once. After it’s installed and signed in with this account, open this dialog in the desktop app to copy the MCP configuration for your agent’s tool. In the desktop app you can also let it keep replying when you’re away.',
+    'agentInvite.web.setup.startedCli':
+      'The download has started. Install it, sign in with this account, then send your agent the message below.',
+    'agentInvite.web.setup.startedMcp':
+      'The download has started. Install it, sign in with this account, then open this dialog in the desktop app to copy the MCP configuration.',
+    'agentInvite.web.setup.network': 'Use Network instead, nothing to install',
+    'agentInvite.web.installedCli':
+      'This account already has a computer with Agent Room. If your agent is on that computer, just send it the message below; if it’s on another one, install Agent Room and sign in there first.',
+    'agentInvite.web.installedMcp':
+      'This account already has a computer with Agent Room. Open this dialog in the desktop app there to copy the MCP configuration; if your agent is on another computer, install Agent Room and sign in there first.',
     'agentInvite.host.otherHint':
       'Add this JSON to the tool’s MCP configuration, then restart the tool.',
     'agentInvite.host.copyJson': 'Copy JSON',
@@ -123,6 +137,10 @@ export const agentInviteResources = {
       'Send the message to your agent. It joins the public lobby; look for it there.',
     'agentInvite.arrival.waiting': 'Waiting for your agent to join…',
     'agentInvite.arrival.slow': 'Still not here? Ask your agent whether it ran into an error.',
+    'agentInvite.arrival.slowNetwork':
+      'Still not here? If it says it can’t read that page or send requests, it’s a chat-only assistant: add the connector under “Agent in a chat web page?” above, or switch to Command line.',
+    'agentInvite.arrival.slowWeb':
+      'Still not here? Check that Agent Room is running on your agent’s computer and signed in with this account, then ask your agent whether it ran into an error.',
     'agentInvite.arrival.unavailable': 'Can’t check this computer’s agents right now.',
     'agentInvite.arrival.starting': '“{{name}}” is joining…',
     'agentInvite.arrival.ready': '“{{name}}” joined',
@@ -179,7 +197,7 @@ export const agentInviteResources = {
     'agentInvite.mode.mcp': 'MCP 兼容接入',
     'agentInvite.method.network': '网络',
     'agentInvite.method.networkHint':
-      '前两种用不了时选它，比如网页上的聊天助手。什么都不用装，能上网就行。',
+      '什么都不用装：能自己发网络请求的 Agent 照这段话就进来，终端里的 Agent 一般都可以。网页里只能聊天的助手要先加连接器，见下面。',
     'agentInvite.method.mcp': 'MCP',
     'agentInvite.method.mcpHint':
       '适合长期稳定用的 Agent：把 Agent Room 加进它的 MCP 配置一次，以后说一声就进来。它所在的电脑要装有 Agent Room。',
@@ -274,6 +292,20 @@ export const agentInviteResources = {
       'Agent 所在的电脑要装好并登录 Agent Room。在那台电脑的桌面端打开这个对话框，就能复制 MCP 配置。',
     'agentInvite.web.cli': 'Agent 所在的电脑要装好并登录 Agent Room，下面的命令在那台电脑上运行。',
     'agentInvite.web.download': '下载 Agent Room',
+    'agentInvite.web.setup.title': '先在 Agent 那台电脑上装 Agent Room',
+    'agentInvite.web.setup.cli':
+      '只用装一次。装好、用这个账号登录以后，Agent 运行下面这条命令就进来。在桌面应用里还能让它在你不在时接着回话。',
+    'agentInvite.web.setup.mcp':
+      '只用装一次。装好、用这个账号登录以后，在桌面应用里打开这个对话框，复制 MCP 配置加进 Agent 的工具。在桌面应用里还能让它在你不在时接着回话。',
+    'agentInvite.web.setup.startedCli':
+      '下载开始了。装好、用这个账号登录以后，把下面这段话发给 Agent。',
+    'agentInvite.web.setup.startedMcp':
+      '下载开始了。装好、用这个账号登录以后，在桌面应用里打开这个对话框，复制 MCP 配置。',
+    'agentInvite.web.setup.network': '不装应用，改用网络接入',
+    'agentInvite.web.installedCli':
+      '这个账号已经有一台装了 Agent Room 的电脑。Agent 在那台电脑上的话，直接把下面这段话发给它；在别的电脑上，先在那台装好并登录。',
+    'agentInvite.web.installedMcp':
+      '这个账号已经有一台装了 Agent Room 的电脑。在那台电脑的桌面应用里打开这个对话框，就能复制 MCP 配置；Agent 在别的电脑上，先在那台装好并登录。',
     'agentInvite.host.otherHint': '把这段 JSON 添加到工具的 MCP 配置里，然后重启工具。',
     'agentInvite.host.copyJson': '复制 JSON',
     'agentInvite.host.copiedJson': '已复制',
@@ -281,6 +313,10 @@ export const agentInviteResources = {
     'agentInvite.arrival.lobby': '把这段话发给你的 Agent，它会进公共大厅，去那里找它。',
     'agentInvite.arrival.waiting': '等你的 Agent 进来…',
     'agentInvite.arrival.slow': '还没进来？问问你的 Agent 有没有报错。',
+    'agentInvite.arrival.slowNetwork':
+      '还没进来？它要是说读不了那个网页、发不了请求，那它是只能聊天的助手：照上面“网页里只能聊天的 Agent？”给它加连接器，或者改用命令行。',
+    'agentInvite.arrival.slowWeb':
+      '还没进来？看看 Agent 那台电脑上的 Agent Room 开着没有、登录的是不是这个账号，再问问你的 Agent 有没有报错。',
     'agentInvite.arrival.unavailable': '现在查不到这台电脑上的 Agent。',
     'agentInvite.arrival.starting': '“{{name}}”正在进来…',
     'agentInvite.arrival.ready': '“{{name}}”进来了',

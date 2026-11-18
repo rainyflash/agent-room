@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Browser } from '@playwright/test';
 import type { MyAgentsFixtureWindow } from '../src/test/my-agents-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
@@ -239,4 +239,165 @@ test('MCP 只给同一份通用配置：设置里的“这台电脑”和接入�
   await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeEnabled();
   await expectNoHorizontalOverflow(page);
   expect(failures).toEqual([]);
+});
+
+const WINDOWS_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const LINUX_USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+const WINDOWS_INSTALLER = 'https://download.fixture.invalid/agent-room.exe';
+
+/**
+ * 网页上的访客：系统写明；开发服务器的运行时清单里没有安装包地址，这里补一个 Windows 的。
+ * 网页端走到的几步是真发给控制面的，夹具的控制面地址不通，这里接住、记下报了哪几步。
+ */
+async function webVisitor(browser: Browser, userAgent: string, width: number) {
+  const context = await browser.newContext({
+    reducedMotion: 'reduce',
+    userAgent,
+    viewport: { width, height: 900 },
+  });
+  await context.route('**/runtime-manifest.json', async (route) => {
+    const response = await route.fetch();
+    const manifest = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...manifest, windowsDownloadUrl: WINDOWS_INSTALLER } });
+  });
+  const steps: unknown[] = [];
+  await context.route('https://api.fixture.invalid/telemetry/onboarding', async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') steps.push(request.postDataJSON());
+    await route.fulfill({
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Headers': 'content-type',
+        'Access-Control-Allow-Origin': (await request.headerValue('origin')) ?? '*',
+      },
+    });
+  });
+  return { context, steps };
+}
+
+// 网页上没选过方式时：访客这个系统有安装包就从命令行开始，头一步是装桌面应用；不想装的旁边换成网络。
+for (const width of [1280, 390]) {
+  test(`网页上接入 Agent：先请人装桌面应用，不装的一步换成网络 ${String(width)}px`, async ({
+    browser,
+  }, testInfo) => {
+    const { context, steps } = await webVisitor(browser, WINDOWS_USER_AGENT, width);
+    const page = await context.newPage();
+    const failures = collectPageFailures(page);
+    await page.goto('/e2e/fixtures/my-agents.html?browser&computers=none');
+    await page.getByRole('main').getByRole('button', invite).click();
+    const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+    await expect(dialog.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(
+      dialog.getByRole('heading', { name: 'First, install Agent Room on your agent’s computer' }),
+    ).toBeVisible();
+    // 明黄的按钮只有下载这一个；它在新标签页里下，对话框留着。
+    const download = dialog.getByRole('link', { name: 'Download Agent Room' });
+    await expect(download).toHaveAttribute('href', WINDOWS_INSTALLER);
+    await expect(download).toHaveAttribute('target', '_blank');
+    await expect(dialog.locator('.ar-button--primary')).toHaveCount(1);
+    await expect(download).toHaveClass(/ar-button--primary/u);
+    await expect(dialog).not.toContainText(appNames);
+    await expectNoHorizontalOverflow(page);
+    const scan = await new AxeBuilder({ page })
+      .include('.ar-dialog')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(
+      scan.violations.map(({ id, nodes }) => ({
+        id,
+        nodes: nodes.map(({ target, failureSummary }) => ({ target, failureSummary })),
+      })),
+    ).toEqual([]);
+    await page.screenshot({ path: testInfo.outputPath(`web-invite-install-${String(width)}.png`) });
+
+    // 点了下载：下载退成灰的，轮到复制。
+    await context.route(WINDOWS_INSTALLER, (route) => route.abort());
+    const opened = page.waitForEvent('popup');
+    await download.click();
+    await (await opened).close();
+    await expect(dialog.getByText(/The download has started/u)).toBeVisible();
+    // 打开对话框、点下载各报一步，只有步子的名字和“网页”。
+    await expect
+      .poll(() => steps)
+      .toEqual([
+        { step: 'invite_opened', surface: 'web' },
+        { step: 'desktop_download', surface: 'web' },
+      ]);
+    await expect(dialog.locator('.ar-button--primary')).toHaveCount(1);
+    await expect(dialog.getByRole('button', { name: 'Copy message' })).toHaveClass(
+      /ar-button--primary/u,
+    );
+    await page.screenshot({ path: testInfo.outputPath(`web-invite-started-${String(width)}.png`) });
+
+    // 不装应用：一步换成网络，下次打开还是网络。
+    await dialog.getByRole('button', { name: 'Use Network instead, nothing to install' }).click();
+    await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await expect(dialog.getByText(/Nothing to install: an agent that can send web/u)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Copy message' })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`web-invite-network-${String(width)}.png`) });
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('main').getByRole('button', invite).click();
+    await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(failures).toEqual([]);
+    await context.close();
+  });
+}
+
+test('网页上接入 Agent：账号已经有装着 Agent Room 的电脑时不再请人先装', async ({
+  browser,
+}, testInfo) => {
+  const { context } = await webVisitor(browser, WINDOWS_USER_AGENT, 1280);
+  const page = await context.newPage();
+  const failures = collectPageFailures(page);
+  await page.goto('/e2e/fixtures/my-agents.html?browser');
+  await page.getByRole('main').getByRole('button', invite).click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+  await expect(dialog.getByRole('radio', { name: /^Command line/u })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await expect(
+    dialog.getByText(/This account already has a computer with Agent Room/u),
+  ).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: /install Agent Room/u })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Copy message' })).toHaveClass(
+    /ar-button--primary/u,
+  );
+  await expect(dialog.locator('.ar-button--primary')).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath('web-invite-has-computer.png') });
+  expect(failures).toEqual([]);
+  await context.close();
+});
+
+test('网页上接入 Agent：装不了桌面应用的系统还从网络开始', async ({ browser }) => {
+  const { context } = await webVisitor(browser, LINUX_USER_AGENT, 1280);
+  const page = await context.newPage();
+  const failures = collectPageFailures(page);
+  await page.goto('/e2e/fixtures/my-agents.html?browser&computers=none');
+  await page.getByRole('main').getByRole('button', invite).click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+  await expect(dialog.getByRole('radio', { name: /^Network/u })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  // 换到命令行：只说要装，这个系统没有下载。
+  await dialog.getByRole('radio', { name: /^Command line/u }).click();
+  await expect(
+    dialog.getByText(/The agent’s computer needs Agent Room installed and signed in/u),
+  ).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Download Agent Room' })).toHaveCount(0);
+  expect(failures).toEqual([]);
+  await context.close();
 });
