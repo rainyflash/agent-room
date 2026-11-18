@@ -11,6 +11,11 @@
     "pnpm": ">=10.28.0 <11"
   },
   "pnpm": {
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-fc5q-39xc-vjpf"
+      ]
+    },
     "overrides": {
       "@matrix-org/matrix-sdk-crypto-wasm@>=18.0.0 <18.9.1": "18.9.2",
       "body-parser@>=2.0.0 <2.4.0": "2.4.0",
