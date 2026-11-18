@@ -5,6 +5,8 @@ import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
+import type { ProductDevice } from '@/features/security/domain/access-management';
+import { AgentArrivalsPanel } from './agent-arrivals-panel';
 import { AgentInviteDialog } from './agent-invite-dialog';
 import { DesktopRuntimeProvider } from './desktop-runtime-provider';
 import type {
@@ -204,6 +206,14 @@ function backgroundServices(): AppServices {
   } as unknown as AppServices;
 }
 
+/** 网页端看这个账号有没有装着 Agent Room 的电脑：只用得到设备列表。 */
+function deviceServices(devices: readonly Partial<ProductDevice>[]): AppServices {
+  return {
+    accessManagement: { listProductDevices: () => Promise.resolve(ok(devices)) },
+    messages: {},
+  } as unknown as AppServices;
+}
+
 function chooseMethod(name: 'Network' | 'MCP' | 'Command line') {
   fireEvent.click(screen.getByRole('radio', { name }));
 }
@@ -237,10 +247,10 @@ afterEach(() => {
 });
 
 describe('接入 Agent 对话框', () => {
-  it('一屏：网页端默认网络方式，一段话一个复制按钮，没有编号步骤和人物，名字选填', async () => {
+  it('一屏：装不了桌面应用的网页端（手机、Linux）默认网络方式，一段话一个复制按钮，没有编号步骤和人物，名字选填', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
-    renderDialog(gateway({ available: false }).value);
+    renderDialog(gateway({ available: false }).value, { downloadUrl: null });
 
     expect(screen.getByRole('dialog', { name: 'Bring an agent' })).toBeVisible();
     expect(screen.getByText('It joins “Builders Exchange”.')).toBeVisible();
@@ -262,16 +272,39 @@ describe('接入 Agent 对话框', () => {
     );
   });
 
-  it('网页上的命令行：按房间名接入的一条命令，说清去哪找 CLI，给下载，不提本机面板', async () => {
+  it('网页上有安装包：从命令行开始，头一步是下载桌面应用，点过下载才轮到复制', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     renderDialog(gateway({ available: false }).value);
-    chooseMethod('Command line');
 
-    expect(screen.getByRole('link', { name: 'Download Agent Room' })).toHaveAttribute(
-      'href',
-      'https://download.test/agent-room.exe',
+    expect(screen.getByRole('radio', { name: 'Command line' })).toHaveAttribute(
+      'aria-checked',
+      'true',
     );
+    expect(
+      screen.getByRole('heading', { name: 'First, install Agent Room on your agent’s computer' }),
+    ).toBeVisible();
+    expect(screen.getByText(/You only do this once/u)).toHaveTextContent(
+      /your agent comes in by running the command below/u,
+    );
+    // 明黄的按钮只有一个：先是下载，点过以后才是复制。安装包在新标签页里下，对话框留着。
+    const download = screen.getByRole('link', { name: 'Download Agent Room' });
+    expect(download).toHaveAttribute('href', 'https://download.test/agent-room.exe');
+    expect(download).toHaveAttribute('target', '_blank');
+    expect(download).toHaveClass('ar-button--primary');
+    expect(screen.getByRole('button', { name: 'Copy message' })).toHaveClass('ar-button--ghost');
+    // jsdom 不开新标签页，只看点了以后对话框怎么变。
+    download.addEventListener('click', (event) => {
+      event.preventDefault();
+    });
+    fireEvent.click(download);
+    expect(onboarding.report).toHaveBeenCalledWith({ step: 'desktop_download' });
+    expect(screen.getByText(/The download has started/u)).toHaveTextContent(
+      /send your agent the message below/u,
+    );
+    expect(download).toHaveClass('ar-button--ghost');
+    expect(screen.getByRole('button', { name: 'Copy message' })).toHaveClass('ar-button--primary');
+
     const message = await copyMessage(writeText);
     expect(message).toContain("agent-room join --room 'Builders Exchange'");
     expect(message).toContain('agent-room guide');
@@ -279,6 +312,77 @@ describe('接入 Agent 对话框', () => {
     expect(message).not.toMatch(/--invite|--profile/u);
     expect(message).not.toMatch(appNames);
     expect(screen.queryByText(/Local agents/u)).toBeNull();
+    // MCP 也一样先装；配置在桌面应用里复制。
+    chooseMethod('MCP');
+    expect(screen.getByText(/The download has started/u)).toHaveTextContent(
+      /open this dialog in the desktop app to copy the MCP configuration/u,
+    );
+  });
+
+  it('网页上不想装应用：旁边就能换成网络，下次打开还是网络', () => {
+    const runtime = gateway({ available: false }).value;
+    renderDialog(runtime);
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Use Network instead, nothing to install' }),
+    );
+    expect(screen.getByRole('radio', { name: 'Network' })).toHaveAttribute('aria-checked', 'true');
+    expect(window.localStorage.getItem('agent-room.invite-method')).toBe('network');
+    expect(screen.queryByRole('heading', { name: /install Agent Room/u })).toBeNull();
+    cleanup();
+
+    renderDialog(runtime);
+    expect(screen.getByRole('radio', { name: 'Network' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('网页上账号已经有装着 Agent Room 的电脑：不再请人先装，复制就是主按钮', async () => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: clipboardMock() } });
+    const computer = { platform: 'windows', revokedAtUnixMs: null } as const;
+    renderDialog(gateway({ available: false }).value, {}, deviceServices([computer]));
+
+    expect(
+      await screen.findByText(/This account already has a computer with Agent Room/u),
+    ).toHaveTextContent(/just send it the message below/u);
+    expect(screen.queryByRole('heading', { name: /install Agent Room/u })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Download Agent Room' })).toHaveClass(
+      'ar-button--ghost',
+    );
+    expect(screen.getByRole('button', { name: 'Copy message' })).toHaveClass('ar-button--primary');
+    cleanup();
+
+    // 撤销了的电脑不算。
+    const revoked = { platform: 'macos', revokedAtUnixMs: 1 } as const;
+    renderDialog(gateway({ available: false }).value, {}, deviceServices([revoked]));
+    expect(
+      await screen.findByRole('heading', {
+        name: 'First, install Agent Room on your agent’s computer',
+      }),
+    ).toBeVisible();
+  });
+
+  it('复制后迟迟没来：按接入方式说该看哪儿', async () => {
+    const copiedAt = Date.now() - 60_000;
+    const panel = (slowHint: Parameters<typeof AgentArrivalsPanel>[0]['slowHint']) => (
+      <I18nextProvider i18n={i18n}>
+        <AgentArrivalsPanel
+          arrivals={[]}
+          copiedAt={copiedAt}
+          firstReply={null}
+          observable
+          onDone={vi.fn()}
+          startConversation={false}
+          unavailable={false}
+          {...(slowHint === undefined ? {} : { slowHint })}
+        />
+      </I18nextProvider>
+    );
+    const view = render(panel(undefined));
+    expect(await screen.findByText(/Ask your agent whether it ran into an error/u)).toBeVisible();
+    view.rerender(panel('agentInvite.arrival.slowNetwork'));
+    expect(screen.getByText(/it’s a chat-only assistant/u)).toHaveTextContent(
+      /or switch to Command line/u,
+    );
+    view.rerender(panel('agentInvite.arrival.slowWeb'));
+    expect(screen.getByText(/Check that Agent Room is running/u)).toBeVisible();
   });
 
   it('桌面端的命令行用实际安装路径，并把人物挂在这台电脑上等 Agent 来接', async () => {
@@ -575,6 +679,7 @@ describe('接入 Agent 对话框', () => {
   }, 10_000);
 
   it('网络 Agent 看房间里新出现的人：之后来的显示进来了，原来就在的不算', async () => {
+    rememberMethod('network');
     const present = [{ agentId: '0198b601-77a3-74f1-b4f4-940f291951f1', displayName: 'Resident' }];
     const view = renderDialog(gateway({ available: false }).value, {
       presentAgents: present,
@@ -624,10 +729,13 @@ describe('接入 Agent 对话框', () => {
     chooseMethod('MCP');
     expect(screen.getByText(/For an agent you’ll keep using/u)).toBeVisible();
     chooseMethod('Network');
-    expect(screen.getByText(/such as an assistant in a chat web page/u)).toBeVisible();
+    expect(
+      screen.getByText(/Nothing to install: an agent that can send web requests/u),
+    ).toHaveTextContent(/An assistant that only chats in a web page needs a connector first/u);
   });
 
   it('记住上次的方式；方向键切换；Esc 与关闭按钮都关掉', () => {
+    rememberMethod('network');
     const view = renderDialog(gateway({ available: false }).value);
     const network = screen.getByRole('radio', { name: 'Network' });
     network.focus();
