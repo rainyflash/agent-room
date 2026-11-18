@@ -1,8 +1,10 @@
 /**
  * 分享一间公开房间（`specs/public-rooms/design.md`“分享链接”）：一条链接、一段能改的话、发到 X、微博、
- * Reddit 的分享网址和二维码。大家分享的是同一个链接，链接里没有谁分享的。
+ * Reddit 的分享网址和带二维码的分享卡片。大家分享的是同一个链接，链接里没有谁分享的。
  */
 export type ShareableRoom = {
+  /** 房间号：分享卡片上房间小图标的颜色照它挑，和应用里是同一种。 */
+  readonly catalogId: string;
   readonly name: string;
   readonly description: string;
   /** 服务器拼好的整条分享链接（裸域上的 `/r/<分享码>`）。 */

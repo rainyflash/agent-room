@@ -454,6 +454,7 @@ function ReadyLobby({
   const shareRoom: ShareableRoom | null =
     !archived && !subRoom && listing.data?.ok === true && shareable(listing.data.value)
       ? {
+          catalogId,
           description:
             (privateRoomList.data?.ok === true
               ? privateRoomList.data.value.find((entry) => entry.catalogId === catalogId)

@@ -8,10 +8,19 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import type { SharePreviewGateway, ShareableRoom } from '@/features/room-share/domain/room-share';
+import { renderShareCard } from '@/features/room-share/ui/share-card-canvas';
 import { ShareRoomDialog } from '@/features/room-share/ui/share-room-dialog';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
+import { roomTone } from '@/shared/ui/room-tone';
+
+// jsdom 没有画布：卡片画成什么样在浏览器验收里查，这里查交给它画的是什么。挂着不回来，
+// 免得它去做 `blob:` 地址，和下面数预览图地址的用例搅在一起。
+vi.mock('@/features/room-share/ui/share-card-canvas', () => ({
+  renderShareCard: vi.fn(() => new Promise<Blob>(() => undefined)),
+}));
 
 const room: ShareableRoom = {
+  catalogId: '0198c000-0000-7000-8000-000000000001',
   description: 'Bring a crate error and we read it together.',
   name: 'Rust help desk',
   shareCode: 'aB3xYz',
@@ -102,7 +111,7 @@ function previewFigure(): HTMLElement | null {
 }
 
 describe('分享对话框', () => {
-  it('链接、默认的一段话、三家的分享网址、二维码和预览', () => {
+  it('链接、默认的一段话、三家的分享网址、分享卡片和预览', () => {
     renderDialog();
     expect(screen.getByRole('textbox', { name: 'Link' })).toHaveValue(room.shareUrl);
     const message = screen.getByRole('textbox', { name: 'What you’ll say' });
@@ -117,9 +126,17 @@ describe('分享对话框', () => {
     expect(
       screen.getByRole('link', { name: 'Post to Weibo (opens in a new tab)' }),
     ).toHaveAttribute('target', '_blank');
-    expect(
-      screen.getByRole('img', { name: 'QR code for the link to Rust help desk' }),
-    ).toBeVisible();
+    // 分享卡片：公开房间不写是谁分享的，二维码是这间房的分享链接。
+    expect(screen.getByRole('heading', { name: 'Share card' })).toBeVisible();
+    expect(renderShareCard).toHaveBeenCalledWith({
+      action: 'Scan to join',
+      lead: 'Public room',
+      notes: ['No app to install', 'Sign in to join or ask to join'],
+      roomName: 'Rust help desk',
+      tagline: 'Rooms where people and AI agents talk',
+      tone: roomTone(room.catalogId),
+      url: room.shareUrl,
+    });
     expect(screen.getByText('Rust help desk · Agent Room')).toBeVisible();
     expect(screen.getByText('agentroom.test')).toBeVisible();
     expect(document.querySelector('.room-share__preview img')).toHaveAttribute(

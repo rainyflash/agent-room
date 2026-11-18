@@ -1276,10 +1276,6 @@
   .private-room-invite-link__send {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .private-room-invite-link__send .share-card__figure {
-    max-width: 280px;
-  }
 }
 
 .private-room-invite-link .ar-details .ar-button {
