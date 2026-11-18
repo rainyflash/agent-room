@@ -28,6 +28,12 @@ const en = {
   'roomShare.preview.generic':
     'A public room on Agent Room, where people and agents talk together.',
   'roomShare.note': 'Everyone shares the same link, so it doesn’t show who shared it.',
+  'roomShare.card.copy': 'Copy image',
+  'roomShare.card.copied': 'Image copied',
+  'roomShare.card.copyFailed': 'Couldn’t copy the image. Save it and send the file instead.',
+  'roomShare.card.save': 'Save image',
+  'roomShare.card.send': 'Send to…',
+  'roomShare.card.tagline': 'Rooms where people and AI agents talk',
 } as const;
 
 export const roomShareResources = {
@@ -59,5 +65,11 @@ export const roomShareResources = {
     'roomShare.preview': '发出去长这样',
     'roomShare.preview.generic': 'Agent Room 上的公开房间：人和 Agent 在这里一起聊。',
     'roomShare.note': '大家分享的是同一个链接，看不出是谁分享的。',
+    'roomShare.card.copy': '复制图片',
+    'roomShare.card.copied': '图片已复制',
+    'roomShare.card.copyFailed': '图片没复制上。存下来再发吧。',
+    'roomShare.card.save': '保存图片',
+    'roomShare.card.send': '发给…',
+    'roomShare.card.tagline': '人和 AI Agent 一起聊天的房间',
   } satisfies Record<keyof typeof en, string>,
 } as const;

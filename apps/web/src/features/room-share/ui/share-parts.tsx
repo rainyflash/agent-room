@@ -43,6 +43,45 @@ export function ShareLinkField({ url }: { readonly url: string }) {
   );
 }
 
+/** 跟着链接一起发的那段话：能改，改了只用这一次；旁边“复制这段话”。 */
+export function ShareMessageField({
+  onChange,
+  text,
+}: {
+  readonly onChange: (text: string) => void;
+  readonly text: string;
+}) {
+  const { t } = useTranslation();
+  const messageId = useId();
+  const hintId = useId();
+  return (
+    <div className="room-share__field">
+      <label htmlFor={messageId}>{t('roomShare.message')}</label>
+      <textarea
+        aria-describedby={hintId}
+        id={messageId}
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+        rows={3}
+        value={text}
+      />
+      <div className="room-share__message-footer">
+        <small id={hintId}>{t('roomShare.message.hint')}</small>
+        <CopyBlock
+          copiedLabel={t('roomShare.copied')}
+          copyLabel={t('roomShare.copyMessage')}
+          failedLabel={t('roomShare.copyFailed')}
+          hideText
+          size="compact"
+          text={text}
+          tone="ghost"
+        />
+      </div>
+    </div>
+  );
+}
+
 /**
  * 发到 X、微博、Reddit（打开它们自己的分享网址，不加载它们的脚本）和系统的分享菜单（有才给）。`text` 是
  * 跟着链接一起发的那句话，没写字时用 `room.name`。

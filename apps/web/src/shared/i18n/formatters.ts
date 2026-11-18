@@ -12,6 +12,11 @@ export function formatDateTime(
   return new Intl.DateTimeFormat(language, options).format(value);
 }
 
+/** 只要几月几号（“11月25日”“Nov 25”）：地方小、年份不要紧的时候用。 */
+export function formatMonthDay(value: number | Date, language: string | undefined): string {
+  return new Intl.DateTimeFormat(language, { day: 'numeric', month: 'short' }).format(value);
+}
+
 export function formatNumber(
   value: number,
   language: string | undefined,

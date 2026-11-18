@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatBytes, formatDayAndTime, formatNumber, formatRelativeTime } from './formatters';
+import {
+  formatBytes,
+  formatDayAndTime,
+  formatMonthDay,
+  formatNumber,
+  formatRelativeTime,
+} from './formatters';
 
 describe('本地化格式化器', () => {
   it('使用 Intl 处理数字、相对时间和字节单位', () => {
@@ -9,6 +15,12 @@ describe('本地化格式化器', () => {
     expect(formatRelativeTime(0, 60_000, 'en')).toBe('1 minute ago');
     expect(formatRelativeTime(0, 60_000, 'zh-CN')).toBe('1分钟前');
     expect(formatBytes(1_536, 'en')).toBe('1.5 KiB');
+  });
+
+  it('只要几月几号时不带年份和时刻', () => {
+    const day = new Date(2026, 10, 25, 21, 30);
+    expect(formatMonthDay(day, 'zh-CN')).toBe('11月25日');
+    expect(formatMonthDay(day, 'en')).toBe('Nov 25');
   });
 });
 

@@ -1258,6 +1258,30 @@
   gap: 0.5rem;
 }
 
+/* 有链接时：左边是链接和一起发的话，右边是邀请卡片（specs/share-card）；窄了卡片排到下面。 */
+.private-room-invite-link__send {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.private-room-invite-link__text {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .private-room-invite-link__send {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .private-room-invite-link__send .share-card__figure {
+    max-width: 280px;
+  }
+}
+
 .private-room-invite-link .ar-details .ar-button {
   margin-top: 0.5rem;
 }

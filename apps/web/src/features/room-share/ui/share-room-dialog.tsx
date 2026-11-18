@@ -1,5 +1,5 @@
-import { CopyBlock, Dialog } from '@agent-room/ui-system';
-import { useId, useState, type ReactNode } from 'react';
+import { Dialog } from '@agent-room/ui-system';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -8,7 +8,7 @@ import {
   type ShareableRoom,
 } from '@/features/room-share/domain/room-share';
 
-import { ShareLinkField, ShareQrCode, ShareTargetLinks } from './share-parts';
+import { ShareLinkField, ShareMessageField, ShareQrCode, ShareTargetLinks } from './share-parts';
 import { SharePreview } from './share-preview';
 import './share-room-dialog.css';
 
@@ -38,8 +38,6 @@ export function ShareRoomDialog({ children, onClose, room }: ShareRoomDialogProp
           : t('roomShare.message.default', { excerpt, name: room.name })
       }\n${room.shareUrl}`,
   );
-  const messageId = useId();
-  const hintId = useId();
   return (
     <Dialog
       className="room-share"
@@ -52,30 +50,7 @@ export function ShareRoomDialog({ children, onClose, room }: ShareRoomDialogProp
       <div className="room-share__layout">
         <div className="room-share__main">
           <ShareLinkField url={room.shareUrl} />
-          <div className="room-share__field">
-            <label htmlFor={messageId}>{t('roomShare.message')}</label>
-            <textarea
-              aria-describedby={hintId}
-              id={messageId}
-              onChange={(event) => {
-                setText(event.target.value);
-              }}
-              rows={3}
-              value={text}
-            />
-            <div className="room-share__message-footer">
-              <small id={hintId}>{t('roomShare.message.hint')}</small>
-              <CopyBlock
-                copiedLabel={t('roomShare.copied')}
-                copyLabel={t('roomShare.copyMessage')}
-                failedLabel={t('roomShare.copyFailed')}
-                hideText
-                size="compact"
-                text={text}
-                tone="ghost"
-              />
-            </div>
-          </div>
+          <ShareMessageField onChange={setText} text={text} />
           <ShareTargetLinks room={room} text={text} />
         </div>
         <aside className="room-share__side">

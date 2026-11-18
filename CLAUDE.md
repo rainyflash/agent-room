@@ -282,7 +282,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
     - 用留白分，不画框：有边的只有输入框、对话框和菜单（`--ar-border`），栏和栏之间一条细线（`--ar-line`）。
     - 要读的红字、绿字用 `--color-alert`、`--ar-success-ink`；`--ar-coral`、`--ar-success` 只给点和线，拿来写字对比度不够。浅黄（`--ar-mention`、`--ar-warning-soft`）只给“提到你”和提醒，选中用 `--ar-selected`。
     - 次要的字 `--ar-muted` 的值是照“在选中的底上也过 4.5:1”定的（第四稿选中的底是浅青，4.7:1），改它或者改 `--ar-selected` 要重算。
-    - 这套令牌另有几处各抄了一份，改令牌要一起改：登录主题（`agent-room.css`，`test_brand_consistency.py` 卡着）；官网（`site.css`）和分享页（`share.css`），都由 `generate.spec.ts` 的“网站和分享页的颜色和应用一样”卡着；桌面端登录完的回跳页（`auth-return.css`）和验证邮件（`email/html/template.ftl`）没有测试卡着，邮件里用不了变量，颜色是写死的。浏览器顶栏的颜色（`index.html` 和官网 `html.ts` 的 `theme-color`、`vite.config.ts` 清单里的 `theme_color`）和桌面端夜间窗口的底色（`lib.rs` 的 `match_window_to_system_theme`）也是照 `--ar-canvas` 写死的。
+    - 这套令牌另有几处各抄了一份，改令牌要一起改：登录主题（`agent-room.css`，`test_brand_consistency.py` 卡着）；官网（`site.css`）和分享页（`share.css`），都由 `generate.spec.ts` 的“网站和分享页的颜色和应用一样”卡着；桌面端登录完的回跳页（`auth-return.css`）和验证邮件（`email/html/template.ftl`）没有测试卡着，邮件里用不了变量，颜色是写死的；邀请卡片（`share-card-canvas.ts`，只有白天的）有 `share-card-canvas.spec.ts` 卡着。浏览器顶栏的颜色（`index.html` 和官网 `html.ts` 的 `theme-color`、`vite.config.ts` 清单里的 `theme_color`）和桌面端夜间窗口的底色（`lib.rs` 的 `match_window_to_system_theme`）也是照 `--ar-canvas` 写死的。
     - 画不跟令牌走：登录页左边那幅画用 `--scene-*`，官网首页的房间和机器人用 `--draw-*`，场景（Pixi）自己配色。这几组名字故意不叫 `--ar-`，卡颜色一致的测试才不管它们。
     - 字体是 Geist 加思源黑体（`@fontsource-variable/geist`、`geist-mono`），登录主题和官网各带一份 Geist 的字体文件。
     - 头像一律用现成的：Agent 用 `AgentAvatar`（房间里带状态的用 `LobbyAgentAvatar`），消息、资料是谁发的用 `ActorAvatar`，人用 `HumanAvatar`，都在 `features/lobby/ui/avatars.tsx`，底下是 ui-system 的 `Avatar` 和 `PresenceDot`。用的地方只定大小（`--ar-avatar-size`），别再自己画圆、垫底色。房间名字前面的 `#` 和锁用 `RoomGlyph`。
@@ -500,6 +500,19 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 有门的子房间一律端到端加密；拆了门加密也不关。
   - 现在归档一间房只有房主能做、不能恢复（`PrivateRoom::archive`）。子房间的归档和恢复另开一路，认子房间管理员；别去放宽整间房的归档。
   - 左栏只放你在的子房间、按分类分组，别的在“浏览子房间”里；分类是整间房共用的，不带权限。
+
+### 邀请卡片
+
+- 2026-11-18 维护者说房间“邀请人”还是只能发链接，没有分享图片，要立马补。设计在 [specs/share-card/design.md](./specs/share-card/design.md)，进度记在它的“状态”一节：S1 是卡片和“邀请人”对话框，S2 是公开房间“分享”对话框里的卡片。
+- 改这一块时别拆的几样：
+  - 卡片在这台设备上画（`room-share/ui/share-card-canvas.ts` 的 `renderShareCard`），别挪到服务器：邀请链接的秘密在 `#` 后面，从不交给服务器。卡片等于链接，对话框里照实说“换一条或者停用以后，发出去的图也跟着失效”。
+  - 卡片一律是白天的配色，颜色是照令牌抄的一份（`SHARE_CARD_COLORS`），`share-card-canvas.spec.ts` 卡着和 ui-system 一样；改令牌时它会红，跟着改。
+  - 二维码的位置照 `domain/share-card.ts` 的 `shareCardQrLayout`。浏览器验收（`room-invites.e2e.ts` 的 `expectCardFor`）把图上的码一格一格读出来和这条链接编出来的比：改卡片的版式别绕过它。
+  - 用 `ShareCard` 的地方要 `useMemo` 住卡片的内容：换一份就重画一张。
+  - 对话框里看得到的明黄按钮只有“复制链接”，卡片上的按钮都是灰的。私人房间的邀请不给“发到 X、微博、Reddit”。
+  - jsdom 没有画布：单元测试里把 `share-card-canvas` 整个 mock 掉。`loadStudioCharacters` 要不到图集时卡片不画机器人，别改成整张画不出来。
+  - 复制图片要在点击的那一下里交给剪贴板（图是提前画好的），别改成点了再画。
+- 装好的桌面端上“复制图片”“保存图片”还没点过（保存走页面自己的下载，和“下载我的数据”同一条路，`shared/browser/save-file.ts`）：下一次发版实机验收时各点一次。
 
 ### 新用户走到哪一步
 

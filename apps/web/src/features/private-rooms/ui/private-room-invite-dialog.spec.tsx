@@ -14,10 +14,17 @@ import type {
   PrivateRoomInviteGateway,
   PrivateRoomInviteLink,
 } from '@/features/private-rooms/domain/private-room-invite-link';
+import { renderShareCard } from '@/features/room-share/ui/share-card-canvas';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
+import { roomTone } from '@/shared/ui/room-tone';
 
 import { PrivateRoomInviteDialog } from './private-room-invite-dialog';
+
+// jsdom 没有画布：卡片画成什么样在浏览器验收里查，这里查交给它画的是什么。
+vi.mock('@/features/room-share/ui/share-card-canvas', () => ({
+  renderShareCard: vi.fn(() => Promise.resolve(new Blob(['png'], { type: 'image/png' }))),
+}));
 
 const OWNER = '0198b601-77a1-7bb8-83eb-a8fe68c97e42';
 const INVITER = '0198b601-77a1-7bb8-83eb-a8fe68c97e43';
@@ -89,11 +96,16 @@ function invites(initial: PrivateRoomInviteLink | null = null, revealable = true
   return gateway;
 }
 
-function renderDialog(gateway: PrivateRoomInviteGateway, principalId = OWNER) {
+function renderDialog(
+  gateway: PrivateRoomInviteGateway,
+  principalId = OWNER,
+  inviterName: string | undefined = 'Mina',
+) {
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={new QueryClient()}>
         <PrivateRoomInviteDialog
+          inviterName={inviterName}
           invites={gateway}
           onClose={() => undefined}
           principalId={principalId}
@@ -107,9 +119,14 @@ function renderDialog(gateway: PrivateRoomInviteGateway, principalId = OWNER) {
 
 beforeAll(async () => {
   await initializeI18n(window.localStorage, ['en']);
+  URL.createObjectURL = vi.fn(() => 'blob:card');
+  URL.revokeObjectURL = vi.fn();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.mocked(renderShareCard).mockClear();
+});
 
 describe('邀请人', () => {
   it('还没有链接时一个按钮生成，默认给查看、发言、自动发言', async () => {
@@ -125,6 +142,77 @@ describe('邀请人', () => {
       capabilities: ['view', 'speak', 'automate'],
     });
     expect(screen.getByText(/Anyone with the link can come in after signing in/u)).toBeVisible();
+  });
+
+  it('有链接时旁边是邀请卡片：写着谁请的、哪间房、到哪天，二维码是这条链接', async () => {
+    const link = linkWith(
+      { capabilities: ['view', 'speak', 'automate'] },
+      'abcdefghjkmnpqrs23456789',
+    );
+    renderDialog(invites(link));
+
+    expect(
+      await screen.findByRole('img', {
+        name: 'Invite card for Weekly review, with a QR code for the link',
+      }),
+    ).toBeVisible();
+    expect(renderShareCard).toHaveBeenCalledWith({
+      action: 'Scan to join',
+      lead: 'Mina invites you to a room',
+      notes: ['Sign in and you’re in', expect.stringMatching(/^Valid until Oct 2[01]$/u)],
+      roomName: 'Weekly review',
+      tagline: 'Rooms where people and AI agents talk',
+      tone: roomTone(room.catalogId),
+      url: link.url,
+    });
+    expect(screen.getByText(/The QR code is this link\./u)).toBeVisible();
+    // 多了一栏，对话框宽一档。
+    expect(screen.getByRole('dialog', { name: 'Invite people' })).toHaveClass('ar-dialog--wide');
+  });
+
+  it('没有昵称时卡片上不写名字；还没有链接时没有卡片，对话框是平常的宽度', async () => {
+    const gateway = invites();
+    renderDialog(gateway, OWNER, '  ');
+
+    expect(await screen.findByRole('button', { name: 'Make link and copy' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Invite card' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Invite people' })).not.toHaveClass(
+      'ar-dialog--wide',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Make link and copy' }));
+
+    await waitFor(() => {
+      expect(renderShareCard).toHaveBeenCalledWith(
+        expect.objectContaining({ lead: 'You’re invited to a room' }),
+      );
+    });
+  });
+
+  it('一起发的话带着链接，能改；换了一条，话跟着换成新的链接', async () => {
+    const gateway = invites(
+      linkWith({ capabilities: ['view', 'speak', 'automate'] }, 'abcdefghjkmnpqrs23456789'),
+    );
+    renderDialog(gateway);
+
+    const message = await screen.findByLabelText('What you’ll say');
+    expect(message).toHaveValue(
+      'Join me in “Weekly review” on Agent Room. Open the link and sign in:\nhttps://agentroom.test/join#abcdefghjkmnpqrs23456789',
+    );
+    fireEvent.change(message, { target: { value: 'Come by tonight' } });
+    expect(message).toHaveValue('Come by tonight');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New link' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('What you’ll say')).toHaveValue(
+        'Join me in “Weekly review” on Agent Room. Open the link and sign in:\nhttps://agentroom.test/join#113456789abcdefghjkmnpqrs',
+      );
+    });
+    // 卡片也照新的链接重画。
+    expect(renderShareCard).toHaveBeenLastCalledWith(
+      expect.objectContaining({ url: 'https://agentroom.test/join#113456789abcdefghjkmnpqrs' }),
+    );
   });
 
   it('不是房主的给不出自己没有的：默认权限按自己有的截一下', async () => {
