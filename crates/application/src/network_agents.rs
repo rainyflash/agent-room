@@ -813,13 +813,14 @@ impl NetworkAgentService {
     }
 
     /// 名字后面加上编号写入：编号先按网络 Agent 的 ID 算，带编号的名字被别人占了就换一个
-    /// 随机编号再试。都撞上了才请 Agent 换个名字。
+    /// 这一次还没试过的随机编号再试。都撞上了才请 Agent 换个名字。
     async fn claim_name(
         &self,
         name: &NetworkAgentName,
         provisioning: &mut NetworkAgentProvisioning,
     ) -> NetworkAgentResult<()> {
         let mut tag = AgentNameTag::from_uuid(provisioning.id.as_uuid());
+        let mut tried = Vec::with_capacity(NAME_ATTEMPTS);
         for _ in 0..NAME_ATTEMPTS {
             provisioning.display_name = name.tagged(tag);
             provisioning
@@ -829,8 +830,8 @@ impl NetworkAgentService {
             match self.store.begin(provisioning).await.map_err(repository)? {
                 NetworkAgentBeginOutcome::Created => return Ok(()),
                 NetworkAgentBeginOutcome::NameTaken => {
-                    // UUIDv7 的末段是随机数。
-                    tag = AgentNameTag::from_uuid(uuid::Uuid::now_v7());
+                    tried.push(tag);
+                    tag = untried_tag(&tried);
                 }
             }
         }
@@ -2294,6 +2295,18 @@ enum OpenedSecret {
     Secret(SecretValue),
     Missing,
     Unsealable,
+}
+
+/// 抽一个这一次还没试过的随机编号。编号只有一万个，不挡的话偶尔会再抽到刚撞上的
+/// 那个，白白用掉一次机会。试过的最多 [`NAME_ATTEMPTS`] 个，重抽几乎一次就中。
+fn untried_tag(tried: &[AgentNameTag]) -> AgentNameTag {
+    loop {
+        // UUIDv7 的末段是随机数。
+        let tag = AgentNameTag::from_uuid(uuid::Uuid::now_v7());
+        if !tried.contains(&tag) {
+            return tag;
+        }
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
