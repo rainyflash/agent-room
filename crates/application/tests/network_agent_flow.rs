@@ -3044,7 +3044,8 @@ async fn 同名的都能进_名字后面加编号_撞上了换一个编号() {
         assert_tagged(&created.display_name, untagged_name(name));
         assert!(shown.insert(created.display_name.to_lowercase()));
     }
-    // 带编号的名字被别人占了，换一个随机编号再试。
+    // 带编号的名字被别人占了，换一个随机编号再试。换的编号不会是这一次试过的，
+    // 所以最后这个一定不是按 ID 算的那个（以前不挡，一万次里有一次抽回同一个）。
     *harness.store.names_taken.lock().unwrap() = 4;
     let retried = harness.create("Scout", None).await.unwrap();
     assert_tagged(&retried.display_name, "Scout");
