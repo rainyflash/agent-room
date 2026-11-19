@@ -20,6 +20,9 @@ export const attachmentResources = {
     'attachments.load': 'Load file',
     'attachments.loading': 'Loading…',
     'attachments.retry': 'Try again',
+    'attachments.savingFile': 'Saving to Downloads…',
+    'attachments.desktopUnsupported':
+      'The desktop app only saves text, image and PDF files. To download this one, open Agent Room in your browser.',
     'attachments.failed':
       'The attachment could not be opened. Check your connection and access, then try again.',
   },
@@ -42,6 +45,9 @@ export const attachmentResources = {
     'attachments.load': '加载文件',
     'attachments.loading': '正在加载…',
     'attachments.retry': '重试',
+    'attachments.savingFile': '正在存到“下载”文件夹…',
+    'attachments.desktopUnsupported':
+      '桌面应用只存文本、图片和 PDF。这个文件请在浏览器里打开 Agent Room 下载。',
     'attachments.failed': '暂时无法打开附件，请检查网络和大厅访问权限后重试。',
   },
 } as const;

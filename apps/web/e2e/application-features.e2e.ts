@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { applicationVersion } from '../build/runtime-manifest';
 import { readFile } from 'node:fs/promises';
+import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 
 type FeatureWindow = Window &
@@ -147,6 +148,85 @@ for (const width of [1440, 390]) {
     });
   });
 }
+
+test('桌面端的附件由应用自己存：点一次就存好、说存到哪了，存不了的类型照实说', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 950 });
+  // 桌面端的窗口里页面自己的下载不出声（Windows 上悄悄存、Mac 上直接取消）：一次也不该走到。
+  let pageDownloads = 0;
+  page.on('download', () => {
+    pageDownloads += 1;
+  });
+  await page.goto(`${fixture}&desktop`);
+  await page.getByRole('link', { name: /Design studio/ }).click();
+  const input = page.getByRole('textbox', { name: 'Message', exact: true });
+  await expect(input).toBeEnabled();
+  const send = async (name: string, mimeType: string, buffer: Buffer, text: string) => {
+    await page
+      .getByLabel('Attach a file', { exact: true })
+      .setInputFiles({ name, mimeType, buffer });
+    await expect(page.locator('.conversation-attachment-picker__file')).toContainText(name);
+    await input.fill(text);
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(page.getByRole('log')).toContainText(name);
+  };
+
+  await send('notes.txt', 'text/plain', Buffer.from('canary 4821'), 'Notes attached');
+  const notes = page.locator('.conversation-attachment', { hasText: 'notes.txt' });
+  await notes.getByRole('button', { name: 'Download file' }).click();
+  await expect(notes.getByRole('status')).toHaveText('Saved to your Downloads folder as notes.txt');
+  await expect(notes.getByRole('link')).toHaveCount(0);
+  await notes.getByRole('button', { name: 'Show in folder' }).click();
+  // 再点一次存的是另一份，不盖掉上一份。
+  await notes.getByRole('button', { name: 'Download file' }).click();
+  await expect(notes.getByRole('status')).toHaveText(
+    'Saved to your Downloads folder as notes (1).txt',
+  );
+  const evidence = await page.evaluate(() => {
+    const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
+    return {
+      saved: controls
+        .savedFiles()
+        .map(({ contentBase64, fileName }) => ({ fileName, text: atob(contentBase64) })),
+      shown: controls.shownFiles(),
+    };
+  });
+  expect(evidence).toEqual({
+    saved: [
+      { fileName: 'notes.txt', text: 'canary 4821' },
+      { fileName: 'notes (1).txt', text: 'canary 4821' },
+    ],
+    shown: ['notes.txt'],
+  });
+
+  await send('diagram.png', 'image/png', png, 'A picture');
+  const diagram = page.locator('.conversation-attachment', { hasText: 'diagram.png' });
+  await diagram.getByRole('button', { name: 'View image' }).click();
+  await expect(diagram.getByRole('img', { name: 'diagram.png' })).toBeVisible();
+  await diagram.getByRole('button', { name: 'Download file' }).click();
+  await expect(diagram.getByRole('status')).toHaveText(
+    'Saved to your Downloads folder as diagram.png',
+  );
+
+  await send(
+    'bundle.zip',
+    'application/zip',
+    Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x7a, 0x69, 0x70]),
+    'An archive',
+  );
+  const bundle = page.locator('.conversation-attachment', { hasText: 'bundle.zip' });
+  await expect(bundle).toContainText(
+    'The desktop app only saves text, image and PDF files. To download this one, open Agent Room in your browser.',
+  );
+  await expect(bundle.getByRole('button')).toHaveCount(0);
+  await expect(bundle.getByRole('link')).toHaveCount(0);
+
+  const accessibility = await new AxeBuilder({ page }).include('[role="log"]').analyze();
+  expect(accessibility.violations).toEqual([]);
+  await expectNoHorizontalOverflow(page);
+  expect(pageDownloads).toBe(0);
+  expect(failures).toEqual([]);
+});
 
 test('别人的邀请：在“房间”页拒绝，在“换个房间”里加入', async ({ page }) => {
   const failures = collectPageFailures(page);
