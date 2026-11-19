@@ -134,7 +134,7 @@ python tools/release_flow.py --state /var/lib/agent-room-release/next/flow.json 
 python tools/release_qa.py --work <发布目录> baseline  # 候选核验后、服务端升级前：记录旧版本的未确认投递
 python tools/release_qa.py --work <发布目录> upgrade   # 服务端升级后：本机已安装的旧版本原地升级到候选
 python tools/release_qa.py --work <发布目录> start     # 隔离 Bridge 申请设备码，打印批准链接
-python tools/release_qa.py --work <发布目录> run       # 批准后：加入、授权、两轮真实回复、空闲、接管、交回、汇总、清理
+python tools/release_qa.py --work <发布目录> run       # 批准后：加入、授权、两轮真实回复、在桌面端点开附件、空闲、接管、交回、汇总、清理
 ```
 
 - `baseline` 要在服务端升级之前跑：服务端升级前后用已安装的旧客户端做兼容检查，和之后的原地升级，都要以同一批未确认投递为准。`upgrade` 发现基线已存在就沿用，没有时先补记。

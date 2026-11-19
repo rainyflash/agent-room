@@ -8,7 +8,8 @@ observations of the signed candidate:
   acceptance device restoring its saved authorization while the acceptance policy allows it (first-device);
 * the owner's real host task receiving two real messages through Agent Room, one with a
   random attachment canary it can only read from the delivered attachment, then staying
-  idle, being taken over and resumed (continuous-reception);
+  idle, being taken over and resumed (continuous-reception); the installed desktop app also
+  opens that attachment as a person would, and the copy it saves must be the canary file;
 * the owner's actual previous installation upgraded in place by the verified installer,
   keeping its login, the upgrade test identity and its unacknowledged deliveries (upgrade).
 
@@ -100,7 +101,11 @@ LABELS = {
     "attach": ("添加附件", "Attach a file"),
     "send": ("发送", "Send"),
     "log": ("房间对话", "Conversation"),
+    # The desktop's one button on a file attachment; after a failed load it reads "try again".
+    "download": ("下载文件", "Download file", "重试", "Try again"),
 }
+# What the desktop writes under an attachment once it has saved it, up to the file name, in both languages.
+SAVED_NOTE = ("已存到“下载”文件夹：", "Saved to your Downloads folder as ")
 # Shown on the owner's own room card; the room is theirs and only release acceptance speaks in it.
 QA_ROOM_DESCRIPTION = "发布验收专用：每一版的实机验收在这里收发消息。"
 UPGRADE_IDENTITY_NAME = "升级验收"
@@ -717,6 +722,33 @@ class Acceptance:
         self.page("verify-visible-replies.js", self.path("verify-visible-replies.js").read_text(encoding="utf-8"),
                   "verified-replies.json")
 
+    def open_attachment(self) -> None:
+        """Open the second message's attachment in the installed desktop app, as a person clicking it would.
+
+        The QA Agent reads the attachment through the Bridge, so a desktop whose page could not open any
+        attachment (Alpha 64 to 98: the page wanted a response header the native layer withholds) still passed.
+        The desktop saves the file into Downloads itself and says under which name. That copy must be the canary
+        file byte for byte; it is removed again, since this run put it there."""
+        canary = (self.qa / "attachment-source" / self.canary_name).read_bytes()
+        folder = downloads_folder()
+        started = time.time()
+        message = message_texts(self.label, self.metadata["revision"])[2]
+        result = self.page("open-attachment.js", open_attachment_js(message, self.canary_name))
+        saved_as = str(result.get("savedAs", ""))
+        # The name comes from the page: only a copy of this run's own attachment is ever read or removed.
+        if not saved_copy_name(self.canary_name, saved_as):
+            raise ReleaseFailure(f"桌面端说附件存成了意料之外的名字：{saved_as!r}")
+        saved = folder / saved_as
+        if not saved.is_file() or saved.stat().st_mtime < started - 5:
+            raise ReleaseFailure(f"桌面端说附件存成了 {saved_as}，“下载”文件夹里却没有这一次存的这个文件。")
+        if saved.read_bytes() != canary:
+            raise ReleaseFailure(f"桌面端存下的 {saved_as} 和发出去的附件不一样；文件留在“下载”文件夹里。")
+        saved.unlink()
+        self.save("attachment-opened.json", {
+            "attachmentOpenedInDesktop": True, "savedCopyMatchesAttachment": True, "savedCopyRemoved": True,
+            "savedAs": saved_as, "observedAtUnixSeconds": int(time.time()),
+        })
+
     def observe(self, label: str) -> dict[str, Any]:
         state = self.cli("receiver", "inspect", "--binding", str(self.path("binding.private.json")))
         raw = self.path("receiver.private.jsonl").read_bytes()
@@ -1089,6 +1121,7 @@ class Acceptance:
             ("message-1", lambda: self.send(1), self.path("incoming-1.json")),
             ("message-2", lambda: self.send(2), self.path("incoming-2.json")),
             ("replies", self.verify_replies, self.path("verified-replies.json")),
+            ("attachment", self.open_attachment, self.path("attachment-opened.json")),
             ("upgrade-inbox", self.check_upgrade_inbox, self.path("upgrade-inbox.json")),
             ("idle", self.idle, self.path("observation-idle-after.json")),
             ("takeover", self.takeover, self.path("reception-stopped.json")),
@@ -1100,7 +1133,8 @@ class Acceptance:
         if not self.authorized():
             print("设备码尚未获批。先运行 start，并请维护者批准。")
             return WAITING
-        needs_desktop = {"qa-room", "grant", "room", "message-1", "message-2", "replies", "takeover", "resume"}
+        needs_desktop = {"qa-room", "grant", "room", "message-1", "message-2", "replies", "attachment", "takeover",
+                         "resume"}
         for name, step, record in self.steps():
             if record.exists():
                 continue
@@ -1517,6 +1551,60 @@ def verify_replies_js(agent_name: str, canary: str) -> str:
   return {firstReplyTextConfirmed: true, attachmentCanaryConfirmed: true,
     visibleAgentReplies: 2, observedAtUnixSeconds: Math.floor(Date.now()/1000)};
 }""", {"LOG": js_name("log"), "AGENT_NAME": json.dumps(agent_name), "CANARY": json.dumps(canary)})
+
+
+def open_attachment_js(message: str, name: str) -> str:
+    """Click the attachment of the QA message `message` in the desktop and return the name it was saved under.
+
+    On the desktop a file attachment has one button: it fetches the file, checks it and has the app save it into
+    Downloads, then a status line names the saved file. A line already there from an earlier try does not count:
+    the desktop never reuses a name, so the new line differs from it."""
+    return fill("""async page => {
+  const sent = page.getByRole('log', {name: @@LOG@@})
+    .locator('article:not([data-actor-kind="agent"])').filter({hasText: @@MESSAGE@@});
+  const attachment = sent.last().locator('.conversation-attachment').filter({hasText: @@NAME@@});
+  await attachment.waitFor({state: 'visible', timeout: 30000});
+  const line = async role => {
+    const found = attachment.getByRole(role);
+    return await found.count() === 0 ? null : (await found.first().innerText()).trim();
+  };
+  const before = await line('status');
+  await attachment.getByRole('button', {name: @@DOWNLOAD@@}).click();
+  const deadline = Date.now() + 90000;
+  for (;;) {
+    await page.waitForTimeout(500);
+    const saved = await line('status');
+    if (saved !== null && saved !== before) {
+      const prefix = @@SAVED@@.find(candidate => saved.startsWith(candidate));
+      if (prefix === undefined) throw new Error('Unexpected line under the attachment: ' + saved);
+      return {attachmentOpenedInDesktop: true, savedAs: saved.slice(prefix.length),
+        observedAtUnixSeconds: Math.floor(Date.now() / 1000)};
+    }
+    const problem = await line('alert');
+    if (problem !== null) throw new Error('The desktop app could not open the attachment: ' + problem);
+    if (Date.now() > deadline) throw new Error('The desktop app did not answer the click on the attachment');
+  }
+}""", {"LOG": js_name("log"), "MESSAGE": json.dumps(message), "NAME": json.dumps(name),
+       "DOWNLOAD": js_name("download"), "SAVED": json.dumps(list(SAVED_NOTE))})
+
+
+def saved_copy_name(name: str, saved_as: str) -> bool:
+    """Whether `saved_as` is a name the desktop gives a copy of `name`: the name itself, or with ` (N)` added."""
+    stem, dot, extension = name.rpartition(".")
+    pattern = re.escape(stem) + r"(?: \([1-9]\d{0,2}\))?" + re.escape(dot + extension)
+    return bool(stem) and re.fullmatch(pattern, saved_as) is not None
+
+
+def downloads_folder() -> Path:
+    """The signed-in user's Downloads folder as Windows reports it; it can be moved out of the profile."""
+    command = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+               "(New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path")
+    result = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True,
+                            encoding="utf-8", creationflags=NO_WINDOW, timeout=60)
+    folder = result.stdout.strip()
+    if result.returncode or not folder or not Path(folder).is_dir():
+        raise ReleaseFailure("找不到这台电脑的“下载”文件夹。")
+    return Path(folder)
 
 
 def revoke_grant_js(grant_id: str) -> str:

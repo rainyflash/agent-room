@@ -388,6 +388,7 @@ check({getByRole: () => locator(texts)}).then(
             release_qa.reception_js("read", target),
             release_qa.reception_js("takeover", target),
             release_qa.verify_replies_js("Alpha 41 实机验收 Claude Code", "ALPHA41-ABC"),
+            release_qa.open_attachment_js("二", "alpha41-attachment.txt"),
             release_qa.revoke_grant_js("g"),
             release_qa.goto_room_js("http://tauri.localhost/lobby/c/instance/r?view=conversation"),
             release_qa.native_session_js("http://tauri.localhost", VERSION),
@@ -668,6 +669,153 @@ class ConfirmDeliveryTests(unittest.TestCase):
         acceptance.send(1)
         acceptance.page.assert_not_called()
         self.assertEqual(json.loads((acceptance.qa / "incoming-1.json").read_text(encoding="utf-8"))["eventId"], "$one")
+
+    def test_a_saved_copy_keeps_the_attachment_name_or_gets_a_number(self):
+        name = "alpha41-attachment.txt"
+        for saved_as in (name, "alpha41-attachment (1).txt", "alpha41-attachment (27).txt"):
+            self.assertTrue(release_qa.saved_copy_name(name, saved_as), saved_as)
+        for saved_as in ("", "other.txt", "alpha41-attachment.txt.exe", "alpha41-attachment (0).txt",
+                         "alpha41-attachment (1) (2).txt", "..\\alpha41-attachment.txt", "sub/alpha41-attachment.txt",
+                         "alpha41-attachmentXtxt", "alpha41-attachment (1).TXT", "alpha41-attachment.txt\n"):
+            self.assertFalse(release_qa.saved_copy_name(name, saved_as), repr(saved_as))
+        self.assertFalse(release_qa.saved_copy_name("no-extension", "no-extension"))
+
+    CANARY = b"ALPHA41-C0FFEE\n"
+
+    def attachment_run(self, saved_as: str, written: dict[str, bytes]):
+        """A run whose desktop page answers `saved_as` after putting `written` into a stand-in Downloads folder."""
+        acceptance = self.acceptance([], {})
+        source = acceptance.qa / "attachment-source"
+        source.mkdir()
+        (source / acceptance.canary_name).write_bytes(self.CANARY)
+        downloads = acceptance.qa / "Downloads"
+        downloads.mkdir()
+
+        def page(_name, _script, _destination=None):
+            for name, content in written.items():
+                (downloads / name).write_bytes(content)
+            return {"attachmentOpenedInDesktop": True, "savedAs": saved_as}
+
+        acceptance.page = mock.Mock(side_effect=page)
+        patcher = mock.patch.object(release_qa, "downloads_folder", return_value=downloads)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return acceptance, downloads
+
+    def test_the_desktops_copy_of_the_attachment_is_checked_and_removed(self):
+        acceptance, downloads = self.attachment_run("alpha41-attachment (1).txt",
+                                                    {"alpha41-attachment (1).txt": self.CANARY})
+        (downloads / "alpha41-attachment.txt").write_bytes(b"the owner's own file")
+        acceptance.open_attachment()
+        record = json.loads((acceptance.qa / "attachment-opened.json").read_text(encoding="utf-8"))
+        self.assertEqual((record["attachmentOpenedInDesktop"], record["savedCopyMatchesAttachment"],
+                          record["savedCopyRemoved"], record["savedAs"]),
+                         (True, True, True, "alpha41-attachment (1).txt"))
+        # Only the copy this run made is removed; the owner's file of the plain name stays.
+        self.assertEqual([entry.name for entry in downloads.iterdir()], ["alpha41-attachment.txt"])
+        name, script = acceptance.page.call_args.args
+        self.assertEqual(name, "open-attachment.js")
+        self.assertIn(json.dumps(release_qa.message_texts("Alpha 41", REVISION)[2]), script)
+        self.assertIn(json.dumps("alpha41-attachment.txt"), script)
+
+    def test_a_copy_that_differs_is_missing_or_is_oddly_named_fails_and_nothing_is_removed(self):
+        acceptance, downloads = self.attachment_run("alpha41-attachment.txt",
+                                                    {"alpha41-attachment.txt": b"something else"})
+        with self.assertRaisesRegex(release_qa.ReleaseFailure, "不一样"):
+            acceptance.open_attachment()
+        self.assertTrue((downloads / "alpha41-attachment.txt").exists())
+        self.assertFalse((acceptance.qa / "attachment-opened.json").exists())
+
+        acceptance, downloads = self.attachment_run("alpha41-attachment.txt", {})
+        with self.assertRaisesRegex(release_qa.ReleaseFailure, "没有这一次存的"):
+            acceptance.open_attachment()
+
+        # A file of that name from before the click is somebody else's, even with the same bytes.
+        acceptance, downloads = self.attachment_run("alpha41-attachment.txt", {})
+        earlier = downloads / "alpha41-attachment.txt"
+        earlier.write_bytes(self.CANARY)
+        hour_ago = time.time() - 3600
+        release_qa.os.utime(earlier, (hour_ago, hour_ago))
+        with self.assertRaisesRegex(release_qa.ReleaseFailure, "没有这一次存的"):
+            acceptance.open_attachment()
+        self.assertTrue(earlier.exists())
+
+        for odd in ("..\\..\\secrets.txt", "alpha41-attachment.txt.exe", ""):
+            with self.subTest(odd):
+                acceptance, downloads = self.attachment_run(odd, {})
+                with self.assertRaisesRegex(release_qa.ReleaseFailure, "意料之外"):
+                    acceptance.open_attachment()
+                self.assertFalse((acceptance.qa / "attachment-opened.json").exists())
+
+    def test_attachment_controls_are_the_ones_the_desktop_page_shows(self):
+        features = release_qa.ROOT / "apps" / "web" / "src" / "features"
+        attachments = (features / "conversation" / "i18n" / "attachment-resources.ts").read_text(encoding="utf-8")
+        saved = (features / "desktop" / "i18n" / "file-save-resources.ts").read_text(encoding="utf-8")
+        for label in release_qa.LABELS["download"]:
+            self.assertIn(f"'{label}'", attachments)
+        for prefix in release_qa.SAVED_NOTE:
+            self.assertIn(f"'{prefix}{{{{fileName}}}}'", saved)
+
+    @unittest.skipIf(shutil.which("node") is None, "node is required to run the page function")
+    def test_opening_the_attachment_reads_the_new_saved_line_or_the_failure(self):
+        source = release_qa.open_attachment_js("第二条", "alpha41-attachment.txt")
+        self.assertNotRegex(source, r"@@[A-Z_]+@@")
+        harness = r"""
+const open = (0, eval)('(' + require('fs').readFileSync(0, 'utf8').trim() + ')');
+const state = JSON.parse(process.argv[1]);
+// A clock that runs fast, so the case where the desktop never answers ends at once.
+let now = 0;
+Date.now = () => (now += 10000);
+let clicked = false;
+const line = (role) => {
+  const text = () => (clicked ? state.after : state.before)[role] ?? null;
+  return {count: async () => (text() === null ? 0 : 1), first: () => ({innerText: async () => text()})};
+};
+const attachment = {
+  locator: () => attachment,
+  filter: () => attachment,
+  last: () => attachment,
+  waitFor: async () => {},
+  getByRole: (role, options) => (role !== 'button' ? line(role) : {
+    click: async () => {
+      if (!options.name.test(state.button)) throw new Error('No button named ' + state.button);
+      clicked = true;
+    },
+  }),
+};
+open({getByRole: () => attachment, waitForTimeout: async () => {}}).then(
+  (result) => { process.stdout.write(JSON.stringify(result)); },
+  (error) => { process.stdout.write('ERROR ' + error.message); process.exitCode = 4; });
+"""
+
+        def run(button, before, after):
+            state = {"button": button, "before": before, "after": after}
+            return subprocess.run(["node", "-e", harness, json.dumps(state, ensure_ascii=False)], input=source,
+                                  capture_output=True, text=True, encoding="utf-8")
+
+        first = run("下载文件", {}, {"status": "已存到“下载”文件夹：alpha41-attachment.txt"})
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertEqual(json.loads(first.stdout)["savedAs"], "alpha41-attachment.txt")
+        # A second try: the line from the first one is still there until the new copy is saved.
+        again = run("Download file", {"status": "Saved to your Downloads folder as alpha41-attachment.txt"},
+                    {"status": "Saved to your Downloads folder as alpha41-attachment (1).txt"})
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(json.loads(again.stdout)["savedAs"], "alpha41-attachment (1).txt")
+        retried = run("重试", {"alert": "暂时无法打开附件"}, {"status": "已存到“下载”文件夹：alpha41-attachment.txt"})
+        self.assertEqual(retried.returncode, 0, retried.stdout + retried.stderr)
+
+        unopened = run("下载文件", {}, {"alert": "暂时无法打开附件，请检查网络和大厅访问权限后重试。"})
+        self.assertEqual(unopened.returncode, 4)
+        self.assertIn("could not open the attachment: 暂时无法打开附件", unopened.stdout)
+        silent = run("Download file", {"status": "Saved to your Downloads folder as alpha41-attachment.txt"},
+                     {"status": "Saved to your Downloads folder as alpha41-attachment.txt"})
+        self.assertEqual(silent.returncode, 4)
+        self.assertIn("did not answer", silent.stdout)
+        odd = run("下载文件", {}, {"status": "别的话"})
+        self.assertEqual(odd.returncode, 4)
+        self.assertIn("Unexpected line", odd.stdout)
+        other_button = run("加载文件", {}, {"status": "已存到“下载”文件夹：alpha41-attachment.txt"})
+        self.assertEqual(other_button.returncode, 4)
 
 
 class AssembleReportsTests(unittest.TestCase):
