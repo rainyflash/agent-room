@@ -339,22 +339,6 @@ async fn export_account(
                   ON grant_row.id = reversal.grant_id
                 WHERE grant_row.granted_by = principal.id
             ), '[]'::jsonb),
-            -- 提醒（specs/redesign/reminders.md）：没存过的照默认，邮件提醒开着、没发过。
-            'reminders', COALESCE((
-                SELECT jsonb_build_object(
-                    'emailEnabled', reminder.email_enabled,
-                    'emailChangedAt', reminder.email_changed_at,
-                    'lastEmailAt', reminder.last_email_at,
-                    'coveredUntil', reminder.covered_until
-                )
-                FROM agent_room.account_reminder AS reminder
-                WHERE reminder.principal_id = principal.id
-            ), jsonb_build_object(
-                'emailEnabled', true,
-                'emailChangedAt', NULL,
-                'lastEmailAt', NULL,
-                'coveredUntil', NULL
-            )),
             -- 项目房间（specs/redesign/project-rooms.md）：在等核对的仓库认领，和他核对上、还绑着的仓库。
             -- 只记仓库名、码、时间和结果，不存 GitHub 上文件的内容。
             'repositoryClaims', COALESCE((
@@ -562,18 +546,11 @@ async fn revoke_local_credentials(
             .map_err(|error| map_sqlx_error(operation, &error))?;
     }
     // 服务器替账户保管的签名钥匙（ADR 0011）：账户一提出删除就清掉，谁也不能再凭它签设备。
-    // 邮件提醒的开关也是（specs/redesign/reminders.md）：一提出删除就不再发；删完那一步再清一遍，
-    // 中间有人点了退订链接留下的那一行也带走。
-    for statement in [
-        r"DELETE FROM agent_room.principal_encryption_key WHERE principal_id = $1",
-        r"DELETE FROM agent_room.account_reminder WHERE principal_id = $1",
-    ] {
-        sqlx::query(statement)
-            .bind(principal_id.as_uuid())
-            .execute(&mut **transaction)
-            .await
-            .map_err(|error| map_sqlx_error(operation, &error))?;
-    }
+    sqlx::query(r"DELETE FROM agent_room.principal_encryption_key WHERE principal_id = $1")
+        .bind(principal_id.as_uuid())
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| map_sqlx_error(operation, &error))?;
     Ok(())
 }
 

@@ -15,10 +15,9 @@ use agent_room_application::{
         DeviceRevocationTransaction, HandoffAccessRepository, MatrixUserId,
         PendingAgentMatrixDeviceStore, PrincipalRegistration, PrincipalRepository,
         PrivateRoomSnapshot, PrivateRoomStore, QueueTargetedHandoff, QueueTargetedHandoffOutcome,
-        RecordTargetedHandoffReceipt, ReminderAccount, ReminderSettingsRepository, SealedSecret,
-        SecretDigest, SignInAccount, StoredAgentInstanceRegistration, StoredEncryptionKey,
-        TargetedHandoffReceiptOutcome, TargetedHandoffRepository,
-        TargetedHandoffRequestFingerprint,
+        RecordTargetedHandoffReceipt, SealedSecret, SecretDigest, SignInAccount,
+        StoredAgentInstanceRegistration, StoredEncryptionKey, TargetedHandoffReceiptOutcome,
+        TargetedHandoffRepository, TargetedHandoffRequestFingerprint,
     },
 };
 use agent_room_domain::{
@@ -590,100 +589,6 @@ async fn find_encryption_key(
     AccountEncryptionKeyRepository::find_encryption_key(repositories, principal_id)
         .await
         .expect("钥匙可查")
-}
-
-/// 邮件提醒的开关（specs/redesign/reminders.md）：没存过的照默认开着；关上、再关一次不刷新改的时间；
-/// 导出里有它；提出删除就清掉，之后再点退订什么都不写。
-#[tokio::test]
-#[ignore = "需要由 tools/database.py 提供隔离的真实 PostgreSQL"]
-async fn 邮件提醒的开关存得下_删账户时跟着删() {
-    let database = TestDatabase::connect().await;
-    let repositories = PostgresRepositories::new(database.runtime.clone());
-    let principal_id = PrincipalId::from_uuid(Uuid::now_v7());
-    let registration = principal_registration(principal_id, "提醒主体");
-    PrincipalRepository::create(&repositories, &registration)
-        .await
-        .expect("主体创建应成功");
-    assert_eq!(
-        reminder_account(&repositories, principal_id).await,
-        ReminderAccount::Active {
-            email_enabled: true
-        }
-    );
-    for at in [test_time(), test_time_after(60_000)] {
-        assert!(set_email_reminders(&repositories, principal_id, false, at).await);
-    }
-    assert_eq!(
-        reminder_account(&repositories, principal_id).await,
-        ReminderAccount::Active {
-            email_enabled: false
-        }
-    );
-    let exported = AccountDeletionRepository::export(&repositories, principal_id, test_time())
-        .await
-        .expect("账户导出应成功")
-        .expect("活动账户必须存在");
-    assert_eq!(exported.data["reminders"]["emailEnabled"], false);
-    assert_eq!(
-        exported.data["reminders"]["emailChangedAt"], exported.data["principal"]["createdAt"],
-        "再关一次不刷新改的时间"
-    );
-    assert_eq!(
-        exported.data["reminders"]["lastEmailAt"],
-        serde_json::Value::Null
-    );
-
-    let request = AccountDeletionRequest {
-        job_id: AccountDeletionJobId::from_uuid(Uuid::now_v7()),
-        principal_id,
-        matrix_user_id: MatrixUserId::new(registration.matrix_user_id.clone())
-            .expect("测试 MXID 有效"),
-        receipt_digest: SecretDigest::from_array([92; 32]),
-        requested_at: test_time(),
-    };
-    AccountDeletionRepository::request(&repositories, &request)
-        .await
-        .expect("删除请求应原子入队");
-    assert_eq!(
-        reminder_account(&repositories, principal_id).await,
-        ReminderAccount::Gone
-    );
-    assert!(!set_email_reminders(&repositories, principal_id, false, test_time()).await);
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM agent_room.account_reminder WHERE principal_id = $1",
-    )
-    .bind(principal_id.as_uuid())
-    .fetch_one(&database.runtime)
-    .await
-    .expect("应能数提醒设置");
-    assert_eq!(rows, 0, "提出删除就清掉了，之后也没再写");
-    assert_eq!(
-        reminder_account(&repositories, PrincipalId::from_uuid(Uuid::now_v7())).await,
-        ReminderAccount::Gone,
-        "没有这个账户"
-    );
-
-    database.close().await;
-}
-
-async fn reminder_account(
-    repositories: &PostgresRepositories,
-    principal_id: PrincipalId,
-) -> ReminderAccount {
-    ReminderSettingsRepository::find_reminder_account(repositories, principal_id)
-        .await
-        .expect("提醒设置可查")
-}
-
-async fn set_email_reminders(
-    repositories: &PostgresRepositories,
-    principal_id: PrincipalId,
-    enabled: bool,
-    at: UtcMillis,
-) -> bool {
-    ReminderSettingsRepository::set_email_reminders(repositories, principal_id, enabled, at)
-        .await
-        .expect("提醒设置可存")
 }
 
 #[tokio::test]
