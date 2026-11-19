@@ -1,4 +1,6 @@
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
+import { useColorScheme } from './support/color-scheme';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import { roomAction } from './support/workspace-navigation';
 
@@ -316,5 +318,52 @@ test('一千个人物可逐个定位且能通过收藏缩小列表', async ({ pa
   await page.getByLabel('Your agent collection').selectOption('favorites');
   await expect(page.locator('.list-roster__list > li')).toHaveCount(1);
   await expectNoHorizontalOverflow(page);
+  expect(failures).toEqual([]);
+});
+
+test('收件箱里谁找你带着头像，Agent 的名字跟它的机器人一个颜色，白天夜间都读得清', async ({
+  page,
+}, testInfo) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/e2e/fixtures/lobby-scene.html?inbox=1&history=1');
+  const entries = page.locator('.personal-inbox__list > li');
+  await expect(entries).toHaveCount(4);
+  const first = entries.first();
+  const name = first.getByRole('heading', { level: 2 });
+  await expect(name).toHaveAttribute('data-tone', /^(?:teal|coral|sunny)$/u);
+  // 名字的颜色和头像垫的底是同一种：同一个 Agent 到哪儿都认得出。
+  const tone = (await name.getAttribute('data-tone')) ?? '';
+  await expect(first.locator('.personal-inbox__avatar .ar-avatar')).toHaveClass(
+    new RegExp(`ar-avatar--${tone}`, 'u'),
+  );
+  // “看原文”是链接，旁边两个是按钮：一样高、顶上对齐。
+  const boxes = await first.locator('.personal-inbox__actions > *').evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const box = node.getBoundingClientRect();
+      return { top: Math.round(box.top), height: Math.round(box.height) };
+    }),
+  );
+  expect(boxes.length).toBeGreaterThanOrEqual(3);
+  expect(new Set(boxes.map((box) => box.top)).size).toBe(1);
+  expect(new Set(boxes.map((box) => box.height)).size).toBe(1);
+
+  const expectAccessible = async () => {
+    const scan = await new AxeBuilder({ page })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    expect(
+      scan.violations.map(({ id, nodes }) => ({ id, nodes: nodes.map(({ target }) => target) })),
+    ).toEqual([]);
+  };
+  await expectAccessible();
+  await page.screenshot({ path: testInfo.outputPath('inbox-tones-light.png') });
+  await useColorScheme(page, 'dark');
+  await expectAccessible();
+  await page.screenshot({ path: testInfo.outputPath('inbox-tones-dark.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath('inbox-tones-dark-390.png') });
   expect(failures).toEqual([]);
 });
