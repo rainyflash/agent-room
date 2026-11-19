@@ -185,6 +185,6 @@
   font-size: 0.8125rem;
   line-height: 1.5;
 }
-.share-card p[role='status'] {
+.share-card .share-card__problem {
   color: var(--color-alert);
 }

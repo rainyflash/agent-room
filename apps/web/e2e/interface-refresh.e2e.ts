@@ -321,6 +321,69 @@ async function crowdedHeaderParts(page: Page): Promise<string[]> {
   );
 }
 
+test('桌面端下载我的数据：原生层存进“下载”，页面说存成了什么、能在文件夹里指出来', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // 桌面端的窗口里页面自己的下载不出声（Mac 上直接被取消）：一次也不该走到。
+  let pageDownloads = 0;
+  page.on('download', () => {
+    pageDownloads += 1;
+  });
+  // 已是最新：不弹“有新版本”的提示。
+  await page.goto('/e2e/fixtures/my-agents.html?settings=account&update=current');
+  const content = page.getByRole('region', { name: 'Account', exact: true });
+  const fixture = () =>
+    page.evaluate(() => {
+      const controls = (window as MyAgentsFixtureWindow).__agentRoomFixtureControls;
+      return { saved: controls.savedFiles(), shown: controls.shownFiles() };
+    });
+
+  await content.getByRole('button', { name: 'Download', exact: true }).click();
+  await expect(
+    content.getByText('Saved to your Downloads folder as agent-room-account-fixture.json'),
+  ).toBeVisible();
+  expect(await fixture()).toEqual({
+    saved: [
+      { fileName: 'agent-room-account-fixture.json', text: '{}\n', type: 'application/json' },
+    ],
+    shown: [],
+  });
+  const scan = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .analyze();
+  expect(scan.violations.map(({ id }) => id)).toEqual([]);
+  await expectNoHorizontalOverflow(page);
+
+  await content.getByRole('button', { name: 'Show in folder' }).click();
+  await expect
+    .poll(async () => (await fixture()).shown)
+    .toEqual(['agent-room-account-fixture.json']);
+
+  // 再存一次是另一个文件，说的是新名字：原生层从不盖掉已有的。
+  await content.getByRole('button', { name: 'Download', exact: true }).click();
+  await expect(
+    content.getByText('Saved to your Downloads folder as agent-room-account-fixture (1).json'),
+  ).toBeVisible();
+  expect(pageDownloads).toBe(0);
+  expect(failures).toEqual([]);
+});
+
+test('桌面端没存成时说没存成', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/e2e/fixtures/my-agents.html?settings=account&update=current&save=failed');
+  const content = page.getByRole('region', { name: 'Account', exact: true });
+
+  await content.getByRole('button', { name: 'Download', exact: true }).click();
+
+  await expect(content.getByRole('alert')).toHaveText('Couldn’t save the file. Try again.');
+  await expect(content.getByRole('button', { name: 'Show in folder' })).toHaveCount(0);
+  await expect(content.getByRole('button', { name: 'Download', exact: true })).toBeEnabled();
+  expect(failures).toEqual([]);
+});
+
 test('桌面端页面里开新窗口的链接交给系统浏览器：窗口自己不开，地址原样交过去', async ({
   page,
   context,

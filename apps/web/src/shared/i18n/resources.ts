@@ -3,6 +3,7 @@ import { agentInviteResources } from '@/features/desktop/i18n/agent-invite-resou
 import { receptionResources } from '@/features/desktop/i18n/reception-resources';
 import { receptionOwnershipResources } from '@/features/desktop/i18n/reception-ownership-resources';
 import { thisComputerResources } from '@/features/desktop/i18n/this-computer-resources';
+import { fileSaveResources } from '@/features/desktop/i18n/file-save-resources';
 import { settingsResources } from '@/features/settings/i18n/settings-resources';
 import { personalWorkspaceResources } from '@/features/personal-workspace/i18n/personal-workspace-resources';
 import { roomWorkspaceResources } from '@/features/lobby/i18n/workspace-resources';
@@ -666,6 +667,7 @@ export const resources = {
       ...moderationResources.en,
       ...publicLobbyEntryResources.en,
       ...thisComputerResources.en,
+      ...fileSaveResources.en,
       ...settingsResources.en,
       ...privateRoomResources.en,
       ...roomListingResources.en,
@@ -1251,6 +1253,7 @@ export const resources = {
       ...moderationResources['zh-CN'],
       ...publicLobbyEntryResources['zh-CN'],
       ...thisComputerResources['zh-CN'],
+      ...fileSaveResources['zh-CN'],
       ...settingsResources['zh-CN'],
       ...privateRoomResources['zh-CN'],
       ...roomListingResources['zh-CN'],

@@ -221,6 +221,43 @@ describe('设置里的账户', () => {
     expect(anchor.href).toBe('blob:export');
     click.mockRestore();
   });
+
+  it('桌面端下载我的数据：原生层存，说存到哪了、能在文件夹里指出来', async () => {
+    const saveFile = vi.fn<(fileName: string, content: Blob) => Promise<string | null>>(() =>
+      Promise.resolve('agent-room-account-2026-10-08.json'),
+    );
+    const showSavedFile = vi.fn<(fileName: string) => Promise<boolean>>(() =>
+      Promise.resolve(true),
+    );
+    vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue({
+      available: true,
+      saveFile,
+      showSavedFile,
+    } as unknown as ReturnType<typeof useOptionalDesktopRuntimeController>);
+    signedIn(true);
+    account.exportData.mockResolvedValue(
+      ok({ fileName: 'agent-room-account-2026-10-08.json', json: '{}\n' }),
+    );
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => undefined);
+    render(<AccountSettings />, { wrapper: Translations });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Saved to your Downloads folder as agent-room-account-2026-10-08.json',
+    );
+    const [fileName, saved] = saveFile.mock.calls[0] ?? [];
+    expect(fileName).toBe('agent-room-account-2026-10-08.json');
+    expect(saved?.type).toBe('application/json');
+    expect(saved?.size).toBe(3);
+    // 桌面端的窗口里页面自己的下载不出声（Mac 上直接被取消），不走那条路。
+    expect(click).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Show in folder' }));
+    expect(showSavedFile).toHaveBeenCalledWith('agent-room-account-2026-10-08.json');
+    click.mockRestore();
+  });
 });
 
 function signedIn(recentlyAuthenticated: boolean) {

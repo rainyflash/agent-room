@@ -29,6 +29,10 @@ export type LobbyFixtureControls = {
     offlineForMs?: number,
   ): void;
   advancePresenceClock(elapsedMs: number): void;
+  /** `?desktop` 时交给原生层存进“下载”文件夹的文件：存成的名字和 base64 的内容，按先后。 */
+  savedFiles(): readonly { readonly fileName: string; readonly contentBase64: string }[];
+  /** `?desktop` 时请原生层在文件夹里指出来的文件名，按先后。 */
+  shownFiles(): readonly string[];
 };
 export type LobbyFixtureWindow = Window &
   typeof globalThis & {

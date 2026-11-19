@@ -16,7 +16,8 @@ import type { DesktopRuntimeController } from '@/features/desktop/ui/use-desktop
 import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import { sessionStateName } from '@/features/session/ui/connection-model';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
-import { saveBlob } from '@/shared/browser/save-file';
+import { FileSaveNote } from '@/features/desktop/ui/file-save-note';
+import { useFileSave } from '@/features/desktop/ui/use-file-save';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import './account-settings.css';
 
@@ -205,6 +206,9 @@ function ExportRow({ account }: { readonly account: AccountGateway }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  // 桌面端由原生层存，存完下面说存到哪了；浏览器里交给浏览器自己的下载。
+  const saver = useFileSave();
+  const saving = saver.last?.kind === 'saving';
   const download = async (): Promise<void> => {
     setPending(true);
     setFailure(null);
@@ -214,7 +218,10 @@ function ExportRow({ account }: { readonly account: AccountGateway }) {
       setFailure(exported.error.code);
       return;
     }
-    saveTextFile(exported.value.fileName, exported.value.json);
+    saver.save(
+      exported.value.fileName,
+      new Blob([exported.value.json], { type: 'application/json' }),
+    );
   };
   return (
     <div className="settings-row settings-row--stack">
@@ -224,9 +231,10 @@ function ExportRow({ account }: { readonly account: AccountGateway }) {
         {failure === null ? null : (
           <p role="alert">{t('settings.account.exportFailed', { code: failure })}</p>
         )}
+        {failure === null ? <FileSaveNote onShow={saver.show} save={saver.last} /> : null}
       </div>
       <Button
-        disabled={pending}
+        disabled={pending || saving}
         icon={<Download aria-hidden="true" />}
         onClick={() => {
           void download();
@@ -234,7 +242,7 @@ function ExportRow({ account }: { readonly account: AccountGateway }) {
         size="compact"
         tone="ghost"
       >
-        {t(pending ? 'settings.account.exportPending' : 'settings.account.exportAction')}
+        {t(pending || saving ? 'settings.account.exportPending' : 'settings.account.exportAction')}
       </Button>
     </div>
   );
@@ -383,8 +391,4 @@ function DeletionConfirmation({
       ) : null}
     </section>
   );
-}
-
-function saveTextFile(fileName: string, text: string): void {
-  saveBlob(new Blob([text], { type: 'application/json' }), fileName);
 }

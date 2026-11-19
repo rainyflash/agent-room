@@ -4,6 +4,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
 import { expectShareCardFor } from './support/share-card';
 import { roomAction } from './support/workspace-navigation';
+import type { LobbyFixtureWindow } from '../src/test/lobby-fixture-controls';
 
 const roomFixture = '/e2e/fixtures/lobby-scene.html';
 const joinFixture = '/e2e/fixtures/join-invite.html';
@@ -198,4 +199,70 @@ test('打开邀请链接的其它样子：只给发言、已经在房间里、�
   await page.goto(`${joinFixture}?busy`);
   await expect(page.getByRole('heading', { name: 'Too many tries' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+});
+
+test('桌面端邀请卡片“保存图片”：原生层存进“下载”，按钮下面说存成了什么、能在文件夹里指出来', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // 桌面端的窗口里页面自己的下载不出声（Windows 上悄悄存、Mac 上直接取消）：一次也不该走到。
+  let pageDownloads = 0;
+  page.on('download', () => {
+    pageDownloads += 1;
+  });
+  await page.goto(`${roomFixture}?private&desktop`);
+  await (await roomAction(page, 'Invite people')).click();
+  const dialog = page.getByRole('dialog', { name: 'Invite people' });
+  await dialog.getByRole('button', { name: 'Make link and copy' }).click();
+  await expectCardFor(dialog, await linkText(page));
+  const fixture = () =>
+    page.evaluate(() => {
+      const controls = (window as LobbyFixtureWindow).__agentRoomFixtureControls;
+      return {
+        saved: controls.savedFiles().map(({ contentBase64, fileName }) => {
+          const bytes = Uint8Array.from(atob(contentBase64), (character) =>
+            character.charCodeAt(0),
+          );
+          const view = new DataView(bytes.buffer);
+          // PNG 的开头 8 个字节，和 IHDR 里的宽、高。
+          return {
+            fileName,
+            signature: Array.from(bytes.subarray(0, 8)),
+            size: [view.getUint32(16), view.getUint32(20)],
+          };
+        }),
+        shown: controls.shownFiles(),
+      };
+    });
+
+  await dialog.getByRole('button', { name: 'Save image' }).click();
+  await expect(
+    dialog.getByText('Saved to your Downloads folder as agent-room-Builders Exchange.png'),
+  ).toBeVisible();
+  // 交给原生层的就是画好的那张图：一张 1080×1350 的 PNG。
+  expect(await fixture()).toEqual({
+    saved: [
+      {
+        fileName: 'agent-room-Builders Exchange.png',
+        signature: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        size: [1080, 1350],
+      },
+    ],
+    shown: [],
+  });
+  await expectAccessible(page, '.share-card');
+
+  await dialog.getByRole('button', { name: 'Show in folder' }).click();
+  await expect
+    .poll(async () => (await fixture()).shown)
+    .toEqual(['agent-room-Builders Exchange.png']);
+
+  // 再存一次是另一个文件，说的是新名字。
+  await dialog.getByRole('button', { name: 'Save image' }).click();
+  await expect(
+    dialog.getByText('Saved to your Downloads folder as agent-room-Builders Exchange (1).png'),
+  ).toBeVisible();
+  expect(pageDownloads).toBe(0);
+  expect(failures).toEqual([]);
 });

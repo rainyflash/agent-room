@@ -22,6 +22,7 @@ import {
   releaseUpdateProgressSchema,
   releaseUpdateStatusSchema,
   desktopRuntimeSnapshotSchema,
+  savedFileSchema,
   type BridgeRuntime,
   type ComputerRelease,
   type InvitationOffer,
@@ -38,6 +39,7 @@ import {
   type DesktopRuntimeSnapshot,
   type ReleaseUpdateChannel,
   type ReleaseUpdateCheck,
+  type SavedFile,
 } from '@/features/desktop/domain/desktop-runtime';
 import { err, ok, type Result } from '@/shared/result';
 import { commandFailureSchema, normalizeCommandFailure } from '@/shared/desktop/command-failure';
@@ -52,6 +54,8 @@ const desktopCommands = {
   authorization: 'desktop_open_authorization',
   openLogs: 'desktop_open_logs',
   openLink: 'desktop_open_link',
+  saveFile: 'desktop_save_file',
+  showSavedFile: 'desktop_show_saved_file',
   notify: 'desktop_notify',
   autostart: 'desktop_set_autostart',
   language: 'desktop_set_language',
@@ -265,6 +269,34 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
     return this.invokeValidated(
       desktopCommands.openLink,
       { url },
+      z
+        .undefined()
+        .or(z.null())
+        .transform(() => undefined),
+    );
+  }
+
+  async saveFile(
+    fileName: string,
+    content: Blob,
+  ): Promise<Result<SavedFile, DesktopRuntimeFailure>> {
+    let contentBase64: string;
+    try {
+      contentBase64 = await blobBase64(content);
+    } catch {
+      return err({ code: 'desktop.save.unreadable_content', retryable: true });
+    }
+    return this.invokeValidated(
+      desktopCommands.saveFile,
+      { fileName, contentBase64 },
+      savedFileSchema,
+    );
+  }
+
+  async showSavedFile(fileName: string): Promise<Result<void, DesktopRuntimeFailure>> {
+    return this.invokeValidated(
+      desktopCommands.showSavedFile,
+      { fileName },
       z
         .undefined()
         .or(z.null())
@@ -490,4 +522,17 @@ export class TauriDesktopRuntimeGateway implements DesktopRuntimeGateway {
       })();
     });
   }
+}
+
+/** 一段一段转，免得一次把几 MB 的字节摊成函数的参数。 */
+const BASE64_CHUNK_BYTES = 0x8000;
+
+/** 交给原生层的内容用 base64 带过去：命令的参数是 JSON。 */
+async function blobBase64(content: Blob): Promise<string> {
+  const bytes = new Uint8Array(await content.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += BASE64_CHUNK_BYTES) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + BASE64_CHUNK_BYTES));
+  }
+  return btoa(binary);
 }

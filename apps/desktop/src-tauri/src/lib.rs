@@ -36,6 +36,8 @@ mod release_update_state;
 mod release_update_watch;
 mod release_updates;
 mod runtime_target;
+mod saved_files;
+use saved_files::{SavedFiles, desktop_save_file, desktop_show_saved_file};
 mod server_move;
 mod single_instance;
 mod tray_hint;
@@ -147,6 +149,7 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
         ))
         .manage(DeepLinkInbox::default())
         .manage(native_language::NativeLanguageState::default())
+        .manage(SavedFiles::default())
         .invoke_handler(tauri::generate_handler![
             desktop_begin_human_authentication,
             desktop_load_matrix_session,
@@ -164,6 +167,8 @@ fn run(update_config: Option<ReleaseUpdateConfig>) {
             desktop_open_authorization,
             desktop_open_logs,
             desktop_open_link,
+            desktop_save_file,
+            desktop_show_saved_file,
             desktop_notify,
             desktop_check_update,
             desktop_install_update,
