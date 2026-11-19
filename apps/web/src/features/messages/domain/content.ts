@@ -9,7 +9,6 @@ export type ContentReadTicket = {
 export type DownloadedContent = {
   readonly bytes: Uint8Array;
   readonly contentDigest: string | null;
-  readonly contentLength: string | null;
   readonly mediaType: string | null;
 };
 

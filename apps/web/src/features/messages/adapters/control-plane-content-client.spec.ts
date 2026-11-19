@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { BrowserContentVerifier } from './browser-content-verifier';
 import { ControlPlaneContentClient } from './control-plane-content-client';
 
 const CONTENT_ID = '01990d9e-8400-7000-8000-000000000006';
@@ -71,7 +72,6 @@ describe('ControlPlaneContentClient', () => {
     expect([...result.value.bytes]).toEqual([...body]);
     expect(result.value).toMatchObject({
       contentDigest: 'sha-256=:q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=:',
-      contentLength: '5',
       mediaType: 'text/plain',
     });
     expect(fetchImplementation).toHaveBeenCalledWith(
@@ -82,6 +82,37 @@ describe('ControlPlaneContentClient', () => {
         method: 'POST',
       }),
     );
+  });
+
+  it('回答里没有 Content-Length 的附件照样打得开', async () => {
+    // 桌面端由原生层代发时不交回这个头，网关压缩过的回答也没有它。
+    const body = new TextEncoder().encode('attachment');
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', body));
+    const response = new Response(body, {
+      headers: {
+        'Content-Digest': `sha-256=:${btoa(String.fromCharCode(...digest))}:`,
+        'Content-Type': 'text/plain',
+      },
+    });
+    expect(response.headers.get('content-length')).toBeNull();
+    const client = new ControlPlaneContentClient({
+      baseUrl: 'https://api.agent-room.test',
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(response),
+    });
+
+    const downloaded = await client.download(CONTENT_ID, 'short-lived-content-ticket');
+
+    expect(downloaded.ok).toBe(true);
+    if (!downloaded.ok) {
+      return;
+    }
+    const verified = await new BrowserContentVerifier().verify(downloaded.value, {
+      contentId: CONTENT_ID,
+      digestSha256: [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join(''),
+      mediaType: 'text/plain',
+      sizeBytes: body.byteLength,
+    });
+    expect(verified).toMatchObject({ ok: true, value: { mode: 'text', text: 'attachment' } });
   });
 
   it('把服务端错误收敛为稳定错误码而不泄露响应正文', async () => {

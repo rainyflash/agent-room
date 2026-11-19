@@ -2190,7 +2190,6 @@ const content: ContentGateway = {
       ok({
         bytes: new TextEncoder().encode(fixtureContent),
         contentDigest: `sha-256=:${'q'.repeat(43)}=:`,
-        contentLength: String(new TextEncoder().encode(fixtureContent).byteLength),
         mediaType: 'text/markdown',
       }),
     );

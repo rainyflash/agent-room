@@ -182,7 +182,6 @@ function dependencies(text: string) {
       ok({
         bytes: new TextEncoder().encode(text),
         contentDigest: 'sha-256=:q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=:',
-        contentLength: String(new TextEncoder().encode(text).byteLength),
         mediaType: 'text/markdown',
       }),
     ),
