@@ -2,7 +2,8 @@
 //!
 //! 页面自己的下载（`<a download>`）在桌面端的窗口里靠不住：Windows 上 `WebView2` 悄悄存进“下载”，
 //! 窗口里什么也不显示，人以为没反应、连着点好几次；Mac 上没有处理下载的地方，直接被取消，
-//! 什么也存不下来。页面要存文件都走这两条命令，存成了回文件名，页面自己写出来。
+//! 什么也存不下来。页面要存文件都走这两条命令，存成了回文件名，页面自己写出来：
+//! 页面现做的卡片和数据，还有消息里别人发来的附件。
 
 use std::{
     fs::{self, OpenOptions},
@@ -18,7 +19,7 @@ use tauri_plugin_opener::OpenerExt as _;
 
 use crate::commands::DesktopCommandFailure;
 
-/// 一份最多这么大（解码以后）。卡片一两百 KB，“下载我的数据”几 MB 以内。
+/// 一份最多这么大（解码以后）。卡片一两百 KB，“下载我的数据”几 MB 以内，消息的附件最多 20 MB。
 const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
 
 /// 页面交来的文件名最长多少字节，再长不看。
@@ -27,15 +28,30 @@ const MAX_RAW_NAME_BYTES: usize = 512;
 /// 文件名（不算扩展名）最多这么多个字符。
 const MAX_STEM_CHARACTERS: usize = 80;
 
-/// 只存这几种。页面被人骗着往“下载”里放一个能运行的东西（`.exe`、`.lnk`、`.bat`），
-/// 等于替人下了一个程序；要多存一种先想清楚它点开以后会怎样。
-const ALLOWED_EXTENSIONS: &[&str] = &["png", "json"];
+/// 只存点开以后不会运行的几种：文本、位图和 PDF。页面被人骗着往“下载”里放一个能运行的东西
+/// （`.exe`、`.lnk`、`.bat`），等于替人下了一个程序；要多存一种先想清楚它点开以后会怎样。
+///
+/// 看着无害、其实不能放进来的：
+/// - `.html`、`.svg`、`.xml` 点开是浏览器，里面的脚本照样跑；
+/// - `.js`、`.vbs`、`.py`、`.command` 这类脚本，有的电脑上双击就运行；
+/// - 压缩包和 Office 文档里能带程序和宏，全靠系统认“来自网络”的标记拦着，
+///   Mac 上的那个标记这里还没写（见 `mark_from_internet`）。
+///
+/// 页面那边照着抄了一份（`saved-file-types.ts`），存不了的先告诉人，有测试卡着两边一样。
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "png", "json", "txt", "md", "log", "csv", "tsv", "yaml", "yml", "toml", "diff", "patch", "jpg",
+    "jpeg", "gif", "webp", "avif", "pdf",
+];
 
 /// 名字整个不能用时用它。
 const FALLBACK_STEM: &str = "agent-room";
 
 /// 重名时在名字后面加 ` (1)`、` (2)`……最多试到这个数。
 const MAX_NAME_ATTEMPTS: u32 = 999;
+
+/// Windows 的“来自网络”标记写的内容：区域 3 是互联网。
+#[cfg(windows)]
+const FROM_INTERNET_MARK: &str = "[ZoneTransfer]\r\nZoneId=3\r\n";
 
 /// 记着这一次运行里最近存的这么多个，“在文件夹里显示”只认它们。
 const REMEMBERED_FILES: usize = 32;
@@ -156,6 +172,19 @@ fn decoded(content_base64: &str) -> Option<Vec<u8>> {
     (!bytes.is_empty() && bytes.len() <= MAX_FILE_BYTES).then_some(bytes)
 }
 
+/// 给存下的文件带上 Windows 的“来自网络”标记（`Zone.Identifier` 这个备用数据流，区域 3），
+/// 和浏览器下载的一样：消息的附件是别人发来的，PDF 阅读器、表格软件看到标记会用受保护的方式打开。
+/// 页面自己做的卡片和数据也带着，没有坏处。盘不是 NTFS 时写不上，不算没存成。
+///
+/// Mac 上对应的是隔离属性（`com.apple.quarantine`），还没写：名单里都是点开不会运行的，
+/// 要放压缩包、Office 文档进名单，先把它补上。
+#[cfg(windows)]
+fn mark_from_internet(path: &Path) {
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    let _marked = fs::write(stream, FROM_INTERNET_MARK);
+}
+
 /// 存进这个文件夹。从不盖掉已有的文件：重名就在名字后面加 ` (1)`、` (2)`……
 fn save_into(folder: &Path, stem: &str, extension: &str, bytes: &[u8]) -> io::Result<PathBuf> {
     fs::create_dir_all(folder)?;
@@ -177,6 +206,9 @@ fn save_into(folder: &Path, stem: &str, extension: &str, bytes: &[u8]) -> io::Re
             let _removed = fs::remove_file(&path);
             return Err(error);
         }
+        drop(file);
+        #[cfg(windows)]
+        mark_from_internet(&path);
         return Ok(path);
     }
     Err(io::Error::new(
@@ -267,6 +299,39 @@ mod tests {
     }
 
     #[test]
+    fn 消息附件里常见的文本位图和_pdf_都存() {
+        assert_eq!(
+            name("alpha98-attachment.txt").as_deref(),
+            Some("alpha98-attachment.txt")
+        );
+        assert_eq!(
+            name("发布验收 记录.MD").as_deref(),
+            Some("发布验收 记录.md")
+        );
+        assert_eq!(
+            name("report.final.pdf").as_deref(),
+            Some("report.final.pdf")
+        );
+        assert_eq!(name("photo.JPEG").as_deref(), Some("photo.jpeg"));
+        for raw in [
+            "build.log",
+            "table.csv",
+            "table.tsv",
+            "config.yaml",
+            "config.yml",
+            "Cargo.toml",
+            "fix.diff",
+            "fix.patch",
+            "photo.jpg",
+            "loop.gif",
+            "photo.webp",
+            "photo.avif",
+        ] {
+            assert_eq!(name(raw).as_deref(), Some(raw));
+        }
+    }
+
+    #[test]
     fn 只存名单里的几种() {
         for raw in [
             "setup.exe",
@@ -278,9 +343,32 @@ mod tests {
             "card",
             "",
             ".png.",
+            // 点开是浏览器、里面的脚本会跑的。
+            "drawing.svg",
+            "feed.xml",
+            "page.xhtml",
+            // 有的电脑上双击就运行的脚本。
+            "tool.py",
+            "tool.vbs",
+            "tool.ps1",
+            "tool.sh",
+            "tool.command",
+            // 里面能带程序和宏的。
+            "bundle.zip",
+            "report.docx",
+            "sheet.xlsm",
+            // 拿能存的扩展名打掩护的。
+            "notes.txt.exe",
+            "notes.txt.",
+            "notes.txt:evil.exe",
         ] {
             assert!(checked_name(raw).is_none(), "{raw}");
         }
+        // 冒号后面再跟一个能存的扩展名：冒号换成空格，存成的是一份文本。
+        assert_eq!(
+            name("evil.exe:notes.txt").as_deref(),
+            Some("evil.exe notes.txt")
+        );
     }
 
     #[test]
@@ -353,6 +441,19 @@ mod tests {
         assert_eq!(std::fs::read(&first).unwrap(), b"one");
         assert_eq!(std::fs::read(&second).unwrap(), b"two");
         assert_eq!(std::fs::read(&third).unwrap(), b"three");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn 存下的文件带着来自网络的标记() {
+        let folder = tempfile::tempdir().expect("临时目录");
+        let saved = save_into(folder.path(), "notes", "txt", b"hello").expect("存成");
+        let mut stream = saved.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let mark = std::fs::read_to_string(stream).expect("标记读得到");
+        assert_eq!(mark, "[ZoneTransfer]\r\nZoneId=3\r\n");
+        // 标记是另一个数据流，文件自己的内容不变。
+        assert_eq!(std::fs::read(&saved).unwrap(), b"hello");
     }
 
     #[test]

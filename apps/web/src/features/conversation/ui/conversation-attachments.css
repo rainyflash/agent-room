@@ -56,7 +56,7 @@
   object-fit: cover;
 }
 .conversation-attachment-picker__file span,
-.conversation-attachment span {
+.conversation-attachment > div > span {
   min-width: 0;
   flex: 1;
   display: grid;
@@ -104,4 +104,11 @@
 .conversation-attachment button:disabled {
   cursor: default;
   opacity: 0.5;
+}
+/* 桌面应用存不了这种文件时的那一句，和文件大小那一行一样是次要的字。 */
+.conversation-attachment .conversation-attachment__note {
+  margin: 0;
+  color: var(--ar-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
 }

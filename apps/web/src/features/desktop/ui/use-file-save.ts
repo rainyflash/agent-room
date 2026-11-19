@@ -21,6 +21,11 @@ export type FileSave =
     };
 
 export type FileSaver = {
+  /**
+   * 这里是不是由应用自己存（桌面端）。是的话只存得了 `desktopSavesFile` 认的那几种，
+   * 存不了的先告诉人；浏览器里什么都交给浏览器自己的下载。
+   */
+  readonly native: boolean;
   readonly last: FileSave | null;
   readonly save: (fileName: string, content: Blob) => void;
   /** 在文件夹里指出刚存的那个文件；没有存好的、或者这里指不了时是 `null`。 */
@@ -70,5 +75,5 @@ export function useFileSave(): FileSaver {
           });
         };
 
-  return { last, save, show };
+  return { native: saveFile !== undefined, last, save, show };
 }
