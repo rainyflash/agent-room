@@ -75,43 +75,6 @@ for (const width of [1440, 390]) {
   });
 }
 
-test('服务器开了邮件提醒才有那一行，改了重开页面还是改过的；暂停的说明提到邮件', async ({
-  page,
-}, testInfo) => {
-  const failures = collectPageFailures(page);
-  await fakeNotifications(page, 'default');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto(web);
-  await expect(page.getByRole('switch', { name: 'Web notifications' })).toBeVisible();
-  await expect(page.getByRole('switch', { name: 'Email reminders' })).toHaveCount(0);
-  await expect(page.getByText(/no reminder emails/u)).toHaveCount(0);
-
-  await page.goto(`${web}&email=on`);
-  const email = page.getByRole('switch', { name: 'Email reminders' });
-  await expect(email).toBeChecked();
-  await expect(email).toHaveAccessibleDescription(
-    /At most one a day, never the messages themselves\./u,
-  );
-  await expect(page.getByText(/no reminder emails go out/u)).toBeVisible();
-  await expectNoHorizontalOverflow(page);
-  await expectAccessible(page);
-  await page.screenshot({
-    animations: 'disabled',
-    fullPage: true,
-    path: testInfo.outputPath('email-reminders-390.png'),
-  });
-  await email.click();
-  await expect(email).not.toBeChecked();
-  await page.reload();
-  await expect(page.getByRole('switch', { name: 'Email reminders' })).not.toBeChecked();
-
-  // 邮件提醒跟着账户走，桌面端也有这一行。
-  await page.goto(`${desktop}&email=off`);
-  await expect(page.getByRole('switch', { name: 'Email reminders' })).not.toBeChecked();
-  expect(failures).toEqual([]);
-});
-
 test('中文：提醒一组的字；桌面端没有网页通知这一行', async ({ browser }) => {
   const context = await browser.newContext({ locale: 'zh-CN' });
   try {
@@ -124,15 +87,7 @@ test('中文：提醒一组的字；桌面端没有网页通知这一行', async
     await expect(toggle).toBeDisabled();
     await expect(toggle).toHaveAccessibleDescription(/把“通知”改成允许/u);
     await expect(page.getByRole('button', { name: '暂停一小时' })).toBeVisible();
-    await expect(page.getByRole('switch', { name: '邮件提醒' })).toHaveCount(0);
-
-    await page.goto(`${web}&email=on`);
-    await expect(page.getByRole('switch', { name: '邮件提醒' })).toHaveAccessibleDescription(
-      /每天最多一封，不写消息内容。/u,
-    );
-    await expect(
-      page.getByText('新消息照样进收件箱，只是不弹出来，也不发提醒邮件。'),
-    ).toBeVisible();
+    await expect(page.getByText('新消息照样进收件箱，只是不弹出来。')).toBeVisible();
 
     await page.goto(desktop);
     await expect(page.getByRole('heading', { level: 3, name: '提醒' })).toBeVisible();

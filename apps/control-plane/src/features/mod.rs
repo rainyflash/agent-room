@@ -35,7 +35,6 @@ pub(crate) mod public_room_platform_hold;
 pub(crate) mod public_rooms;
 pub(crate) mod public_watch;
 pub(crate) mod reception;
-pub(crate) mod reminders;
 mod resource_ids;
 pub(crate) mod room_excerpts;
 pub(crate) mod room_live_view;

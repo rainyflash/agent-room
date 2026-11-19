@@ -26,7 +26,6 @@ import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-pr
 import type { ReceptionRecord } from '@/features/desktop/domain/reception-ownership';
 import type { AgentInstance, ProductDevice } from '@/features/security/domain/access-management';
 import type { PrivateRoom } from '@/features/private-rooms/domain/private-room';
-import type { ReminderSettings } from '@/features/reminders/domain/reminder-settings';
 import type { AgentPresenceSource } from '@/features/lobby/adapters/matrix-presence-tracker';
 import type { AgentRoom } from '@/features/workspace/domain/agent-directory';
 import { AccountWorkspacePage } from '@/features/workspace/ui/account-workspace-page';
@@ -545,19 +544,6 @@ const gateway: DesktopRuntimeGateway = {
 const settingsSection = new URLSearchParams(location.search).get('settings');
 // 账户一节加 &passwordChanged=1 是改好密码回来；再加 &signOut=failed 时第一次退出别的地方没成。
 let signOutFailures = new URLSearchParams(location.search).get('signOut') === 'failed' ? 1 : 0;
-// 通用一节加 &email=on|off 是这台服务器开了邮件提醒、开关开着或关着；不写是没开，没有邮件那一行。
-// 开关像服务器上一样记着（放在标签页的 sessionStorage 里），重开页面还是改过的样子。
-const emailReminders = new URLSearchParams(location.search).get('email');
-const emailReminderKey = 'fixture.email-reminders';
-function fixtureReminderSettings(): ReminderSettings {
-  const stored = sessionStorage.getItem(emailReminderKey);
-  return {
-    email: {
-      available: emailReminders === 'on' || emailReminders === 'off',
-      enabled: stored === null ? emailReminders !== 'off' : stored === 'on',
-    },
-  };
-}
 
 function AuthenticatedMyAgentsFixture() {
   const { snapshot } = useSession();
@@ -631,13 +617,6 @@ async function bootstrapFixture() {
           );
         }
         return ready({ accountSessions: 2, chatDevices: 1 });
-      },
-    },
-    reminders: {
-      read: () => ready(fixtureReminderSettings()),
-      setEmail: (enabled: boolean) => {
-        sessionStorage.setItem(emailReminderKey, enabled ? 'on' : 'off');
-        return ready(fixtureReminderSettings());
       },
     },
     receptionOwnership: {

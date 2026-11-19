@@ -18,7 +18,6 @@ mod operational_metrics;
 mod project_room_checks;
 mod public_room_activity;
 mod public_watch;
-mod reminders;
 mod request_regions;
 mod room_excerpt_cleanup;
 mod runtime;
@@ -73,8 +72,8 @@ use agent_room_application::{
     network_agents::{NetworkAgentDependencies, NetworkAgentService},
     ports::{
         ContentMembershipAuthorizer, MatrixAgentLocalpart, MatrixRoomAuthorityGateway,
-        MatrixUserId, NetworkSourceWeights, OidcResult, PortFuture, ReminderUnsubscribeTokens,
-        SecretValue, SignInAccount, SignInSessionTermination, UniformSourceWeights,
+        MatrixUserId, NetworkSourceWeights, OidcResult, PortFuture, SecretValue, SignInAccount,
+        SignInSessionTermination, UniformSourceWeights,
     },
     private_rooms::{
         OwnerHandoverDependencies, OwnerHandoverService, PrivateRoomAgentAccessDependencies,
@@ -90,10 +89,6 @@ use agent_room_application::{
     public_lobby_entry::{PublicLobbyEntryDependencies, PublicLobbyEntryService},
     public_room_activity::{PublicRoomActivityDependencies, PublicRoomActivityService},
     public_room_directory::{PublicRoomDirectoryDependencies, PublicRoomDirectoryService},
-    reminders::{
-        ReminderDependencies, ReminderDryRun, ReminderPlanner, ReminderPlannerDependencies,
-        ReminderService,
-    },
     room_excerpts::{RoomExcerptCleanupService, RoomExcerptDependencies, RoomExcerptService},
     room_live::{RoomLiveViewDependencies, RoomLiveViewService},
     rooms::{
@@ -108,9 +103,8 @@ use agent_room_identity_adapter::{
     AesGcmAccountEncryptionKeySealer, AesGcmJoinCodeSealer, AesGcmNetworkAgentSealer,
     DiscoveredOidcDeviceGrant, DiscoveredOidcGateway, Ed25519AgentInstanceSignatureVerifier,
     Ed25519DeviceProofVerifier, Ed25519NetworkAgentKeyFactory, HmacAccountDeletionReceiptIssuer,
-    HmacReminderUnsubscribeTokens, KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval,
-    NetworkAgentSealKey, NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig,
-    SecureSecretFactory,
+    KeycloakAccountRemovalConfig, KeycloakSignInAccountRemoval, NetworkAgentSealKey,
+    NetworkSourceDigester, OidcAdapterConfig, OidcDeviceGrantConfig, SecureSecretFactory,
 };
 use agent_room_matrix_provisioning_adapter::{
     MatrixAgentSessionClient, MatrixApplicationServiceConfiguration,
@@ -181,8 +175,6 @@ struct IdentityRuntime {
     sub_room_auto_archive: sub_room_auto_archive::SubRoomAutoArchiveWorker,
     /// 项目房间的认领每分钟一轮：作废过期的，核对该核对的。
     project_room_checks: project_room_checks::ProjectRoomCheckWorker,
-    /// 每小时算一轮该提醒什么；现在是演练，只记日志和指标。
-    reminder_dry_run: reminders::ReminderDryRunWorker,
     /// 分享的一段对话每天清一次：过了保留期的、房间没在放实况的。
     room_excerpt_cleanup: room_excerpt_cleanup::RoomExcerptCleanupWorker,
     /// 只在网络 Agent 总开关打开时运行。
@@ -332,7 +324,6 @@ pub async fn run() -> Result<(), StartupError> {
         sub_room_sync,
         sub_room_auto_archive,
         project_room_checks,
-        reminder_dry_run,
         room_excerpt_cleanup,
         network_agent_cleanup,
     } = identity_runtime;
@@ -367,7 +358,6 @@ pub async fn run() -> Result<(), StartupError> {
     sub_room_sync.shutdown().await;
     sub_room_auto_archive.shutdown().await;
     project_room_checks.shutdown().await;
-    reminder_dry_run.shutdown().await;
     room_excerpt_cleanup.shutdown().await;
     if let Some(worker) = network_agent_cleanup {
         worker.shutdown().await;
@@ -546,7 +536,6 @@ async fn build_identity_router(
         sub_room_sync: start_sub_room_sync(config, &agent_dependencies)?,
         sub_room_auto_archive: start_sub_room_auto_archive(config, &agent_dependencies)?,
         project_room_checks,
-        reminder_dry_run: start_reminder_dry_run(&agent_dependencies, metrics),
         room_excerpt_cleanup: start_room_excerpt_cleanup(&agent_dependencies),
         network_agent_cleanup: network_agents.cleanup,
     })
@@ -655,46 +644,7 @@ fn personal_routes(
         .merge(account_encryption_routes(config, dependencies))
         .merge(desktop_matrix_session_routes(config, dependencies))
         .merge(computer_grant_routes(config, dependencies))
-        .merge(sign_out_elsewhere_routes(config, dependencies)?)
-        .merge(reminder_routes(config, dependencies)?))
-}
-
-/// 提醒（`specs/redesign/reminders.md`）：邮件提醒的开关和退订页。没配退订令牌的钥匙时退订链接
-/// 一律不认；退订页按来源限流，名额单算，不和发现页、分享页抢。
-fn reminder_routes(
-    config: &ControlPlaneConfig,
-    dependencies: &AgentFeatureDependencies,
-) -> Result<Router, StartupError> {
-    let tokens = config
-        .reminders
-        .unsubscribe_secret
-        .as_ref()
-        .map(|secret| {
-            HmacReminderUnsubscribeTokens::new(secret.expose().as_bytes())
-                .map(|tokens| Arc::new(tokens) as Arc<dyn ReminderUnsubscribeTokens>)
-                .map_err(|error| {
-                    StartupError::new("startup.invalid_reminder_config", error.to_string())
-                })
-        })
-        .transpose()?;
-    let service = Arc::new(ReminderService::new(ReminderDependencies {
-        repository: dependencies.repositories.clone(),
-        tokens,
-        clock: dependencies.system_runtime.clone(),
-        email_available: config.reminders.email_enabled,
-    }));
-    Ok(features::reminders::router(
-        features::reminders::RemindersHttpState::new(
-            service,
-            dependencies.authentication.clone(),
-            Arc::new(features::anonymous_limits::AnonymousLimiter::new(
-                config.network_agents.shared_sources.clone(),
-                dependencies.system_runtime.clone(),
-            )),
-            &config.authentication.frontend_origin,
-            &config.authentication.desktop_origins,
-        ),
-    ))
+        .merge(sign_out_elsewhere_routes(config, dependencies)?))
 }
 
 /// 改好密码以后退出别的地方的登录（`specs/change-password/design.md`）。身份服务上的登录没结束成时，
@@ -967,24 +917,6 @@ fn start_room_excerpt_cleanup(
         dependencies.repositories.clone(),
         dependencies.system_runtime.clone(),
     )))
-}
-
-/// 提醒的每小时一轮：库里列候选和房间，以应用服务替本人读聊天服务器（4R-4c 是演练，不发信）。
-fn start_reminder_dry_run(
-    dependencies: &AgentFeatureDependencies,
-    metrics: TelemetryMetrics,
-) -> reminders::ReminderDryRunWorker {
-    let planner = ReminderPlanner::new(ReminderPlannerDependencies {
-        recipients: dependencies.repositories.clone(),
-        matrix: dependencies.matrix_identities.clone(),
-    });
-    reminders::ReminderDryRunWorker::start(
-        Arc::new(ReminderDryRun::new(
-            planner,
-            dependencies.system_runtime.clone(),
-        )),
-        metrics,
-    )
 }
 
 fn build_frontend_telemetry_state(

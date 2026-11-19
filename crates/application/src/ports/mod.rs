@@ -13,7 +13,6 @@ mod moderation;
 mod network_agents;
 mod notifications;
 mod regions;
-mod reminders;
 mod rooms;
 mod runtime;
 
@@ -142,11 +141,6 @@ pub use moderation::{
 };
 pub use notifications::NotificationSink;
 pub use regions::{CountryLookup, NoCountryLookup};
-pub use reminders::{
-    ReminderAccount, ReminderCandidate, ReminderMatrixReader, ReminderMessage, ReminderMessagePage,
-    ReminderRecipientRepository, ReminderRoom, ReminderRoomKind, ReminderSettingsRepository,
-    ReminderUnsubscribeTokens,
-};
 pub use rooms::{
     ActiveRoomModerationGrant, AgentLobbyAccessRecord, AgentLobbyAccessRepository, AgentRoomKind,
     AgentRoomMembershipFactory, AgentRoomPlacement, AgentRoomPlacementStore, DirectAgentBlock,

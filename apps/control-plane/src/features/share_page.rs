@@ -62,9 +62,7 @@ mod unclaimed;
 use badge::BadgeCounts;
 pub(crate) use preview::DEFAULT_PREVIEW_FONT;
 use preview::PreviewImages;
-use render::Origins;
-// 提醒邮件的退订页也是一整页 HTML，和这里用同一套语言判断和转义。
-pub(crate) use render::{Language, escape};
+use render::{Language, Origins, escape};
 
 use crate::{
     correlation::CorrelationId,
@@ -519,7 +517,7 @@ pub(crate) fn excerpt_url(site_origin: &str, share_code: &str, excerpt_code: &st
 
 /// 按 `Accept-Language` 的先后（`q` 大的在前）找第一个中文或英文。没有这个头、或者里面两种都没有
 /// 时是 `None`。
-pub(crate) fn accepted_language(headers: &HeaderMap) -> Option<Language> {
+fn accepted_language(headers: &HeaderMap) -> Option<Language> {
     let value = headers.get(header::ACCEPT_LANGUAGE)?.to_str().ok()?;
     let mut ranges: Vec<(u16, &str)> = value
         .split(',')

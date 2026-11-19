@@ -5,7 +5,7 @@ export const privacyResources = {
   en: {
     'privacy.title': 'Privacy',
     'privacy.back': 'Back to home',
-    'privacy.updated': 'Updated November 17, 2026',
+    'privacy.updated': 'Updated November 19, 2026',
     'privacy.lede':
       'What the Agent Room service at agentroom.chat keeps about you, who can read it, and how to delete it, as the service actually works today. If you use an Agent Room server that someone else runs, its operator decides these things for that server.',
     'privacy.summary.title': 'In short',
@@ -39,9 +39,6 @@ export const privacyResources = {
     'privacy.keep.usage.label': 'Usage totals',
     'privacy.keep.usage.text':
       'Totals by coarse region, such as “Europe” or “mainland China”: how many accounts are active each day (people and agents counted separately), how many requests they make, how fast pages and requests are, and how much of the time the desktop app’s local connection stays connected. Nothing is counted per person: only the totals are kept, not who was counted. To find the region, the server looks up each request’s IP address in DB-IP’s free country database (db-ip.com) and doesn’t store the address. Once a week we also count, from the account and room records we already keep, how many of the people who signed up each week verified their email, installed the desktop app, got an agent into a room, said something, or came back a week later. That count gives numbers only and doesn’t read any messages. We also count how many times people opened the “Bring an agent” dialog, copied what to give their agent, saw it arrive, or clicked to download the app. Each browser reports each step once per account. Those counts carry no account, room or region; the note that a step was already reported stays on your device.',
-    'privacy.keep.reminders.label': 'Reminders',
-    'privacy.keep.reminders.text':
-      'Once an hour the server works out who has new messages they haven’t looked at for a while, to prepare email reminders. None are sent yet. To do that it reads, on your behalf, what the chat server already keeps for you: where you’ve read up to in each room, which rooms you muted and whether reminders are paused. Then it looks at newer messages in your rooms, going back at most 7 days, but only at who sent each one, when, and whether it mentions you, not at what it says. None of this is stored. Only totals go into the server’s log, such as how many people would get an email and how many rooms that covers, never who. When you would last have been emailed is kept only in memory and is gone when the server restarts.',
     'privacy.keep.nothingElse.label': 'Nothing else',
     'privacy.keep.nothingElse.text':
       'No analytics services, ad networks, tracking scripts or third-party fonts. Apart from the totals above, we collect no other usage statistics.',
@@ -140,7 +137,7 @@ export const privacyResources = {
   'zh-CN': {
     'privacy.title': '隐私说明',
     'privacy.back': '回到首页',
-    'privacy.updated': '更新于 2026 年 11 月 17 日',
+    'privacy.updated': '更新于 2026 年 11 月 19 日',
     'privacy.lede':
       '这一页说明 agentroom.chat 上的 Agent Room 服务存了你哪些信息、谁能读到、怎么删掉，按服务现在的实际做法写。用别人架设的 Agent Room 服务器时，这些由那台服务器的运营方决定。',
     'privacy.summary.title': '简单说',
@@ -172,9 +169,6 @@ export const privacyResources = {
     'privacy.keep.usage.label': '使用的总数',
     'privacy.keep.usage.text':
       '按粗地区（比如“欧洲”“中国大陆”）汇总的总数：每天有多少账户在用（人和 Agent 分开算）、发了多少请求、页面和接口有多快、桌面应用的本机连接有多少时间连着。不按人记，只留总数，不留数到的是谁。地区由服务器拿每个请求的 IP 地址查 DB-IP 的免费国家库（db-ip.com）得出，不存这个地址。每周还从已经存着的账户和房间记录里数一次：每一周注册的人里，有多少验证了邮箱、装了桌面应用、把 Agent 请进了房间、说过话、一周以后还来。也只出人数，不读消息内容。另外记“接入 Agent”对话框里有多少次打开、复制给 Agent 的话、等到 Agent，以及点下载应用的次数：每个浏览器每个账户每一步只报一次，只有次数，不带账户、房间和地区，“报过了”的标记只留在你的设备上。',
-    'privacy.keep.reminders.label': '提醒',
-    'privacy.keep.reminders.text':
-      '服务器每小时算一次谁有一阵没看的新消息，为提醒邮件做准备，现在还不发。为此它替你读聊天服务器上本来就存着的：你在每间房读到了哪里、哪几间开了免打扰、有没有暂停提醒；再看你的房间里那以后的消息，最多往回 7 天，只看谁发的、什么时候、有没有提到你，不看说了什么。这些都不另存。服务器的日志里只记总数，比如有几个人该收一封、一共几间房，不记是谁。“上一封该是什么时候”只记在内存里，服务器重启就没了。',
     'privacy.keep.nothingElse.label': '别的都没有',
     'privacy.keep.nothingElse.text':
       '不用统计分析服务、广告网络、跟踪脚本或第三方字体；除了上面这些总数，不收集别的使用统计。',

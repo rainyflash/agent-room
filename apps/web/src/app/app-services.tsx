@@ -34,8 +34,6 @@ import type { TypingNotifier } from '@/features/conversation/domain/typing';
 export type AppServices = {
   /** 设置里的“账户”：下载我的数据、删除账户；测试和夹具里可以没有。 */
   readonly account?: import('@/features/account/domain/account').AccountGateway;
-  /** 邮件提醒的开关（specs/redesign/reminders.md 4R-3）；测试和夹具里可以没有。 */
-  readonly reminders?: import('@/features/reminders/domain/reminder-settings').ReminderSettingsGateway;
   readonly agentRosterPolicy?: import('@/features/lobby/domain/agent-roster-policy').AgentRosterPolicyGateway;
   readonly receptionOwnership?: import('@/features/desktop/domain/reception-ownership').ReceptionOwnershipGateway;
   readonly accessManagement: AccessManagementGateway;

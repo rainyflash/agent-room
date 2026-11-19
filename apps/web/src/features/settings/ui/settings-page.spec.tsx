@@ -1,17 +1,14 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppServicesProvider, type AppServices } from '@/app/app-services';
 import type { DesktopRuntimeGateway } from '@/features/desktop/domain/desktop-runtime';
 import { DesktopRuntimeProvider } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { WebNotificationState } from '@/features/inbox/adapters/web-notifications';
 import { WebNotificationsProvider } from '@/features/inbox/ui/web-notifications-provider';
-import type { ReminderSettings } from '@/features/reminders/domain/reminder-settings';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok } from '@/shared/result';
 import { RouterTestProvider } from '@/test/router-test-provider';
@@ -253,56 +250,13 @@ describe('设置', () => {
     expect(screen.getByRole('button', { name: 'Pause for an hour' })).toBeVisible();
   });
 
-  it('服务器开了邮件提醒才有邮件那一行，改了马上存，存不了如实说；没开时暂停也不提邮件', async () => {
+  it('暂停提醒只说不弹出来，不提邮件', () => {
     personal.doNotDisturbUntil = 0;
-    let settings: ReminderSettings = { email: { available: true, enabled: true } };
-    let failing = false;
-    const reminders = {
-      read: vi.fn(() => Promise.resolve(ok(settings))),
-      setEmail: vi.fn((enabled: boolean) => {
-        if (failing)
-          return Promise.resolve(err({ code: 'reminders.unavailable', retryable: true }));
-        settings = { email: { ...settings.email, enabled } };
-        return Promise.resolve(ok(settings));
-      }),
-    };
-    const withReminders = () => (
-      <QueryClientProvider
-        client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-      >
-        <AppServicesProvider services={{ reminders } as unknown as AppServices}>
-          <SettingsSectionContent section="general" />
-        </AppServicesProvider>
-      </QueryClientProvider>
-    );
-
-    renderSettings(withReminders());
-    const toggle = await screen.findByRole('switch', { name: 'Email reminders' });
-    expect(toggle).toBeChecked();
-    expect(toggle).toHaveAccessibleDescription(
-      /At most one a day, never the messages themselves\./u,
-    );
-    expect(screen.getByText(/no reminder emails go out/u)).toBeVisible();
-    fireEvent.click(toggle);
-    expect(reminders.setEmail).toHaveBeenCalledWith(false);
-    await waitFor(() => {
-      expect(screen.getByRole('switch', { name: 'Email reminders' })).not.toBeChecked();
-    });
-    failing = true;
-    fireEvent.click(screen.getByRole('switch', { name: 'Email reminders' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Couldn’t save this setting.');
-    expect(screen.getByRole('switch', { name: 'Email reminders' })).not.toBeChecked();
-    cleanup();
-
-    settings = { email: { available: false, enabled: true } };
-    renderSettings(withReminders());
-    await waitFor(() => {
-      expect(reminders.read).toHaveBeenCalledTimes(2);
-    });
-    expect(screen.queryByRole('switch', { name: 'Email reminders' })).not.toBeInTheDocument();
+    renderSettings(<SettingsSectionContent section="general" />);
     expect(
       screen.getByText('New messages still arrive in your inbox; they just don’t pop up.'),
     ).toBeVisible();
+    expect(screen.queryByRole('switch', { name: 'Email reminders' })).not.toBeInTheDocument();
   });
 
   it('暂停着时说到几点，可以现在恢复；保存不了时如实说', async () => {
