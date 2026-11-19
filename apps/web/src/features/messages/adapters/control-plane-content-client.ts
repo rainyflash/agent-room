@@ -91,7 +91,6 @@ export class ControlPlaneContentClient implements ContentGateway {
         Object.freeze({
           bytes: body,
           contentDigest: response.value.response.headers.get('content-digest'),
-          contentLength: response.value.response.headers.get('content-length'),
           mediaType: response.value.response.headers.get('content-type'),
         }),
       );

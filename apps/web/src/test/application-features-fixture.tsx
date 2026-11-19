@@ -451,7 +451,6 @@ function featureServices(base: AppServices): AppServices {
         return Promise.resolve(
           ok({
             bytes: upload.body.bytes,
-            contentLength: String(upload.body.bytes.byteLength),
             mediaType: upload.mediaType,
             contentDigest: `sha-256=:${btoa(String.fromCharCode(...digest))}:`,
           }),

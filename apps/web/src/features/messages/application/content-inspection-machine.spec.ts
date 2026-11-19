@@ -28,7 +28,6 @@ const request: ContentInspectionRequest = {
 const downloaded: DownloadedContent = {
   bytes: new TextEncoder().encode('hello'),
   contentDigest: 'sha-256=:q6urq6urq6urq6urq6urq6urq6urq6urq6urq6urq6s=:',
-  contentLength: '5',
   mediaType: 'text/plain',
 };
 const verified: VerifiedContent = {

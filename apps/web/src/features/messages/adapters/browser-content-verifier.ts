@@ -32,10 +32,9 @@ export class BrowserContentVerifier implements ContentVerifier {
     expected: MessageContentReference,
     roomId?: string,
   ): Promise<Result<VerifiedContent, ContentFailure>> {
-    if (
-      downloaded.bytes.byteLength !== expected.sizeBytes ||
-      parseContentLength(downloaded.contentLength) !== expected.sizeBytes
-    ) {
+    // 长度只看收到的字节。别再去核对 Content-Length 回答头：桌面端由原生层代发时不交回这个头，
+    // 网关压缩过的回答也没有它，核对的话附件一个也打不开。字节数和下面的摘要已经把内容定死了。
+    if (downloaded.bytes.byteLength !== expected.sizeBytes) {
       return err(failure('content.length_mismatch'));
     }
     const mediaType = normalizeMediaType(downloaded.mediaType);
@@ -91,14 +90,6 @@ export class BrowserContentVerifier implements ContentVerifier {
       return err(failure('content.invalid_text'));
     }
   }
-}
-
-function parseContentLength(value: string | null): number | null {
-  if (value === null || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
-    return null;
-  }
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function normalizeMediaType(value: string | null): string | null {

@@ -32,7 +32,10 @@ describe('BrowserContentVerifier', () => {
   it.each([
     {
       code: 'content.length_mismatch',
-      mutate: (value: DownloadedContent) => ({ ...value, contentLength: '999' }),
+      mutate: (value: DownloadedContent) => ({
+        ...value,
+        bytes: new Uint8Array(value.bytes.byteLength + 1),
+      }),
     },
     {
       code: 'content.digest_mismatch',
@@ -87,7 +90,6 @@ function download(bytes: Uint8Array): DownloadedContent {
   return {
     bytes,
     contentDigest: digestHeader,
-    contentLength: String(bytes.byteLength),
     mediaType: 'text/markdown; charset=utf-8',
   };
 }
