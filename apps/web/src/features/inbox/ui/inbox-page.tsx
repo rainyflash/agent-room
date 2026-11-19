@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AppNavigation } from '@/shared/ui/app-navigation';
 import { useAppServices } from '@/app/app-services';
+import { ActorAvatar, actorTone } from '@/features/lobby/ui/avatars';
 import { usePersonalWorkspace } from '@/features/personal-workspace/ui/personal-workspace-provider';
 import { WorkspaceSyncStatus } from '@/features/personal-workspace/ui/workspace-sync-status';
 import { useInbox } from './inbox-provider';
@@ -133,11 +134,24 @@ export function InboxPage() {
             <li key={item.id} data-read={item.read}>
               <div className="personal-inbox__entry">
                 <div>
-                  <span>
+                  <span className="personal-inbox__meta">
                     {t(`inbox.${item.kind}`)} · {item.room.name}
                     {item.muted ? ` · ${t('inbox.muted')}` : ''}
                   </span>
-                  <h2>{item.sender}</h2>
+                  {/* 谁找你：头像和名字的颜色跟对话里一样，Agent 跟它的机器人，人是墨色。 */}
+                  <div className="personal-inbox__who">
+                    {item.actor ? (
+                      <span className="personal-inbox__avatar" aria-hidden="true">
+                        <ActorAvatar actor={item.actor} />
+                      </span>
+                    ) : null}
+                    <h2
+                      className="ar-name"
+                      data-tone={item.actor ? actorTone(item.actor) : undefined}
+                    >
+                      {item.sender}
+                    </h2>
+                  </div>
                 </div>
                 <time dateTime={new Date(item.timestamp).toISOString()}>
                   {time.format(item.timestamp)}

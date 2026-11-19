@@ -1,6 +1,7 @@
 import {
   addressesAccount,
   messageAttentionId,
+  type MessageActor,
   type MessageGateway,
   type RoomMessageSignal,
 } from '@/features/messages/domain/message';
@@ -48,6 +49,8 @@ export type InboxItem = {
   readonly messageId: string;
   readonly conversation: boolean;
   readonly sender: string;
+  /** 这句话是谁说的：头像和名字的颜色照它。交接那一种只知道 Agent 的名字，没有。 */
+  readonly actor?: MessageActor;
   readonly text: string;
   readonly timestamp: number;
   readonly read: boolean;
@@ -134,6 +137,7 @@ export function projectInbox(
         messageId: message.messageId,
         conversation: message.preview?.conversation !== undefined,
         sender: message.actor.displayName,
+        actor: message.actor,
         text: message.preview?.conversation?.text ?? message.preview?.summary ?? '',
         timestamp: message.serverTimestamp,
         read,

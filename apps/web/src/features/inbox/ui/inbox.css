@@ -91,12 +91,23 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.personal-inbox__entry h2 {
+.personal-inbox__who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 6px 0;
+}
+.personal-inbox__avatar {
+  display: inline-flex;
+  --ar-avatar-size: 28px;
+}
+.personal-inbox__entry h2 {
+  min-width: 0;
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
 }
-.personal-inbox__entry span,
+.personal-inbox__meta,
 .personal-inbox__entry time {
   color: var(--ar-muted);
   font-size: 12px;
@@ -115,6 +126,9 @@
   font-size: 12px;
 }
 .personal-inbox__actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-decoration: none;
 }
 .personal-inbox__empty {
