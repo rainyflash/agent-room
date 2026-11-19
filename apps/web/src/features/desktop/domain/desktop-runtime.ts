@@ -253,6 +253,10 @@ export const computerReleaseSchema = z
   .strict();
 export type ComputerRelease = z.infer<typeof computerReleaseSchema>;
 
+/** 原生层存好的一个文件。只有文件名：完整的路径带着这台电脑的用户名，页面用不着。 */
+export const savedFileSchema = z.object({ fileName: z.string().min(1) }).strict();
+export type SavedFile = z.infer<typeof savedFileSchema>;
+
 export type DesktopRuntimeFailure = {
   readonly code: string;
   readonly retryable: boolean;
@@ -349,6 +353,14 @@ export type DesktopRuntimeGateway = {
    * 页面里要打开外面的网页都走这里。
    */
   openLink?(url: string): Promise<Result<void, DesktopRuntimeFailure>>;
+  /**
+   * 把一份内容存进这台电脑的“下载”文件夹，回存成的文件名（重名时原生层在后面加编号）。
+   * 桌面端的窗口里页面自己的下载靠不住：Windows 上悄悄存进“下载”、窗口里什么也不显示，
+   * Mac 上直接被取消。原生层只收 `.png`、`.json`。
+   */
+  saveFile?(fileName: string, content: Blob): Promise<Result<SavedFile, DesktopRuntimeFailure>>;
+  /** 在文件管理器里指出这一次运行里存过的一个文件，凭 `saveFile` 回的文件名认。 */
+  showSavedFile?(fileName: string): Promise<Result<void, DesktopRuntimeFailure>>;
   /** Show an operating-system notification; the desktop shows it even while the window is hidden in the tray. */
   notify?(notification: DesktopNotification): Promise<Result<void, DesktopRuntimeFailure>>;
   checkUpdate(

@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { I18nextProvider } from 'react-i18next';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
 import type { ShareCardContent } from '@/features/room-share/domain/share-card';
 import { saveBlob } from '@/shared/browser/save-file';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
@@ -14,6 +15,9 @@ import { renderShareCard } from './share-card-canvas';
 // jsdom 没有画布：画的那一段在浏览器验收里查，这里只查拿到图以后怎么摆、怎么发。
 vi.mock('./share-card-canvas', () => ({ renderShareCard: vi.fn() }));
 vi.mock('@/shared/browser/save-file', () => ({ saveBlob: vi.fn() }));
+vi.mock('@/features/desktop/ui/desktop-runtime-provider', () => ({
+  useOptionalDesktopRuntimeController: vi.fn(() => null),
+}));
 
 const content: ShareCardContent = {
   action: 'Scan to join',
@@ -64,6 +68,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue(null);
   Reflect.deleteProperty(navigator, 'clipboard');
   Reflect.deleteProperty(navigator, 'canShare');
   Reflect.deleteProperty(navigator, 'share');
@@ -118,6 +123,49 @@ describe('发给人的那张卡片', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save image' }));
 
     expect(saveBlob).toHaveBeenCalledWith(image, 'agent-room-Weekly review.png');
+  });
+
+  it('桌面端存图片：原生层存，按钮下面说存到哪了、能在文件夹里指出来；换了图就不说了', async () => {
+    const saveFile = vi.fn<(fileName: string, content: Blob) => Promise<string | null>>(() =>
+      Promise.resolve('agent-room-Weekly review (1).png'),
+    );
+    const showSavedFile = vi.fn<(fileName: string) => Promise<boolean>>(() =>
+      Promise.resolve(true),
+    );
+    vi.mocked(useOptionalDesktopRuntimeController).mockReturnValue({
+      available: true,
+      saveFile,
+      showSavedFile,
+    } as unknown as ReturnType<typeof useOptionalDesktopRuntimeController>);
+    const view = renderCard();
+    await screen.findByRole('img', { name: 'Invite card for Weekly review' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save image' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Saved to your Downloads folder as agent-room-Weekly review (1).png',
+    );
+    expect(saveFile).toHaveBeenCalledWith('agent-room-Weekly review.png', image);
+    expect(saveBlob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Show in folder' }));
+    expect(showSavedFile).toHaveBeenCalledWith('agent-room-Weekly review (1).png');
+
+    // 换了一条链接，画的是另一张图：上一张存到哪了不再挂着。
+    vi.mocked(renderShareCard).mockResolvedValue(new Blob(['next'], { type: 'image/png' }));
+    view.rerender(
+      <I18nextProvider i18n={i18n}>
+        <ShareCard
+          alt="Invite card for Weekly review"
+          content={{ ...content, url: 'https://agentroom.test/join#next' }}
+          detail="The QR code is this link."
+          heading="Invite card"
+        />
+      </I18nextProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('status')).toBeNull();
+    });
+    expect(screen.queryByRole('button', { name: 'Show in folder' })).toBeNull();
   });
 
   it('系统的分享菜单收图片时才给“发给…”，交过去的是这张图', async () => {

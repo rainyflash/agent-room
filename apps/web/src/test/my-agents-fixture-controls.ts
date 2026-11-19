@@ -16,6 +16,14 @@ export type MyAgentsFixtureControls = {
   signInIntents(): readonly string[];
   /** 交给原生层在系统浏览器里打开的地址，按先后。 */
   openedLinks(): readonly string[];
+  /** 交给原生层存进“下载”文件夹的文件：存成的名字、种类和内容，按先后。 */
+  savedFiles(): readonly {
+    readonly fileName: string;
+    readonly type: string;
+    readonly text: string;
+  }[];
+  /** 请原生层在文件夹里指出来的文件名，按先后。 */
+  shownFiles(): readonly string[];
 };
 export type MyAgentsFixtureWindow = Window &
   typeof globalThis & {

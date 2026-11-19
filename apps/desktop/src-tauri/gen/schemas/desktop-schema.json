@@ -705,6 +705,12 @@
           "markdownDescription": "Enables the desktop_runtime_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Enables the desktop_save_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-save-file",
+          "markdownDescription": "Enables the desktop_save_file command without any pre-configured scope."
+        },
+        {
           "description": "Enables the desktop_save_matrix_session command without any pre-configured scope.",
           "type": "string",
           "const": "allow-desktop-save-matrix-session",
@@ -721,6 +727,12 @@
           "type": "string",
           "const": "allow-desktop-set-language",
           "markdownDescription": "Enables the desktop_set_language command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the desktop_show_saved_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-desktop-show-saved-file",
+          "markdownDescription": "Enables the desktop_show_saved_file command without any pre-configured scope."
         },
         {
           "description": "Enables the desktop_withdraw_invitation command without any pre-configured scope.",
@@ -879,6 +891,12 @@
           "markdownDescription": "Denies the desktop_runtime_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Denies the desktop_save_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-save-file",
+          "markdownDescription": "Denies the desktop_save_file command without any pre-configured scope."
+        },
+        {
           "description": "Denies the desktop_save_matrix_session command without any pre-configured scope.",
           "type": "string",
           "const": "deny-desktop-save-matrix-session",
@@ -895,6 +913,12 @@
           "type": "string",
           "const": "deny-desktop-set-language",
           "markdownDescription": "Denies the desktop_set_language command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the desktop_show_saved_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-desktop-show-saved-file",
+          "markdownDescription": "Denies the desktop_show_saved_file command without any pre-configured scope."
         },
         {
           "description": "Denies the desktop_withdraw_invitation command without any pre-configured scope.",

@@ -1,0 +1,26 @@
+/* 桌面端存完文件以后的那一句：存到哪了，旁边一个“在文件夹里显示”。 */
+.file-save-note {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+/* 两个类名：放进卡片、设置行里时，盖过那边给段落定的灰字。 */
+.file-save-note .file-save-note__saved,
+.file-save-note .file-save-note__problem {
+  min-width: 0;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.file-save-note .file-save-note__saved {
+  color: var(--ar-success-ink);
+}
+
+.file-save-note .file-save-note__problem {
+  color: var(--color-alert);
+}

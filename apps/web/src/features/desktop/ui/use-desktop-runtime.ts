@@ -68,6 +68,13 @@ export type DesktopRuntimeController = {
    * 没有这条命令的桌面端（测试替身）不给这一项。
    */
   readonly openLink?: (url: string) => Promise<boolean>;
+  /**
+   * 把一份内容存进“下载”文件夹，回存成的文件名；没存成回 `null`，由调用的地方自己说，不进全局的报错。
+   * 页面里要存文件别直接用，走 `useFileSave`：它在浏览器里退回页面自己的下载。
+   */
+  readonly saveFile?: (fileName: string, content: Blob) => Promise<string | null>;
+  /** 在文件夹里指出刚存的那个文件，回打开了没有。 */
+  readonly showSavedFile?: (fileName: string) => Promise<boolean>;
   readonly notify: (notification: DesktopNotification) => Promise<void>;
   readonly refresh: () => Promise<void>;
   readonly retryBridge: () => Promise<void>;
@@ -336,6 +343,20 @@ export function useDesktopRuntime(
     },
     [gateway],
   );
+  const saveFile = useCallback(
+    async (fileName: string, content: Blob): Promise<string | null> => {
+      const result = await gateway.saveFile?.(fileName, content).catch(() => null);
+      return result?.ok === true ? result.value.fileName : null;
+    },
+    [gateway],
+  );
+  const showSavedFile = useCallback(
+    async (fileName: string): Promise<boolean> => {
+      const result = await gateway.showSavedFile?.(fileName).catch(() => null);
+      return result?.ok === true;
+    },
+    [gateway],
+  );
   // A notification that cannot be shown is not worth an error banner; the in-app notice remains.
   const notify = useCallback(
     async (notification: DesktopNotification): Promise<void> => {
@@ -453,6 +474,8 @@ export function useDesktopRuntime(
     openAuthorization,
     openLogs,
     ...(gateway.openLink === undefined ? {} : { openLink }),
+    ...(gateway.saveFile === undefined ? {} : { saveFile }),
+    ...(gateway.showSavedFile === undefined ? {} : { showSavedFile }),
     notify,
     refresh,
     retryBridge,

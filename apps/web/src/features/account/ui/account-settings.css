@@ -3,6 +3,11 @@
   flex-wrap: wrap;
 }
 
+/* 桌面端存完“下载我的数据”以后的那一句，和上面的说明隔开一点。 */
+.settings-row .file-save-note {
+  margin-top: 6px;
+}
+
 /* 改好密码以后的提示占满“密码”这一行的下方。 */
 .account-password-status {
   flex: 1 1 100%;

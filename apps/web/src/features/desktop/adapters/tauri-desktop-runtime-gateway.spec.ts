@@ -163,6 +163,49 @@ describe('Tauri 桌面运行时适配器', () => {
     });
   });
 
+  it('存文件把内容用 base64 交给原生层，回存成的文件名；回答不对、没存成都照实交回', async () => {
+    const invoke = vi.fn().mockResolvedValue({ fileName: 'card (1).png' });
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+    // 比一段长，还带着不是文字的字节：分段转不能错位。
+    const bytes = Uint8Array.from({ length: 0x8000 + 5 }, (_, index) => (index * 7) % 256);
+
+    await expect(
+      gateway.saveFile('card.png', new Blob([bytes], { type: 'image/png' })),
+    ).resolves.toEqual({ ok: true, value: { fileName: 'card (1).png' } });
+    expect(invoke).toHaveBeenCalledWith('desktop_save_file', {
+      contentBase64: Buffer.from(bytes).toString('base64'),
+      fileName: 'card.png',
+    });
+
+    const odd = new TauriDesktopRuntimeGateway(
+      transport({ invoke: vi.fn().mockResolvedValue({ fileName: '' }) }),
+    );
+    await expect(odd.saveFile('card.png', new Blob(['x']))).resolves.toEqual({
+      error: { code: 'desktop.command.invalid_response', retryable: true },
+      ok: false,
+    });
+    const failing = new TauriDesktopRuntimeGateway(
+      transport({
+        invoke: vi.fn().mockRejectedValue({ code: 'desktop.save.write_failed', retryable: true }),
+      }),
+    );
+    await expect(failing.saveFile('card.png', new Blob(['x']))).resolves.toEqual({
+      error: { code: 'desktop.save.write_failed', retryable: true },
+      ok: false,
+    });
+  });
+
+  it('在文件夹里显示只交文件名', async () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));
+
+    await expect(gateway.showSavedFile('card (1).png')).resolves.toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(invoke).toHaveBeenCalledWith('desktop_show_saved_file', { fileName: 'card (1).png' });
+  });
+
   it('换账号前移出这台电脑只调用闭合命令，没移出去时把原生层的原因原样交回', async () => {
     const invoke = vi.fn().mockResolvedValue({ serverReleased: true });
     const gateway = new TauriDesktopRuntimeGateway(transport({ invoke }));

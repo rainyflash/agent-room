@@ -8,7 +8,8 @@ import {
   shareCardFileName,
   type ShareCardContent,
 } from '@/features/room-share/domain/share-card';
-import { saveBlob } from '@/shared/browser/save-file';
+import { FileSaveNote } from '@/features/desktop/ui/file-save-note';
+import { useFileSave } from '@/features/desktop/ui/use-file-save';
 
 import { renderShareCard } from './share-card-canvas';
 import './share-room-dialog.css';
@@ -25,7 +26,8 @@ export type ShareCardProps = {
 
 /**
  * 发给人的那张卡片（`specs/share-card/design.md`）：在这台设备上画好，能复制、存下来，手机上能直接交给
- * 系统的分享菜单。画不出来（没有画布）时这一块不出现，链接照旧能发。
+ * 系统的分享菜单。画不出来（没有画布）时这一块不出现，链接照旧能发。桌面端存下来以后说存到哪了
+ * （`useFileSave`）：那里页面自己的下载不出声，人以为没反应。
  */
 export function ShareCard({ alt, content, detail, heading }: ShareCardProps) {
   const { t } = useTranslation();
@@ -35,12 +37,15 @@ export function ShareCard({ alt, content, detail, heading }: ShareCardProps) {
     readonly blob: Blob;
     readonly state: 'copied' | 'failed';
   } | null>(null);
+  const saver = useFileSave();
   if (card.kind === 'failed') return null;
   const blob = card.kind === 'ready' ? card.blob : null;
   const fileName = shareCardFileName(content.roomName);
   const file = blob === null ? null : shareableFile(blob, fileName);
   // 换了一张图，上一张的“已复制”不算。
   const copyState = copied !== null && copied.blob === blob ? copied.state : 'idle';
+  // 存的也一样：上一张存到哪了，换了图就不说了。
+  const saved = saver.last !== null && saver.last.content === blob ? saver.last : null;
   return (
     <section aria-labelledby={headingId} className="share-card">
       <h3 id={headingId}>{heading}</h3>
@@ -80,10 +85,10 @@ export function ShareCard({ alt, content, detail, heading }: ShareCardProps) {
           </Button>
         ) : null}
         <Button
-          disabled={blob === null}
+          disabled={blob === null || saved?.kind === 'saving'}
           icon={<Download aria-hidden="true" />}
           onClick={() => {
-            if (blob !== null) saveBlob(blob, fileName);
+            if (blob !== null) saver.save(fileName, blob);
           }}
           size="compact"
           tone="ghost"
@@ -104,7 +109,12 @@ export function ShareCard({ alt, content, detail, heading }: ShareCardProps) {
           </Button>
         )}
       </div>
-      {copyState === 'failed' ? <p role="status">{t('roomShare.card.copyFailed')}</p> : null}
+      {copyState === 'failed' ? (
+        <p className="share-card__problem" role="status">
+          {t('roomShare.card.copyFailed')}
+        </p>
+      ) : null}
+      <FileSaveNote onShow={saved === null ? null : saver.show} save={saved} />
       <p>{detail}</p>
     </section>
   );

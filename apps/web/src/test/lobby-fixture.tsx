@@ -325,10 +325,71 @@ Object.defineProperty(window, '__agentRoomFixtureScene', {
   get: () => fixtureScene,
 });
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+// ?desktop：这一页开在桌面端的窗口里。原生层只接这里列的几条命令，存文件像真的一样重名加编号。
+const desktopFixture = new URLSearchParams(window.location.search).has('desktop');
+const savedFiles: { fileName: string; contentBase64: string }[] = [];
+const shownFiles: string[] = [];
+function fixtureDesktopCommand(command: string, input: Record<string, unknown>): unknown {
+  if (command === 'desktop_runtime_snapshot') {
+    return {
+      agentTarget: null,
+      autostartEnabled: false,
+      bridge: {
+        authorization: null,
+        deviceReauthorizationAvailable: false,
+        lifecycle: {
+          automaticRestartCount: 0,
+          changedAtUnixMs: 1,
+          diagnosticCode: null,
+          lastExitCode: null,
+          lastFailureCode: null,
+          nextRetryAtUnixMs: null,
+          ownership: 'managed',
+          phase: 'ready',
+        },
+        session: null,
+      },
+      deepLink: null,
+      manualHostConfiguration: {
+        args: [],
+        command: 'C:\\Agent Room\\agent-room-mcp.exe',
+        serverName: 'agent_room',
+        transport: 'stdio',
+      },
+      platform: 'windows',
+      updatesConfigured: false,
+    };
+  }
+  if (command === 'desktop_set_language') return null;
+  if (command === 'desktop_save_file') {
+    const fileName = String(input.fileName);
+    const taken = savedFiles.filter((saved) => saved.fileName === fileName).length;
+    const dot = fileName.lastIndexOf('.');
+    const savedAs =
+      taken === 0 ? fileName : `${fileName.slice(0, dot)} (${String(taken)})${fileName.slice(dot)}`;
+    savedFiles.push({ fileName: savedAs, contentBase64: String(input.contentBase64) });
+    return { fileName: savedAs };
+  }
+  if (command === 'desktop_show_saved_file') {
+    shownFiles.push(String(input.fileName));
+    return null;
+  }
+  throw new Error(`房间夹具的桌面端没有这条命令：${command}`);
+}
 const desktop = new TauriDesktopRuntimeGateway({
-  available: () => false,
-  invoke: () => {
-    return Promise.reject(new Error('桌面命令不应在浏览器测试夹具中运行'));
+  available: () => desktopFixture,
+  invoke: (command, input) => {
+    if (!desktopFixture) {
+      return Promise.reject(new Error('桌面命令不应在浏览器测试夹具中运行'));
+    }
+    try {
+      // 带字节的命令（代发控制面请求）这里没有。
+      return Promise.resolve(
+        fixtureDesktopCommand(command, input instanceof Uint8Array ? {} : input),
+      );
+    } catch (error: unknown) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   },
   listen: () => Promise.resolve(() => undefined),
 });
@@ -892,6 +953,8 @@ const fixtureControls: LobbyFixtureControls = {
     updateFixtureScene();
     for (const listener of lobbyListeners) listener();
   },
+  savedFiles: () => [...savedFiles],
+  shownFiles: () => [...shownFiles],
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,

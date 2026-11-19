@@ -368,6 +368,10 @@ const releaseFailsFirst = new URLSearchParams(location.search).get('release') ==
 let releaseCount = 0;
 const signInIntents: string[] = [];
 const openedLinks: string[] = [];
+// ?save=failed：原生层没存成（“下载”文件夹写不进去）。
+const saveFails = new URLSearchParams(location.search).get('save') === 'failed';
+const savedFiles: { fileName: string; type: string; text: string }[] = [];
+const shownFiles: string[] = [];
 
 const fixtureControls: MyAgentsFixtureControls = {
   arriveAgent: (options) => {
@@ -401,6 +405,8 @@ const fixtureControls: MyAgentsFixtureControls = {
   releaseCount: () => releaseCount,
   signInIntents: () => [...signInIntents],
   openedLinks: () => [...openedLinks],
+  savedFiles: () => [...savedFiles],
+  shownFiles: () => [...shownFiles],
 };
 Object.defineProperty(window, '__agentRoomFixtureControls', {
   configurable: true,
@@ -464,6 +470,20 @@ const gateway: DesktopRuntimeGateway = {
   openLogs: () => ready(undefined),
   openLink: (url) => {
     openedLinks.push(url);
+    return ready(undefined);
+  },
+  // 像原生层一样：重名的在后面加编号，回存成的名字。
+  saveFile: async (fileName, content) => {
+    if (saveFails) return err({ code: 'desktop.save.write_failed', retryable: true });
+    const taken = savedFiles.filter((saved) => saved.fileName === fileName).length;
+    const dot = fileName.lastIndexOf('.');
+    const savedAs =
+      taken === 0 ? fileName : `${fileName.slice(0, dot)} (${String(taken)})${fileName.slice(dot)}`;
+    savedFiles.push({ fileName: savedAs, type: content.type, text: await content.text() });
+    return ok({ fileName: savedAs });
+  },
+  showSavedFile: (fileName) => {
+    shownFiles.push(fileName);
     return ready(undefined);
   },
   offerInvitation: (invitation) => {

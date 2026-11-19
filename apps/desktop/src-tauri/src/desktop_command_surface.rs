@@ -15,6 +15,8 @@ pub(crate) const DESKTOP_COMMANDS: &[&str] = &[
     "desktop_open_authorization",
     "desktop_open_logs",
     "desktop_open_link",
+    "desktop_save_file",
+    "desktop_show_saved_file",
     "desktop_notify",
     "desktop_check_update",
     "desktop_install_update",
