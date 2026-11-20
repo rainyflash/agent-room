@@ -672,6 +672,8 @@ async fn 宿主会话拒绝改名冲突和跨所有者重用() {
         .await
         .expect_err("同一会话不得更改创建参数");
     assert_eq!(conflict.kind(), AgentManagementFailureKind::Conflict);
+    // 日志靠这一步的名字分清同一个操作里的几处冲突。
+    assert_eq!(conflict.step(), Some("agent_creation.reserve"));
     let forbidden = service
         .create_host_agent_for_device(CreateHostAgentForDevice {
             actor: authenticated_device(PrincipalId::from_uuid(Uuid::now_v7())),
