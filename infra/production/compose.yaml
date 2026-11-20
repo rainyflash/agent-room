@@ -197,6 +197,12 @@ services:
   content-scanner:
     logging: *container-logging
     image: clamav/clamav:1.5.4
+    environment:
+      # 每天更新病毒库时先放掉旧的那一份、再装新的。默认是装好新的才放旧的，两份同时在内存里（各约 1 GB），
+      # 3.9 GB 的机器上别的服务被挤进交换分区，之后几分钟一卡就是几秒（docs/operations/observability.md 的
+      # “ClamAV 每天更新病毒库”）。代价是重载的几十秒里扫描请求排队等着。
+      # 镜像的入口脚本把 CLAMD_CONF_ 开头的变量写进 clamd.conf，要重建这个容器才生效。
+      CLAMD_CONF_ConcurrentDatabaseReload: 'no'
     volumes:
       - ${AGENT_ROOM_STATE_DIR}/data/clamav:/var/lib/clamav
     healthcheck:
