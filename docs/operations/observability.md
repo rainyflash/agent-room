@@ -109,7 +109,7 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 - **dockerd**：多半是一个卡住的日志读者在空转（2026-11-01 到 11-07 就是这样，整机 62%）。用 `strace -f -p $(pidof dockerd) -e trace=pread64` 看两秒：成千上万次读同一个 fd、每次返回 0，就是它；`readlink /proc/$(pidof dockerd)/fd/<fd>` 看是哪个容器的日志。重建那个容器没用（读者拿着删掉的旧文件接着转），只能重启 dockerd，所有容器会停一两分钟，要先跟维护者约时间。起因是有人手动截短过容器日志（`truncate`），dockerd 记着的大小对不上，之后一次 `docker logs` 的读者就停不下来：容器日志别手动截，靠 compose 里的 `logging:` 上限滚动。
 - **Synapse**（`python`）：它只用得满一个核，满了就是大厅里说话太快或者人太多，按[首发容量](../../specs/launch-capacity/design.md)的数看要不要调限额；持续满着就该看扩容了。
-- **clamd**：重载病毒库会占一会儿，一小时以上不下来就看扫描容器的日志有没有一直在重载。
+- **clamd**：每天重载病毒库会占一个核半分钟上下（见 [AgentRoomMemoryLow](#agentroommemorylow) 的“ClamAV 每天更新病毒库”），一小时以上不下来就看扫描容器的日志有没有一直在重载。
 - **PostgreSQL**：看 `pg_stat_activity` 里有没有跑了很久的查询。
 
 ## AgentRoomDiskSpaceLow
@@ -129,11 +129,32 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 ## AgentRoomMemoryLow
 
-机器是 4 GiB 内存加 4.5 GiB 交换分区，平时可用内存在 1.7 GiB 上下。ClamAV 每天重载病毒库时会掉到 400 多 MiB，但只有几分钟，所以这条看 30 分钟的平均低于 400 MiB；另外内存“所有进程都卡住”的时间（PSI 的 `full`）平时最高 2%，15 分钟里超过 10% 也响，那是在换页里打转了。
+机器是 4 GiB 内存加 4.5 GiB 交换分区，平时可用内存在 1.7 GiB 上下。ClamAV 每天更新病毒库的那两三分钟会掉下去一截（见下面“ClamAV 每天更新病毒库”），所以这条看 30 分钟的平均低于 400 MiB；另外内存“所有进程都卡住”的时间（PSI 的 `full`）平时最高 2%，15 分钟里超过 10% 也响，那是在换页里打转了。
 
 - `docker stats --no-stream` 看各容器占多少；`for f in /proc/[0-9]*/status; do awk '/^Name:/{n=$2} /^VmSwap:/{print $2, n}' $f; done | sort -rn | head` 看谁被换出去最多。平时大头是 ClamAV（约 1 GB）和身份服务（Java，约 500 MB）。
 - 某个容器一直在涨，看它是不是漏内存，重建它能先顶住。
 - 用户多了以后整体不够，就该看升配了，先跟维护者说。
+
+### ClamAV 每天更新病毒库
+
+扫描容器里的 freshclam 每天查一次新病毒库，时刻跟着容器启动的时刻走，每天往后挪十几秒（`docker inspect` 看 `StartedAt`）。clamd 的病毒库在内存里约 950 MiB，平时几乎全被换到交换分区。更新分三步，2026-11-20 逐秒量过：
+
+1. freshclam 自己把新库装一遍试：约 8 秒，多占 600 MiB。
+2. clamd 装新的一份：约 15 秒，占满一个核，多占 950 MiB。
+3. clamd 放掉旧的一份：放之前要把它从交换分区整个读回来，这段时间 clamd 不回话（量到的那次至少 14 秒）。
+
+clamd 默认先做第 2 步、再做第 3 步，新旧两份同时在内存：它自己到 1.8 GB，机器只有 3.9 GB。可用内存从 1.8 GB 掉到 500 MiB 以下，数据库、聊天服务器、控制面的内存被挤进交换分区；之后好几分钟它们用到哪页读回哪页，这块盘每秒只读得回三百来页，一卡就是几秒。2026-11-19 有几条请求等数据库连接等了 3–4 秒（控制面等满 5 秒就回 503，agent-room-ops#108）；11-20 更新过去 7 分钟以后，控制面的就绪检查还卡过一次 3.7 秒（那几秒聊天服务器在读回自己的内存）。
+
+所以 compose 里给它设了 `ConcurrentDatabaseReload no`：先放掉旧的、再装新的，内存里只有一份，别的服务不用让地方。代价有两样：
+
+- 第 3 步加第 2 步的几十秒里，扫描请求排队等着，不是失败；控制面等扫描结果最多等 60 秒。
+- 新库要是装不上，旧的已经放掉了，clamd 就没有病毒库可用：扫描一直失败，到下一次更新或者重启扫描容器才好。健康检查的 `PING` 看不出来；上传正文时控制面回 503（`content.scan.unavailable`），错误汇总会开 issue。第 1 步的试装防的就是这个，别关 `TestDatabases`。
+
+排查时：
+
+- 每天固定时刻有几秒钟的卡顿（等数据库连接慢、健康检查抖），先对一下扫描容器日志里 `Database correctly reloaded` 的时刻。
+- 这项设置是镜像的入口脚本照环境变量 `CLAMD_CONF_ConcurrentDatabaseReload` 写进 `clamd.conf` 的，要重建扫描容器才生效，发版部署不重建它。`docker exec <扫描容器> grep ^ConcurrentDatabaseReload /etc/clamav/clamd.conf` 看生效没有。
+- 别用内存上限压扫描容器：入口脚本不看着 clamd，它被内核杀掉以后容器照样“活着”，没人把它拉起来，扫描就一直不可用。
 
 ## AgentRoomOomKill
 

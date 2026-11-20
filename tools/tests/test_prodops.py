@@ -1615,6 +1615,14 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("    ulimits:\n      nofile: 65536\n", block)
         self.assertIn("agent_room_matrix_adapter::error=warn", block)
 
+    def test_内容扫描更新病毒库时不同时留新旧两份(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        block = compose.split("\n  content-scanner:\n", 1)[1].split("\n\n", 1)[0]
+        # 默认两份同时在内存里（各约 1 GB），3.9 GB 的机器每天被挤得换页（agent-room-ops#108）。
+        self.assertIn("      CLAMD_CONF_ConcurrentDatabaseReload: 'no'\n", block)
+        # 这个变量是镜像的入口脚本认的（1.5 起）；换镜像、换版本时先看它还认不认。
+        self.assertIn("    image: clamav/clamav:1.5.4\n", block)
+
     def test_监控容器都有内存上限_告警接收只在_webhook_档(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
         blocks: dict[str, list[str]] = {}
@@ -1625,7 +1633,7 @@ class ProductionRenderingTests(unittest.TestCase):
             if line.startswith("  ") and not line.startswith("   ") and line.endswith(":"):
                 current = blocks.setdefault(line.strip().removesuffix(":"), [])
             current.append(line)
-        # 和生产跑在同一台 8 GB 的机器上（specs/measurement/design.md），一直开着的合起来不超过 720 MB。
+        # 和生产跑在同一台 3.9 GB 的机器上（specs/measurement/design.md），一直开着的合起来不超过 720 MB。
         limits = {}
         for name in ("telemetry", "prometheus", "alertmanager", "blackbox", "postgres-exporter",
                      "recovery-metrics", "host-metrics", "grafana"):
