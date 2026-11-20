@@ -979,6 +979,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 100 正在发布（2026-11-20）：收件箱里谁找你带着头像、Agent 的名字跟它的机器人一个颜色（#953），扫描容器每天更新病毒库时不再同时留新旧两份（#955），邮件提醒不做了、去掉每小时的演练和开关（#952），“Agent 请求失败”的告警带上失败落在哪一步（#954）。
+  - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha100-preflight`，跑完就删）；本机 `cargo deny check advisories`、`corepack pnpm@10.28.0 audit:node` 都干净。
+  - #952 删了 `crates/identity-adapter` 里的退订令牌，那是登录相关路径：实机验收要新授权一台设备，维护者批准一次设备码，长期验收设备换成 Alpha 100 那台。没有迁移（`account_reminder` 表这一版还留着），部署配置没加新变量，回滚可以退到 Alpha 99。没改告警规则，发完不用跑 `telemetry-apply`。
+  - 发完要单独重建一次扫描容器，#955 的 `ConcurrentDatabaseReload no` 才生效（本机发布目录的 `recreate_content_scanner.py`，扫描约一分钟不可用）。之后每天更新病毒库的时刻跟着这次重建的时刻走，下一次更新时照 `artifacts/prod-looks/2026-11-20-clamav` 的办法再量一遍，结果记进发布记录和 agent-room-ops#108。
+  - 版本号第一次到三位数：仓库里没有按两位数写死的地方，派生脚本末尾查漏改旧版本号的正则改成认两到三位数。
 - Alpha 99 已于 2026-11-19 公开，见 [发布记录](./specs/agent-access/alpha99-release.md)。
   - 桌面端一直打不开的消息附件能打开了（#946），下载附件由应用自己存进“下载”文件夹、存完说存到哪了（#948），实机验收多了在装好的桌面端上点开一次附件（#949）。
   - 发版前的 `suite=all` 没等修复的 PR 合并：在内容和合并以后的 main 一样的临时分支上先跑（`ci/alpha99-preflight`，跑完删了），全绿。没改登录相关路径，复用 Alpha 96 那台长期验收设备，没要设备码。没有迁移，部署配置没加新变量，回滚可以退到 Alpha 98。没改告警规则，没跑 `telemetry-apply`。
