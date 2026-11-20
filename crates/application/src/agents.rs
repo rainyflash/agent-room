@@ -164,15 +164,34 @@ pub enum AgentManagementFailureKind {
 pub struct AgentManagementFailure {
     operation: &'static str,
     kind: AgentManagementFailureKind,
+    step: Option<&'static str>,
 }
 
 impl AgentManagementFailure {
     const fn new(operation: &'static str, kind: AgentManagementFailureKind) -> Self {
-        Self { operation, kind }
+        Self {
+            operation,
+            kind,
+            step: None,
+        }
+    }
+
+    const fn at_step(self, step: &'static str) -> Self {
+        Self {
+            step: Some(step),
+            ..self
+        }
     }
 
     pub const fn operation(self) -> &'static str {
         self.operation
+    }
+
+    /// 失败落在这次操作里的哪一步：存储报的那一步的名字（比如登记连接时的
+    /// `agent_instance.register.instance`），聊天服务器拒的是 `matrix`。只给日志用：
+    /// 同一个操作里好几处回同一种失败（登记连接的冲突有三处），不带它就分不出是哪一处。
+    pub const fn step(self) -> Option<&'static str> {
+        self.step
     }
 
     pub const fn kind(self) -> AgentManagementFailureKind {
@@ -935,7 +954,7 @@ const fn map_repository_failure(
         RepositoryErrorKind::Unavailable => AgentManagementFailureKind::DependencyUnavailable,
         RepositoryErrorKind::CorruptData => AgentManagementFailureKind::Internal,
     };
-    AgentManagementFailure::new(operation, kind)
+    AgentManagementFailure::new(operation, kind).at_step(error.operation())
 }
 
 const fn map_matrix_failure(
@@ -958,7 +977,7 @@ const fn map_matrix_failure(
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => AgentManagementFailureKind::Internal,
     };
-    AgentManagementFailure::new(operation, kind)
+    AgentManagementFailure::new(operation, kind).at_step("matrix")
 }
 
 const fn map_domain_failure(

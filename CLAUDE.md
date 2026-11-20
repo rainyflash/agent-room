@@ -587,6 +587,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 改提示词要两边一起改：文档开 PR，合并后在 routine 上改成一样的。
   - 事件触发器按不了标签，提示词让它碰到不带 `prod-error` 的直接结束；云端的 `gh` 用不了 GraphQL，走会话的 GitHub 工具或 `gh api`。
 - Keycloak 的事件（`LOGIN_ERROR` 等）只在 identity 容器日志里，realm 没开存事件；容器日志只回看到上一次部署，Synapse 的大约三天半。
+- 控制面“Agent 请求失败”那条告警带 `step`：失败落在这次操作里的哪一步（存储报的那一步的名字，聊天服务器拒的是 `matrix`）。登记连接（`agent_instance.register`）回冲突的地方有三处（`.replay`、`.binding`、`.instance`），另有唯一约束和聊天服务器两处，以前只记外层的名字，agent-room-ops#35 重开了六次都分不出是哪一处。`step` 不进指纹（同一种错还是同一个 issue），看样例里的那一项。别的“某某请求失败”还没带，分不出来时照这个加。
 
 ### 没人读的 Outbox
 
