@@ -1274,7 +1274,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Codex 没有单独的读文件工具，读本机文件要么跑命令，要么碰巧找到某个 MCP 带的读文件工具。Alpha 65、66 都是 Codex 找到了维护者自己装的一个 MCP 里的读文件工具才过的；那时跑命令也不通，Codex 的 Windows 沙箱每次跑命令前要改 `runtimes/cua_node/…/node_repl.exe` 的权限，维护者开着的 Codex 应用一直占着这个文件（os error 32）。
   - 2026-10-10 Codex 自动更新以后（`codex-cli 0.162.0-alpha.17.2`）沙箱起得来了。Alpha 67 里它照 #371 用一条只读命令读附件（.NET 的 `File.ReadAllText`），#389 以后读得到，doctor 一次就过。
   - Codex 自动更新会挪程序（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`），`qa-host.json` 里的宿主路径跟着改，不然 doctor 报 `receiver.executable_invalid`。派生脚本会找新位置，但派生以后、验收以前它也可能挪（Alpha 74 就是：绑定里记着旧路径，改了 `qa-host.json`、把 `binding.private.json` 改名留档，从绑定那一步重跑）。Alpha 76 是验收开始前几分钟，Codex 把记着的那份整个删掉了，只剩新装的那份。验收前再看一眼。
-  - doctor 没过就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
+  - doctor 没过先看 `details.hostReply`（宿主交回了什么）。说读不了是沙箱的事；说不肯读、只认经房间拿到的附件，是这个任务照后台回复的规矩来的：Alpha 101 绑着的任务就这样，那时契约检查的提示只说“读这个文件”，现在照实说它是接收端写的已校验下载。还是不行就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
   - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
   - Alpha 64–66 用 Codex 加入的人物已经绑了任务。长期验收设备的记录里记着它绑的任务（`profileTaskId`），以人物身份调用时带上；宿主是 Codex 又换了任务时登记不上，`start` 会自动改走新设备授权。所以复用长期验收设备时，宿主就用它绑着的那个任务：Alpha 67 第二个候选换了新任务，多批准了一次设备码；最终候选换回原来的任务，就不用批准。
   - Alpha 71 起的长期验收设备是 #372 以后加入的，人物不绑任务（`profileTaskId` 为空），按理换了 Codex 任务也能复用、不用再批准设备码。还没在换了任务的情况下试过，第一次换任务时看一眼 `start` 有没有改走新设备授权。

@@ -14,6 +14,10 @@ agent-room --data-root <Bridge 数据目录> --connection <凭据命名空间>  
 
 `attachmentReadable` 为假或返回 `receiver.host_turn_failed`，说明宿主沙箱没有授予附件目录，带附件的消息会整轮失败；这正是 Alpha 36 拖到实机验收才发现的缺陷。
 
+返回 `receiver.attachment_unreadable` 是宿主交回的不是那个文件的内容，它说了什么在 `details.hostReply` 里（最多 400 个字，交回空正文时是空的）。说读不了，是沙箱没给附件目录，后台回复里的附件也会一样读不了；说不肯读，先再跑一次，还是不肯再换一个干净的任务。读不了和不肯读从回复里分不可靠，所以没另起错误码，靠人看这一项。
+
+检查让宿主读的那个文件和真实附件在同一个目录、名字一个样，提示里照实说它是接收端为这次检查写的已校验下载、用不着 `agent_room_open_content`：后台回复的提示只认那个工具给的 `attachment.localPath`，以前只说“读这个文件”，做过带附件的后台回复的任务就照那条规矩不读（Alpha 101 实机验收）。
+
 ## 安装器钩子的 PR 检查
 
 安装器钩子（`apps/desktop/src-tauri/windows/hooks.nsh`）以前只在签名候选里随真实安装器一起编译和验收，写错了要等到发版才知道。现在改到它时，PR 上的“Windows 安装器钩子”工作流（`tools/windows_installer_hooks.py`）会：
