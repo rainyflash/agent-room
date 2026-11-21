@@ -92,6 +92,9 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 UUID7 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 HOST_NAMES = {"codex": "Codex", "claude_code": "Claude Code"}
 IDLE_OBSERVATION_SECONDS = 66
+# How long to wait for one host turn (doctor, or a QA message's reply): the receiver gives the host up to
+# 10 minutes (`HOST_TIME_LIMIT` in crates/agent-reception/src/host.rs), plus time to send and confirm the reply.
+HOST_WAIT_SECONDS = 12 * 60
 # After a server move the owner registers and signs in on the new server while the runner waits.
 MIGRATION_SIGN_IN_SECONDS = 20 * 60
 # Accessible names of the room controls in both UI languages, so the desktop language does not matter.
@@ -604,7 +607,8 @@ class Acceptance:
         })
 
     def doctor(self) -> None:
-        result = self.cli("receiver", "doctor", "--binding", str(self.path("binding.private.json")), timeout=240)
+        result = self.cli("receiver", "doctor", "--binding", str(self.path("binding.private.json")),
+                          timeout=HOST_WAIT_SECONDS)
         if not (result.get("attachmentReadable") and result.get("replyContractHonored")):
             raise ReleaseFailure(f"receiver doctor 未通过：{result}")
         self.save("doctor.json", result)
@@ -708,7 +712,7 @@ class Acceptance:
         if len(self.received_event_ids()) < number:
             self.page(f"send-message-{number}.js", self.path(f"send-message-{number}.js").read_text(encoding="utf-8"))
         self.save(f"incoming-{number}.json", self.confirm_delivery(number))
-        deadline = time.time() + (240 if number == 1 else 300)
+        deadline = time.time() + HOST_WAIT_SECONDS
         while time.time() < deadline:
             settled = self.settled_deliveries()
             if len(settled) >= number:

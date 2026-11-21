@@ -206,6 +206,12 @@ fn contract_prompt(path: &str) -> String {
     )
 }
 
+/// 宿主一次最多跑多久：从起进程到它退出。只防宿主卡死（卡死时这一批一直交不出去，后面的消息也等着），
+/// 不是给宿主定的快慢要求，所以放得宽。以前是 3 分钟：2026-11-21 发 Alpha 101 时，真实的 Codex 读一条带附件的
+/// 消息要调三次模型、每次先压缩一遍上下文（它带着几十个 MCP 和插件的工具说明），一轮 150 秒、进程退出又晚，
+/// 答对了也超时，这一条记成要人处理、接收端停下。
+const HOST_TIME_LIMIT: Duration = Duration::from_mins(10);
+
 pub(crate) async fn execute(mut command: Command, prompt: &str) -> CliResult<Vec<u8>> {
     command
         .stdin(Stdio::piped())
@@ -250,7 +256,7 @@ pub(crate) async fn execute(mut command: Command, prompt: &str) -> CliResult<Vec
         }
         Ok(stdout)
     };
-    tokio::time::timeout(Duration::from_mins(3), operation)
+    tokio::time::timeout(HOST_TIME_LIMIT, operation)
         .await
         .map_err(|_| CliFailure::local("receiver.host_timeout"))?
 }
