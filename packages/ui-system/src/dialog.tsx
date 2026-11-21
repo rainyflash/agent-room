@@ -21,6 +21,10 @@ export type DialogProps = {
  * 模态对话框。原生 `<dialog>` 挂到 body 上，不继承打开它的容器的后代样式；Esc 和关闭按钮都走
  * `onClose`，关掉后焦点回到打开它的元素。没有 `showModal` 的环境（jsdom 等）退化为 `open` 属性，
  * 仍然可以访问。
+ *
+ * 打开时焦点落在哪：里面第一个带 `data-autofocus` 的元素；没有就照浏览器的，落在第一个能按的上
+ * （右上角的关闭）。别用 React 的 `autoFocus`：它不往 DOM 里写 `autofocus` 属性，只在提交时调一次
+ * `focus()`，比这里的 `showModal()` 早，一打开就被挪走。
  */
 export function Dialog({
   title,
@@ -42,6 +46,7 @@ export function Dialog({
     const trigger = document.activeElement;
     if (typeof element.showModal === 'function') element.showModal();
     else element.setAttribute('open', '');
+    element.querySelector<HTMLElement>('[data-autofocus]')?.focus();
     return () => {
       if (typeof element.close === 'function') element.close();
       else element.removeAttribute('open');

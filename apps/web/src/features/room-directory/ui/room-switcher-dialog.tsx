@@ -171,7 +171,7 @@ export function RoomSwitcherView({
         <Search aria-hidden="true" />
         <input
           aria-label={t('rooms.search')}
-          autoFocus
+          data-autofocus
           onChange={(event) => {
             setSearch(event.target.value);
           }}
