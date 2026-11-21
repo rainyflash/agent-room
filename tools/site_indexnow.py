@@ -5,9 +5,12 @@
 testing 签名发行”成功以后调用：读线上的 `sitemap.xml`，挑出 `lastmod` 不早于上一个公开版本发布那天的页，
 带上密钥报给 api.indexnow.org。搜索引擎拿网站根目录的 `<密钥>.txt` 核对报信的是不是我们。
 
+公开发行那一步跑完时，生产的网页还是上一版：发布流程最后才升级网页镜像（docs/release-workflow.md）。
+所以按发行算范围时，先等首页结构化数据里的 `softwareVersion` 变成这一版，再读站点地图、再报。
+
 只是请搜索引擎早点来抓：报不出去不影响发版，工作流红了看一眼原因就行。
 
-    python tools/site_indexnow.py                 # 报上一个公开版本以后改过的页
+    python tools/site_indexnow.py                 # 等网站换成最新的公开版本，报上一版以后改过的页
     python tools/site_indexnow.py --since 2026-11-19T06:45:45Z
     python tools/site_indexnow.py --all --dry-run # 只列出来，不报
 """
@@ -38,6 +41,10 @@ SITEMAP_NAMESPACE: Final = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 ACCEPTED_STATUSES: Final = frozenset({200, 202})
 FETCH_ATTEMPTS: Final = 3
 USER_AGENT: Final = "agent-room-site-indexnow"
+# 首页的 SoftwareApplication 结构化数据写着网站是哪一版构建的（build/site/pages.ts）。
+VERSION_PATTERN: Final = re.compile(r'"softwareVersion"\s*:\s*"([^"]+)"')
+WAIT_INTERVAL_SECONDS: Final = 60
+DEFAULT_WAIT_MINUTES: Final = 45
 
 
 class IndexNowFailure(RuntimeError):
@@ -84,11 +91,11 @@ def payload(key: str, urls: Sequence[str]) -> dict[str, object]:
     return {"host": HOST, "key": key, "keyLocation": f"{SITE}/{key}.txt", "urlList": list(urls)}
 
 
-def previous_release_time(
+def release_window(
     repository: str,
     run: Callable[[Sequence[str]], str] | None = None,
-) -> str | None:
-    """上一个公开版本的发布时间：最新的公开版本是刚发的这一版，往前数一个。只有一版时为 None。"""
+) -> tuple[str, str | None]:
+    """最新的公开版本（刚发的这一版，去掉标签前的 v）和上一个公开版本的发布时间（只有一版时为 None）。"""
     runner = run or _gh
     output = runner(
         [
@@ -99,13 +106,48 @@ def previous_release_time(
     releases = json.loads(output)
     if not isinstance(releases, list):
         raise IndexNowFailure("gh release list 没有回一个列表")
-    times = [item.get("publishedAt") for item in releases if isinstance(item, dict)]
-    if len(times) < 2:
-        return None
-    previous = times[1]
+    items = [item for item in releases if isinstance(item, dict)]
+    if not items:
+        raise IndexNowFailure(f"{repository} 还没有公开版本")
+    tag = items[0].get("tagName")
+    if not isinstance(tag, str) or not tag:
+        raise IndexNowFailure("最新的公开版本没有标签")
+    version = tag.removeprefix("v")
+    if len(items) < 2:
+        return version, None
+    previous = items[1].get("publishedAt")
     if not isinstance(previous, str) or not previous:
         raise IndexNowFailure("上一个公开版本没有发布时间")
-    return previous
+    return version, previous
+
+
+def live_version(page: str) -> str | None:
+    """首页结构化数据里的 `softwareVersion`：网站是哪一版构建的。找不到时为 None。"""
+    match = VERSION_PATTERN.search(page)
+    return match.group(1) if match else None
+
+
+def wait_for_version(
+    version: str,
+    timeout_seconds: float,
+    fetch: Callable[[str], str] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    """每分钟看一次首页，直到网站是 `version` 这一版；超时还不是就回 False。首页打不开算还没换好。"""
+    read = fetch or fetch_text
+    deadline = clock() + timeout_seconds
+    while True:
+        try:
+            current = live_version(read(f"{SITE}/"))
+        except IndexNowFailure:
+            current = None
+        if current == version:
+            return True
+        if clock() + WAIT_INTERVAL_SECONDS > deadline:
+            return False
+        print(f"网站现在是 {current or '读不到的版本'}，等 {version} 上线……", flush=True)
+        sleep(WAIT_INTERVAL_SECONDS)
 
 
 def _gh(arguments: Sequence[str]) -> str:
@@ -158,6 +200,12 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     scope.add_argument("--all", action="store_true", help="报站点地图里的全部页")
     parser.add_argument("--dry-run", action="store_true", help="只列出要报的页，不报")
     parser.add_argument("--repository", help="GitHub 仓库，默认取 GITHUB_REPOSITORY")
+    parser.add_argument(
+        "--wait-minutes",
+        type=int,
+        default=DEFAULT_WAIT_MINUTES,
+        help="按发行算范围时，最多等网站换成最新的公开版本多少分钟（0 是不等）",
+    )
     return parser.parse_args(arguments)
 
 
@@ -172,7 +220,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
             repository = (
                 options.repository or os.environ.get("GITHUB_REPOSITORY") or "rainyflash/agent-room"
             )
-            since = previous_release_time(repository)
+            version, since = release_window(repository)
+            waited = options.wait_minutes * 60
+            if waited > 0 and not wait_for_version(version, waited):
+                print(
+                    f"网站 {options.wait_minutes} 分钟内还不是 {version}，先不报；"
+                    "网页升级好以后手动派发一次 site-indexnow.yml。",
+                    file=sys.stderr,
+                )
+                return 1
         entries = parse_sitemap(fetch_text(f"{SITE}/sitemap.xml"))
         urls = changed_urls(entries, since)
         scope = f"{since} 那天及以后改过的" if since else "全部"

@@ -54,7 +54,7 @@
 - `llms.txt` 照 llmstxt.org 的格式写：一句话说 Agent Room 是什么；接入说明（`/agents.txt`）和远程 MCP 地址；每篇指南；GitHub、自建、隐私说明。给 AI 助手一个入口，先读这份再决定读哪页。
 - 接入说明（`/agents.md`、`/agents.txt`）在裸域、app 子域和 API 域名上都是同一份。裸域的两份用 HTTP 头 `Link: <https://agentroom.chat/agents.txt>; rel="canonical"` 指回裸域的 `/agents.txt`；API 和聊天服务器的域名跟 app 子域一样整个 `X-Robots-Tag: noindex`（身份服务的 Keycloak 自己带 `X-Robots-Tag: none`）。
 - 裸域上不存在的路径回真的 404，页面上给回首页、指南和进入应用的链接。
-- IndexNow（Bing、Yandex 等共用的“这几页改了”通知）：密钥放在 `apps/web/site/indexnow-key.txt`，生成器在网站根目录写一份 `<密钥>.txt`，内容就是密钥。公开发行（“验证并发布 testing 签名发行”）成功以后，`site-indexnow.yml` 跑 `tools/site_indexnow.py`：读线上的 `sitemap.xml`，把 `lastmod` 不早于上一个公开版本发布那天的页报给 api.indexnow.org。lastmod 只到日期，按日期比，上一版当天改的也算进去。密钥是公开的，不是凭据；换密钥就换这个文件，下一版上线后手动派发一次 `all`。
+- IndexNow（Bing、Yandex 等共用的“这几页改了”通知）：密钥放在 `apps/web/site/indexnow-key.txt`，生成器在网站根目录写一份 `<密钥>.txt`，内容就是密钥。公开发行（“验证并发布 testing 签名发行”）成功以后，`site-indexnow.yml` 跑 `tools/site_indexnow.py`：读线上的 `sitemap.xml`，把 `lastmod` 不早于上一个公开版本发布那天的页报给 api.indexnow.org。公开那一步跑完时网页还是上一版（发布流程第 6 步才升级网页镜像），所以按发行算范围时，工具先等首页 SoftwareApplication 的 `softwareVersion` 变成最新的公开版本（每分钟看一次，最多 45 分钟），再读站点地图。lastmod 只到日期，按日期比，上一版当天改的也算进去。密钥是公开的，不是凭据；换密钥就换这个文件，下一版上线后手动派发一次 `all`。
 - app 子域：不在应用路由清单里的路径照样给出应用的空壳（应用自己显示“找不到页面”），但状态码改成 404。浏览器和应用不受影响，只是爬虫知道这页不存在。清单哪天和路由对不上，坏处也只是状态码不对，页面照常打开。
 
 应用路由清单写在 `render.py` 一处，第 1 节的跳转和这里的 404 共用。`tools/tests` 加一条测试：从 `apps/web/src/app/router.tsx` 读出所有 `path:`，和清单对一遍，新加路由忘了加进清单就红。
@@ -145,3 +145,4 @@
   - Google：站点地图 11-20 读过，14 页全部收录（报告里 project-room 两篇还写着“已抓取 - 尚未编入索引”，网址检查已经是“网址已收录到 Google”）。没收录的 19 个都是有意的：app 子域的 `noindex` 7 个、跳转 3 个、robots 挡的 1 个、带 `?ref=` 的首页 1 个、10 月抓到的 app 子域页面 5 个（“重复网页”，验证进行中，再抓到时会变成 `noindex`）。近三个月 13 次点击、181 次展示，都是品牌词；“agent room”平均排在 40 位，同名项目多。
   - Bing：网站已经在 Bing Webmaster Tools 里（数据从 11-14 起），站点地图是自己从 robots 发现的，11-19 读过、14 页。只收录了 7 页，另外 7 页（两个指南目录、英文 agents-working-together、两篇 project-room、两篇 about-the-name）一直是“已发现但未抓取”，当天在“网址检查”里逐页请求了编入索引（每天能报 100 个）。Bing 没有 IndexNow 的记录，所以加了上面第 4 节的 IndexNow。
   - 三篇英文指南的简介超过 160 个字符，搜索结果里会被截断，只删词截到 150 个左右（agents-working-together、project-room、about-the-name，`updated` 跟着改）。
+- 2026-11-22：Alpha 101（2026-11-21 16:14Z 公开）第一次带上 IndexNow。发版后自动那次在 16:15 读到的还是 Alpha 100 的网站，密钥文件 404，红了：公开发行跑完以后网页镜像才升级。发版的 Agent 16:19 手动派发了一次 `all`，14 页，IndexNow 回 202。#969 让工具先等网站换成这一版再报，工作流的超时从 10 分钟放到 60 分钟。
