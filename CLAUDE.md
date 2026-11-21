@@ -536,7 +536,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 新装的 Windows 桌面端每次启动清一遍
 
-- 2026-11-21 查 agent-room-ops#35 时查到的，原因和改法见上面“代码里的坑”的“桌面端启动时的‘换服务器归档’”。修复是 #959，要尽快单独发一版（只改了桌面端，不是登录相关路径，不要设备码）。
+- 2026-11-21 查 agent-room-ops#35 时查到的，原因和改法见上面“代码里的坑”的“桌面端启动时的‘换服务器归档’”。修复是 #959，随 Alpha 101 发布（2026-11-21）。
 - 怎么查到的（以后再碰上“某一类电脑总在重新授权”照这个看）：控制面的冲突带了 `step` 以后知道是签名钥匙变了；同一个 Agent 旧连接的聊天设备在被拒前 12 分钟还在用，说明钥匙没丢、是换了一处读；`device_token_family` 里那台电脑每次被拒的同一分钟都新建了一组（`authenticated_at` 还是当初那次登录），就是本机的登录和授权每次启动都被清掉。按平台数每台电脑的令牌组个数：Mac 都是 1 组，Windows 回来用过的多半不止 1 组。
 - 这件事很可能是桌面用户留不下来的原因之一：回来的人看到的是又要登录、自己的 Agent 全掉了。发版以后看两样：
   - 按平台数令牌组（脚本在本机 scratchpad 的 `ops1121/look_g.py`，只读、只出个数）：更新到新版的 Windows 电脑不该再每次启动新建一组。
@@ -1004,11 +1004,14 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 101 正在发布（2026-11-21）：只带一处修复，新装的 Windows 桌面端不再每次启动清掉登录、这台电脑的授权和本机 Agent，以前被收走的 Agent 放回原处（#959，见上面“新装的 Windows 桌面端每次启动清一遍”）。它值得单独发一版：从 Alpha 48 起每一台全新安装的 Windows 都中，回来的人看到的是又要登录、自己的 Agent 全掉了。
-  - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha101-preflight`，跑完就删）；本机 `cargo deny check advisories`、`corepack pnpm@10.28.0 audit:node` 都干净。
-  - 只改了桌面端（`server_move.rs` 不在登录相关路径里）：复用 Alpha 100 那台长期验收设备，不要设备码。没有迁移，部署配置没加新变量，回滚可以退到 Alpha 100。没改告警规则，发完不用跑 `telemetry-apply`。`account_reminder` 的删表迁移和 `/messages → 403` 那条噪音规则照旧留到下一版，这一版不夹别的。
-  - 实机验收走不到修的这条路：维护者的电脑和验收设备早就有记录。靠的是 Windows 上真开着日志文件跑的单元测试、CI 的 Windows 原生检查，和发完以后在生产上按平台数每台电脑被从头授权了几次（更新了的 Windows 电脑不该再涨）。
-  - 这一版是带着 IndexNow（#958）的第一版：网页上线后手动派发一次 `site-indexnow.yml`、勾上 `all`。
+- Alpha 101 已于 2026-11-21 公开，见 [发布记录](./specs/agent-access/alpha101-release.md)。
+  - 新装的 Windows 桌面端不再每次启动清掉登录、这台电脑的授权和本机 Agent，以前被收走的 Agent 放回原处（#959）；换账号时有文件被占着也不再每次启动清掉新账户（#962）；后台回复给宿主一次 10 分钟（#965）；“新建房间”“换个房间”打开时光标在输入框里（#964）。
+  - 第一个发布提交 `d088f3f1`（#961）已经部署、装到了维护者本机，实机验收四轮都停在后台回复上：维护者的 Codex 当天每调一次模型都先压缩，带附件的那一轮过了接收端的 3 分钟。维护者说这个时限没意义，#965 放到 10 分钟，它的合并提交 `95d5008c` 成为发布提交。照 Alpha 84 让位：草稿改名（公开后删了）、记录挪进 `attempt-d088f3f1/`、服务器上的发布目录改名、本机装回 Alpha 100。
+  - 第二个发布提交的验收先停在 doctor（旧任务照后台回复的规矩拒读验证码文件，#966 改了提示），换了干净任务又等了 15 分钟旧会话关掉（见“发布”一节），之后一次通过。
+  - 登录相关路径没改，复用 Alpha 100 那台长期验收设备，没要设备码。没有迁移，部署配置没加新变量，回滚可以退到 Alpha 100。没改告警规则，没跑 `telemetry-apply`。`account_reminder` 的删表迁移和 `/messages → 403` 那条噪音规则照旧留到下一版。
+  - 修的那条路实机验收走不到（维护者的电脑和验收设备早就有记录），靠单元测试、CI 的 Windows 原生检查，和发完以后在生产上按平台数每台电脑被从头授权了几次（更新了的 Windows 电脑不该再涨）。
+  - 带着 IndexNow（#958）的第一版：公开以后手动派发了一次 `site-indexnow.yml`、勾上 `all`。
+  - 版本 PR #961 合并到网页上线约 8 小时 19 分钟，其中约 4 小时 31 分钟在等维护者放行；从 #965 合并算约 1 小时 33 分钟。
 - Alpha 100 已于 2026-11-20 公开，见 [发布记录](./specs/agent-access/alpha100-release.md)。
   - 收件箱里谁找你带着头像、Agent 的名字跟它的机器人一个颜色（#953），扫描容器每天更新病毒库时不再同时留新旧两份（#955），邮件提醒不做了、去掉每小时的演练和开关（#952），“Agent 请求失败”的告警带上失败落在哪一步（#954）。
   - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha100-preflight`，跑完删了），全绿；发布提交上的四条流水线都是第 1 次就过。
@@ -1275,6 +1278,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 2026-10-10 Codex 自动更新以后（`codex-cli 0.162.0-alpha.17.2`）沙箱起得来了。Alpha 67 里它照 #371 用一条只读命令读附件（.NET 的 `File.ReadAllText`），#389 以后读得到，doctor 一次就过。
   - Codex 自动更新会挪程序（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`），`qa-host.json` 里的宿主路径跟着改，不然 doctor 报 `receiver.executable_invalid`。派生脚本会找新位置，但派生以后、验收以前它也可能挪（Alpha 74 就是：绑定里记着旧路径，改了 `qa-host.json`、把 `binding.private.json` 改名留档，从绑定那一步重跑）。Alpha 76 是验收开始前几分钟，Codex 把记着的那份整个删掉了，只剩新装的那份。验收前再看一眼。
   - doctor 没过先看 `details.hostReply`（宿主交回了什么）。说读不了是沙箱的事；说不肯读、只认经房间拿到的附件，是这个任务照后台回复的规矩来的：Alpha 101 绑着的任务就这样，那时契约检查的提示只说“读这个文件”，现在照实说它是接收端写的已校验下载。还是不行就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
+  - 换了任务马上再登记会被拒（`bridge.host_session.reception_already_bound`）：验收人物在隔离 Bridge 里的会话还记着后台回复交给了旧任务（只在内存里），这个会话 15 分钟没人用才关（`host_sessions.rs` 的 `IDLE_LIFETIME`）。等 15 分钟、中间谁都不碰它，再跑 `run`（Alpha 101 第二个发布提交就这样多等了 17 分钟）。
+  - 上一轮有一条投递没回完（超时、记成要人处理）时，新起的接收端先把它拿回来，核对 20 秒后报 `receiver.reply_unconfirmed` 退出：进度按 Agent 和房间记在服务器上，换任务、换发布提交都会接着来。用验收工具同一套连接 `receiver resolve --binding <binding.private.json> --event <那一条的事件 ID> --action skip`，挪开接收端的记录（`receiver-process.json`、`receiver.private.jsonl`、`receiver.private.stderr`），再跑 `run`（Alpha 101 的 `qa_newtask.py`）。
   - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
   - Alpha 64–66 用 Codex 加入的人物已经绑了任务。长期验收设备的记录里记着它绑的任务（`profileTaskId`），以人物身份调用时带上；宿主是 Codex 又换了任务时登记不上，`start` 会自动改走新设备授权。所以复用长期验收设备时，宿主就用它绑着的那个任务：Alpha 67 第二个候选换了新任务，多批准了一次设备码；最终候选换回原来的任务，就不用批准。
   - Alpha 71 起的长期验收设备是 #372 以后加入的，人物不绑任务（`profileTaskId` 为空），按理换了 Codex 任务也能复用、不用再批准设备码。还没在换了任务的情况下试过，第一次换任务时看一眼 `start` 有没有改走新设备授权。
@@ -1289,7 +1294,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 发布链经 WMI 启动，应用退出带不走它，可 Windows 结束登录会话时一样带走（2026-11-04 Alpha 88，`bash` 报 `dofork … 0xC000026B`，网页晚了 7 个多小时才上线）。新会话接手发版，先看发布目录的日志停在哪、进程还在不在，再从停下的那一步接着跑（`publish_resume.sh`）。
 - GitHub 故障时运行状态可能不更新：Alpha 88 的公开作业 `16:17Z` 已经跑完，`gh run view`、`gh run watch` 到 `16:29Z` 还说 `waiting`。说“还没公开”之前连作业的步骤和 Release 本身一起看。
 - 开版本 PR 之前先在本机跑一次 `cargo deny check advisories`（几秒钟）和 `corepack pnpm@10.28.0 audit:node`（cargo-deny 查不到 Node 的公告）：上游当天新出的公告只有版本 PR 的 CI 才撞上，Alpha 94、Alpha 96 都因此多等了一轮，Alpha 97 是发版前那次 `suite=all` 抓到的。有新公告就先开加例外或升级的 PR，合了再开版本 PR。
-- 下一版的发布脚本从 `artifacts/releases/alpha100` 派生，平常的写法（上一版 100、这一版 101；派生脚本照 `derive_alpha100.py` 改，它末尾查漏改旧版本号的正则已经认两到三位数）。Alpha 100 留下的四个一次性脚本别带：`qa_wait.py`、`start_qa_wait.ps1`、`start_publish_resume.ps1`、`recreate_content_scanner.py`；`reissue_code.py`（重发一个不是快过期的设备码）可以带上。`watch_release.py` 和 `click_save_image.py` 照旧跟着带。
+- 下一版的发布脚本从 `artifacts/releases/alpha101` 派生，平常的写法（上一版 101、这一版 102；派生脚本照 `derive_alpha101.py` 改）。Alpha 101 留下的一次性脚本别带：`downgrade_to_100.py`、`qa_newtask.py`、`start_qa_newtask.ps1`（第一个发布提交那几轮的已经在 `attempt-d088f3f1/` 里）。`verify_legacy.py`、`probe_public_health.py` 发布途中临时写死过 alpha.101，发完改回了“升级前是上一版、之后是这一版”的写法，派生时照常换版本号。`reissue_code.py`、`watch_release.py`、`click_save_image.py` 照旧跟着带。宿主用 `qa-host.json` 里那个干净的 Codex 任务（`01a1fec4…`，Alpha 101 第二个发布提交建的）。
 - 要设备码的那几版，码要让维护者看得到、来得及批（Alpha 100 七个码过期了六个）：
   - 发码的那条消息里，链接放在最后一行，之后不再调用工具、不再接别的话。桌面应用里一轮中间说的话后面一有工具调用就不显眼，维护者看到的是这一轮最后那一句；Alpha 100 有三个码就是这样没被看到的。等批准的后台脚本先起好，再发这条消息。
   - 维护者说“现在就升”到码出来还隔着等定时备份、部署服务端和升级本机，Alpha 100 是 17 分钟，他已经走开了。放行时就照 `server rollout gate` 那一行算出码大概几点几分出来，告诉他；码发出去没人理就别接着发，等他回话再发。
