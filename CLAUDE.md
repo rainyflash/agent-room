@@ -639,8 +639,8 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-10-26 Search Console 来信报了四种没编入索引的原因，查下来只有两处要改（#608，经过记在设计文档的“状态”一节）：接入说明在几个域名上一模一样，裸域的用 `Link` 头指回 `/agents.txt`，API 和聊天服务器的域名 `noindex`；`www.agentroom.chat` 指着 Vercel 回 404，维护者定了跳到裸域。跳转、app 子域 `robots.txt` 挡的 `/watch` 和 `/join`、不存在的路径回 404 都是有意的，别去“修”。
   - 网关的 `www` 站点随下一版上线。DNS 已经改好（2026-10-27）：Vercel 里加了 `www` 的 A 记录指向生产服务器，盖过 Vercel 自己管的通配 `*` ALIAS，别删，不然 www 又回到 Vercel、Caddy 申请不到证书。上线之前 `https://www` 握手失败是预料中的。上线后查 `https://www.agentroom.chat/guides/` 是 301 到 `https://agentroom.chat/guides/`。
 - 2026-11-21 维护者让把 Google 和 Bing 的收录再理一遍（数字和经过记在设计文档的“状态”一节）。Google 上网站的 14 页都收录了；Bing 上网站早就加好了，只收录 7 页，另外 7 页当天请求了编入索引。两个后台都登录在维护者的 Chrome 里。
-  - 加了 IndexNow：密钥是 `apps/web/site/indexnow-key.txt`（公开的，不是凭据），网站根目录出一份 `<密钥>.txt`。公开发行成功以后 `site-indexnow.yml` 跑 `tools/site_indexnow.py`，把 `lastmod` 不早于上一个公开版本那天的页报给 IndexNow。改指南时照旧改 `updated`，不然这一版不会报它。
-  - 带着它的第一版上线后，手动派发一次 `site-indexnow.yml`、勾上 `all`，把全部页报一遍；以后不用管。它红了不挡发版，看日志里 IndexNow 回的状态码（403 是密钥文件没上线或对不上）。
+  - 加了 IndexNow：密钥是 `apps/web/site/indexnow-key.txt`（公开的，不是凭据），网站根目录出一份 `<密钥>.txt`。公开发行成功以后 `site-indexnow.yml` 跑 `tools/site_indexnow.py`，把 `lastmod` 不早于上一个公开版本那天的页报给 IndexNow。公开那一步跑完时网页还是上一版（发布流程最后才升级网页镜像），所以它先等首页结构化数据的 `softwareVersion` 变成这一版，最多 45 分钟；Alpha 101 时还不等，自动那次读到旧网站、密钥文件 404，红了（#969 起改成等）。改指南时照旧改 `updated`，不然这一版不会报它。
+  - 带着它的第一版（Alpha 101）上线后手动派发过一次 `all`：14 页，IndexNow 回 202。以后不用管。它红了不挡发版：等了 45 分钟网站还不是这一版，就等网页升级好以后手动派发一次（不填参数就报这一版改过的页）；看日志里 IndexNow 回的状态码（403 是密钥文件没上线或对不上）。
 
 ### Agent 名字后面的编号
 

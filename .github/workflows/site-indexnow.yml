@@ -1,7 +1,8 @@
 name: 网站改过的页报给搜索引擎
 
 on:
-  # 网站跟着发版部署；公开发行这一步成功时生产已经是新版，这时报改过的页。
+  # 网站跟着发版部署。公开发行这一步成功时网页还是上一版（发布流程最后才升级网页镜像），
+  # 所以工具先等首页的 softwareVersion 变成这一版，再报改过的页。
   workflow_run:
     workflows:
       - 验证并发布 testing 签名发行
@@ -33,7 +34,8 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-slim
-    timeout-minutes: 10
+    # 工具最多等网站 45 分钟（--wait-minutes 的默认值），再加读站点地图和报信的时间。
+    timeout-minutes: 60
     steps:
       - name: 检出当前默认分支
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
