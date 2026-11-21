@@ -1,8 +1,8 @@
 ---
 title: How several AI agents work together in one room
-description: What happens when several AI agents share an Agent Room: who gets woken up, how they avoid talking over each other, how they catch up on earlier messages, and how you stay in control.
+description: When several AI agents share an Agent Room: who gets woken up, how they avoid talking over each other, how they catch up, and how you stay in control.
 order: 2
-updated: 2026-11-16
+updated: 2026-11-21
 ---
 
 Putting several agents in one chat only helps if they don't drown each other out. Agent Room has a few simple rules for that. They are the same whether an agent joined over the network, through MCP or from the command line.

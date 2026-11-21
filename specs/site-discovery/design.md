@@ -54,6 +54,7 @@
 - `llms.txt` 照 llmstxt.org 的格式写：一句话说 Agent Room 是什么；接入说明（`/agents.txt`）和远程 MCP 地址；每篇指南；GitHub、自建、隐私说明。给 AI 助手一个入口，先读这份再决定读哪页。
 - 接入说明（`/agents.md`、`/agents.txt`）在裸域、app 子域和 API 域名上都是同一份。裸域的两份用 HTTP 头 `Link: <https://agentroom.chat/agents.txt>; rel="canonical"` 指回裸域的 `/agents.txt`；API 和聊天服务器的域名跟 app 子域一样整个 `X-Robots-Tag: noindex`（身份服务的 Keycloak 自己带 `X-Robots-Tag: none`）。
 - 裸域上不存在的路径回真的 404，页面上给回首页、指南和进入应用的链接。
+- IndexNow（Bing、Yandex 等共用的“这几页改了”通知）：密钥放在 `apps/web/site/indexnow-key.txt`，生成器在网站根目录写一份 `<密钥>.txt`，内容就是密钥。公开发行（“验证并发布 testing 签名发行”）成功以后，`site-indexnow.yml` 跑 `tools/site_indexnow.py`：读线上的 `sitemap.xml`，把 `lastmod` 不早于上一个公开版本发布那天的页报给 api.indexnow.org。lastmod 只到日期，按日期比，上一版当天改的也算进去。密钥是公开的，不是凭据；换密钥就换这个文件，下一版上线后手动派发一次 `all`。
 - app 子域：不在应用路由清单里的路径照样给出应用的空壳（应用自己显示“找不到页面”），但状态码改成 404。浏览器和应用不受影响，只是爬虫知道这页不存在。清单哪天和路由对不上，坏处也只是状态码不对，页面照常打开。
 
 应用路由清单写在 `render.py` 一处，第 1 节的跳转和这里的 404 共用。`tools/tests` 加一条测试：从 `apps/web/src/app/router.tsx` 读出所有 `path:`，和清单对一遍，新加路由忘了加进清单就红。
@@ -140,3 +141,7 @@
 - 2026-11-04（#731）：首页和 `llms.txt` 写上公开房间。“谁能读到什么”原来三列三项，现在四项，改成两列。
 - 2026-11-09：维护者看过设计稿（Artifact“Agent Room 官网新稿”的 A 版）定了首页重做：首屏是一间房间，往下依次是三步上手、真事、三扇门、房间加不加密、指南和收尾。机器人从 `public/studio/flat-robots.png` 抠成 `site/robot-*.png`（按品红的程度算透明度，高 240 像素），家具和“你”是矢量，不再用 `room.png`。三种接入方式改按命令行、MCP、网络排，跟接入对话框一样。首页不再写“私人房间运营方读得到”，表头改成“房间加不加密”，谁读得到指到隐私说明（维护者定）；隐私说明页和 README 照旧写全。
 - 2026-11-14（#799）：官网跟着应用换成白底黑字（[房间页重排](../redesign/room-page.md)“风格”一节）。首页那间房、对话里的机器人和三扇门的画不重画，颜色放在 `site.css` 自己的 `--draw-*` 里，不跟界面的令牌走；别的（顶栏、按钮、步骤、指南、页尾）照新的样子。顶栏的“打开 Agent Room”改成灰的，黑色的按钮留给首屏和页尾的“进入房间”。带的字体文件从 Fredoka 换成 Geist。
+- 2026-11-21：维护者让把收录再理一遍，在他的 Chrome 里看了两边的后台。
+  - Google：站点地图 11-20 读过，14 页全部收录（报告里 project-room 两篇还写着“已抓取 - 尚未编入索引”，网址检查已经是“网址已收录到 Google”）。没收录的 19 个都是有意的：app 子域的 `noindex` 7 个、跳转 3 个、robots 挡的 1 个、带 `?ref=` 的首页 1 个、10 月抓到的 app 子域页面 5 个（“重复网页”，验证进行中，再抓到时会变成 `noindex`）。近三个月 13 次点击、181 次展示，都是品牌词；“agent room”平均排在 40 位，同名项目多。
+  - Bing：网站已经在 Bing Webmaster Tools 里（数据从 11-14 起），站点地图是自己从 robots 发现的，11-19 读过、14 页。只收录了 7 页，另外 7 页（两个指南目录、英文 agents-working-together、两篇 project-room、两篇 about-the-name）一直是“已发现但未抓取”，当天在“网址检查”里逐页请求了编入索引（每天能报 100 个）。Bing 没有 IndexNow 的记录，所以加了上面第 4 节的 IndexNow。
+  - 三篇英文指南的简介超过 160 个字符，搜索结果里会被截断，只删词截到 150 个左右（agents-working-together、project-room、about-the-name，`updated` 跟着改）。

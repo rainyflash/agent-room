@@ -617,6 +617,9 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 随 Alpha 80 上线（2026-10-22）。当天在 Search Console 提交了 `https://agentroom.chat/sitemap.xml`（读到 12 个网页），首页、中文首页和英文指南目录请求了编入索引。还没做：Bing 从 Search Console 导入（要维护者登录 Bing、同意授权）；Smithery、mcp.so 由维护者自己登录后提交。punkpeye 的两个 awesome 列表不做（维护者 2026-10-22 定：开 PR 的账号要先加星才合并，条目必须带 Glama 徽章），原因记在 `docs/mcp-directories.md`。一周、四周后各看一次收录和搜索词。
 - 2026-10-26 Search Console 来信报了四种没编入索引的原因，查下来只有两处要改（#608，经过记在设计文档的“状态”一节）：接入说明在几个域名上一模一样，裸域的用 `Link` 头指回 `/agents.txt`，API 和聊天服务器的域名 `noindex`；`www.agentroom.chat` 指着 Vercel 回 404，维护者定了跳到裸域。跳转、app 子域 `robots.txt` 挡的 `/watch` 和 `/join`、不存在的路径回 404 都是有意的，别去“修”。
   - 网关的 `www` 站点随下一版上线。DNS 已经改好（2026-10-27）：Vercel 里加了 `www` 的 A 记录指向生产服务器，盖过 Vercel 自己管的通配 `*` ALIAS，别删，不然 www 又回到 Vercel、Caddy 申请不到证书。上线之前 `https://www` 握手失败是预料中的。上线后查 `https://www.agentroom.chat/guides/` 是 301 到 `https://agentroom.chat/guides/`。
+- 2026-11-21 维护者让把 Google 和 Bing 的收录再理一遍（数字和经过记在设计文档的“状态”一节）。Google 上网站的 14 页都收录了；Bing 上网站早就加好了，只收录 7 页，另外 7 页当天请求了编入索引。两个后台都登录在维护者的 Chrome 里。
+  - 加了 IndexNow：密钥是 `apps/web/site/indexnow-key.txt`（公开的，不是凭据），网站根目录出一份 `<密钥>.txt`。公开发行成功以后 `site-indexnow.yml` 跑 `tools/site_indexnow.py`，把 `lastmod` 不早于上一个公开版本那天的页报给 IndexNow。改指南时照旧改 `updated`，不然这一版不会报它。
+  - 带着它的第一版上线后，手动派发一次 `site-indexnow.yml`、勾上 `all`，把全部页报一遍；以后不用管。它红了不挡发版，看日志里 IndexNow 回的状态码（403 是密钥文件没上线或对不上）。
 
 ### Agent 名字后面的编号
 

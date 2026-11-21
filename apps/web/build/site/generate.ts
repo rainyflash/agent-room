@@ -96,6 +96,24 @@ function pagePath(urlPath: string): string {
   return `${urlPath.replace(/^\//u, '')}index.html`;
 }
 
+/** IndexNow 的密钥只许字母、数字和连字符，8 到 128 个（www.indexnow.org/documentation）。 */
+const INDEXNOW_KEY_PATTERN = /^[A-Za-z0-9-]{8,128}$/u;
+
+/**
+ * IndexNow 的密钥文件（`site/indexnow-key.txt`）：网站根目录放一份 `<密钥>.txt`，内容就是密钥。
+ * 发版以后 `tools/site_indexnow.py` 把改过的页报给 IndexNow，搜索引擎拿这份文件核对报信的是不是我们。
+ * 密钥本来就是公开的，不是凭据。
+ */
+async function indexNowKeyFile(sources: SiteSources): Promise<SiteFile> {
+  const key = (await readFile(path.join(sources.siteDir, 'indexnow-key.txt'), 'utf8')).trim();
+  if (!INDEXNOW_KEY_PATTERN.test(key)) {
+    throw new Error(
+      'site/indexnow-key.txt must hold one IndexNow key: 8-128 letters, digits or -.',
+    );
+  }
+  return { path: `${key}.txt`, contents: key };
+}
+
 /** 整个网站要写出的文件，不碰磁盘以外的东西，测试直接看它。 */
 export async function siteFiles(sources: SiteSources, build: SiteBuild): Promise<SiteFile[]> {
   const { assets, files } = await assetFiles(sources);
@@ -129,6 +147,7 @@ export async function siteFiles(sources: SiteSources, build: SiteBuild): Promise
     { path: 'sitemap.xml', contents: sitemap(build) },
     { path: 'robots.txt', contents: robots() },
     { path: 'llms.txt', contents: llmsTxt(build) },
+    await indexNowKeyFile(sources),
   ];
 }
 
