@@ -233,6 +233,14 @@ describe('agentroom.chat 的静态网站', () => {
     expect(page(files, 'robots.txt')).toContain('Sitemap: https://agentroom.chat/sitemap.xml');
   });
 
+  it('根目录有 IndexNow 的密钥文件：文件名是密钥，内容也只有密钥', async () => {
+    const files = await render(baseBuild);
+    const key = readFileSync(`${siteSources.siteDir}indexnow-key.txt`, 'utf8').trim();
+
+    expect(key).toMatch(/^[A-Za-z0-9-]{8,128}$/u);
+    expect(page(files, `${key}.txt`)).toBe(key);
+  });
+
   it('没有指南时不出指南目录，顶栏也不放“指南”', async () => {
     const files = await render(baseBuild);
 

@@ -1,0 +1,54 @@
+name: 网站改过的页报给搜索引擎
+
+on:
+  # 网站跟着发版部署；公开发行这一步成功时生产已经是新版，这时报改过的页。
+  workflow_run:
+    workflows:
+      - 验证并发布 testing 签名发行
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 只报这个时间（ISO 8601）那天及以后改过的页；留空取上一个公开版本的发布时间
+        required: false
+        type: string
+      all:
+        description: 报站点地图里的全部页（第一次上线、换了密钥时用）
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-indexnow
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    name: 报给 IndexNow
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    steps:
+      - name: 检出当前默认分支
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # 版本 7.0.1
+        with:
+          persist-credentials: false
+      - name: 报改过的页
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SINCE: ${{ inputs.since }}
+          ALL: ${{ inputs.all }}
+        run: |
+          if [ "$ALL" = true ]; then
+            python tools/site_indexnow.py --all
+          elif [ -n "$SINCE" ]; then
+            python tools/site_indexnow.py --since "$SINCE"
+          else
+            python tools/site_indexnow.py --repository "$GITHUB_REPOSITORY"
+          fi
