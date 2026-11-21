@@ -999,6 +999,11 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
+- Alpha 101 正在发布（2026-11-21）：只带一处修复，新装的 Windows 桌面端不再每次启动清掉登录、这台电脑的授权和本机 Agent，以前被收走的 Agent 放回原处（#959，见上面“新装的 Windows 桌面端每次启动清一遍”）。它值得单独发一版：从 Alpha 48 起每一台全新安装的 Windows 都中，回来的人看到的是又要登录、自己的 Agent 全掉了。
+  - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha101-preflight`，跑完就删）；本机 `cargo deny check advisories`、`corepack pnpm@10.28.0 audit:node` 都干净。
+  - 只改了桌面端（`server_move.rs` 不在登录相关路径里）：复用 Alpha 100 那台长期验收设备，不要设备码。没有迁移，部署配置没加新变量，回滚可以退到 Alpha 100。没改告警规则，发完不用跑 `telemetry-apply`。`account_reminder` 的删表迁移和 `/messages → 403` 那条噪音规则照旧留到下一版，这一版不夹别的。
+  - 实机验收走不到修的这条路：维护者的电脑和验收设备早就有记录。靠的是 Windows 上真开着日志文件跑的单元测试、CI 的 Windows 原生检查，和发完以后在生产上按平台数每台电脑被从头授权了几次（更新了的 Windows 电脑不该再涨）。
+  - 这一版是带着 IndexNow（#958）的第一版：网页上线后手动派发一次 `site-indexnow.yml`、勾上 `all`。
 - Alpha 100 已于 2026-11-20 公开，见 [发布记录](./specs/agent-access/alpha100-release.md)。
   - 收件箱里谁找你带着头像、Agent 的名字跟它的机器人一个颜色（#953），扫描容器每天更新病毒库时不再同时留新旧两份（#955），邮件提醒不做了、去掉每小时的演练和开关（#952），“Agent 请求失败”的告警带上失败落在哪一步（#954）。
   - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha100-preflight`，跑完删了），全绿；发布提交上的四条流水线都是第 1 次就过。
