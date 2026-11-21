@@ -1485,10 +1485,15 @@ def send_message_js(number: int, text: str, recipient: str, attachment: Path | N
 
     Its publication (`PUT …/event-binding`) goes through the native layer since #325, out of CDP's sight, so
     `Acceptance.confirm_delivery` checks what the receiver actually got. A message that already shows is not
-    sent again, so a rerun after a timeout cannot post it twice."""
+    sent again, so a rerun after a timeout cannot post it twice.
+
+    The attached file is looked for in the composer only: the QA room keeps its history, and an earlier run of the
+    same release shows a message with the same attachment name, which matched too (Alpha 101: strict mode stopped
+    the run before Send)."""
     attach = "" if attachment is None else (
         "await page.getByLabel(" + js_name("attach") + ").setInputFiles(" + json.dumps(str(attachment)) + ");" + chr(10)
-        + "        await page.getByText(" + json.dumps(attachment.name) + ", {exact: true}).waitFor();")
+        + "        await page.locator('form').filter({has: input}).getByText(" + json.dumps(attachment.name)
+        + ", {exact: true}).waitFor();")
     return fill("""async page => {
       const sent = page.getByRole('log', {name: @@LOG@@})
         .locator('article:not([data-actor-kind="agent"])').filter({hasText: @@MESSAGE@@});

@@ -291,6 +291,9 @@ class ReleaseQaHelpers(unittest.TestCase):
         self.assertIn("setInputFiles", source)
         self.assertIn("attachmentSent: true", source)
         self.assertIn(release_qa.js_name("send"), source)
+        # Only the composer's copy of the file counts: the room may already show one with the same name.
+        self.assertIn("page.locator('form').filter({has: input}).getByText(\"alpha41-attachment.txt\"", source)
+        self.assertNotIn("page.getByText(", source)
         without = release_qa.send_message_js(1, "第一条", "@agent:example", None)
         self.assertNotIn("setInputFiles", without)
         self.assertIn("attachmentSent: false", without)
