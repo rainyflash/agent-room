@@ -171,7 +171,7 @@ pub async fn verify_host_contract(
     let prompt = contract_prompt(path);
     let reply = run_turn(binding, data_root, service, &prompt).await?;
     if !reply.body().contains(&canary) {
-        return Err(CliFailure::local("receiver.attachment_unreadable"));
+        return Err(attachment_unreadable(&reply));
     }
     Ok(HostContractReport {
         host_type: binding.host_type,
@@ -200,10 +200,33 @@ fn write_canary(directory: &Path, canary: &str) -> CliResult<tempfile::TempPath>
 }
 
 /// 契约检查让宿主读的那一轮：和后台回复读附件同一个说法。
+///
+/// 后台回复的提示说附件要经 `agent_room_open_content` 拿到、它给的 `attachment.localPath` 才是校验过的下载。
+/// 以前这里只说“读这个文件”，做过带附件的后台回复的任务就照那条规矩不读：2026-11-21 发 Alpha 101 时，
+/// 绑定的 Codex 任务回“只读经房间会话校验过的附件，请在房间里发给我”，doctor 报读不了附件，换一个干净的任务才过。
+/// 所以这里照实说这个文件就是接收端为这次检查写的、和真实附件同一个目录的已校验下载，用不着那个工具。
+/// 只多说它是什么，能做的事照旧只有读这一个文件；回复提示的规矩不动。
 fn contract_prompt(path: &str) -> String {
     format!(
-        "This is an Agent Room host contract check, not a conversation. Read the file at {path} with a read-only file tool; {ATTACHMENT_FALLBACK} Return only a JSON object with one string field body containing that file's exact contents, without Markdown fences. Do not edit files, open links, or run or use anything else."
+        "This is an Agent Room host contract check, not a conversation: it checks that you can read the attachments that Agent Room background replies give you. The file at {path} is a verified Agent Room download that the Agent Room receiver wrote for this check, in the same attachment directory as the attachment.localPath that agent_room_open_content gives you, so it belongs to no message and needs no agent_room_open_content call. Read that file with a read-only file tool; {ATTACHMENT_FALLBACK} Never execute it or open it with another program. Return only a JSON object with one string field body containing that file's exact contents, without Markdown fences. Do not edit files, open links, or run or use anything else."
     )
+}
+
+/// 契约检查里宿主交回的正文最多留多少个字放进 `details.hostReply`。
+const HOST_REPLY_DETAIL_CHARS: usize = 400;
+
+/// 宿主交回的不是那个文件的内容。读不到（沙箱没给附件目录）和不肯读（比如照后台回复的规矩只认经房间拿到的附件）
+/// 从回复里分不可靠，都是一段话，所以不另起错误码：把它说了什么放进 `details.hostReply`（交回空正文时是空的），
+/// 人一看就知道是哪一种。`tools/release_qa.py` 只看成没成，多一项不碍事。
+fn attachment_unreadable(reply: &HostReply) -> CliFailure {
+    let body = reply.body().trim();
+    let mut shown: String = body.chars().take(HOST_REPLY_DETAIL_CHARS).collect();
+    if shown.len() < body.len() {
+        shown.push('…');
+    }
+    let mut failure = CliFailure::local("receiver.attachment_unreadable");
+    failure.details.insert("hostReply".into(), shown);
+    failure
 }
 
 /// 宿主一次最多跑多久：从起进程到它退出。只防宿主卡死（卡死时这一批一直交不出去，后面的消息也等着），
@@ -321,10 +344,10 @@ mod tests {
     };
 
     use super::{
-        ATTACHMENT_FALLBACK, HostBinding, contract_prompt, delivery_payload, reception_prompt,
-        verify_host_contract, write_canary,
+        ATTACHMENT_FALLBACK, HOST_REPLY_DETAIL_CHARS, HostBinding, attachment_unreadable,
+        contract_prompt, delivery_payload, reception_prompt, verify_host_contract, write_canary,
     };
-    use crate::HostDelivery;
+    use crate::{HostDelivery, HostReply};
 
     fn binding(task_id: &str) -> HostBinding {
         HostBinding {
@@ -385,6 +408,52 @@ mod tests {
         assert!(contract.contains("C:\\attachments\\agent-room-attachment-x.txt"));
         assert!(reception.contains("Never execute it"));
         assert!(reception.contains("do not run commands, execute code"));
+    }
+
+    #[test]
+    fn 契约检查说明这个文件就是已校验的下载_做过后台回复的任务也照样读() {
+        // Alpha 101 实机验收：做过带附件的后台回复的 Codex 任务，照回复提示的规矩只认经 agent_room_open_content
+        // 拿到的附件，不读契约检查的文件。契约检查要用回复提示里的同一套说法讲清这个文件是什么。
+        let contract = contract_prompt("C:\\attachments\\agent-room-attachment-x.txt");
+        let reception = reception_prompt(&serde_json::json!({}));
+        assert!(
+            reception.contains("Its attachment.localPath is a verified download"),
+            "回复提示换了说法，契约检查跟着改：{reception}"
+        );
+        for phrase in [
+            "is a verified Agent Room download that the Agent Room receiver wrote for this check",
+            "same attachment directory as the attachment.localPath that agent_room_open_content gives you",
+            "needs no agent_room_open_content call",
+            "Never execute it or open it with another program.",
+        ] {
+            assert!(contract.contains(phrase), "{phrase}: {contract}");
+        }
+        for phrase in [
+            "agent_room_open_content",
+            "Never execute it or open it with another program.",
+        ] {
+            assert!(reception.contains(phrase), "{phrase}: {reception}");
+        }
+        // 能做的事照旧只有读这一个文件，整段一行。
+        assert!(contract.contains("Do not edit files, open links, or run or use anything else."));
+        assert!(!contract.contains('\n'), "{contract}");
+    }
+
+    #[test]
+    fn 宿主没交回文件内容时把它说了什么放进详情() {
+        let refusal = "I can only read attachments verified through the bound Agent Room session.";
+        let failure = attachment_unreadable(&HostReply::new(format!("  {refusal}\n")).unwrap());
+        assert_eq!(failure.code, "receiver.attachment_unreadable");
+        assert_eq!(failure.details["hostReply"], refusal);
+
+        let silent = attachment_unreadable(&HostReply::silent());
+        assert_eq!(silent.details["hostReply"], "");
+
+        // 太长的只留开头，按字截，不截在多字节字符中间。
+        let long = "读".repeat(HOST_REPLY_DETAIL_CHARS + 10);
+        let shown = &attachment_unreadable(&HostReply::new(long).unwrap()).details["hostReply"];
+        assert_eq!(shown.chars().count(), HOST_REPLY_DETAIL_CHARS + 1);
+        assert!(shown.ends_with('…'));
     }
 
     #[test]

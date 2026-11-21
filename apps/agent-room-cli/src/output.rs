@@ -79,13 +79,18 @@ impl From<agent_room_agent_reception::ReceptionFailure> for CliFailure {
     }
 }
 
-fn error_hint(code: &str) -> &'static str {
-    if let Some(hint) = viewing_hint(code)
+/// 各块自己的提示，按块分开写，`error_hint` 才不超过 100 行。
+fn feature_hint(code: &str) -> Option<&'static str> {
+    viewing_hint(code)
         .or_else(|| rooms_hint(code))
         .or_else(|| sub_room_hint(code))
         .or_else(|| crate::rooms::moderation_hint(code))
         .or_else(|| crate::project::hint(code))
-    {
+        .or_else(|| receiver_hint(code))
+}
+
+fn error_hint(code: &str) -> &'static str {
+    if let Some(hint) = feature_hint(code) {
         return hint;
     }
     match code {
@@ -180,6 +185,17 @@ fn error_hint(code: &str) -> &'static str {
             "Read --help or guide for this command. Preserve the task identity and original submission ID when retrying."
         }
     }
+}
+
+/// `receiver doctor` 的结果。宿主交回的不是那个文件的内容时，读不了和不肯读从回复里分不可靠，
+/// 交回的话在 `details.hostReply` 里，让人自己看是哪一种。
+fn receiver_hint(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "receiver.attachment_unreadable" => {
+            "The host answered the check without the file's contents; details.hostReply shows what it returned (empty when it returned no body). If it could not read the file, its sandbox does not grant the Bridge attachment directory, and attachments in background replies would fail the same way. If it declined to read it, run doctor once more; if it keeps declining, bind a fresh host task."
+        }
+        _ => return None,
+    })
 }
 
 /// show、around、history 的参数错误（`specs/agent-reading/design.md`「按需查看」）。

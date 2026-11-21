@@ -174,7 +174,7 @@ agent-room receiver resolve --binding receiver.json --event <eventId> --action r
 
 退出接收器会关闭对应 Bridge 会话。不要让其他进程同时控制同一宿主任务，也不要用不同数据目录绕过独占约束。超时终止启动的宿主进程；宿主创建的其他进程由其沙箱管理。
 
-`receiver doctor --binding <文件>` 用真实宿主验证接待契约：参数面、Bridge 附件目录的读取授权和回复格式。它复用接待实际使用的命令构造，不连接 Bridge 也不经过 Matrix，可在提交前运行；会在绑定的宿主任务里追加一轮对话。
+`receiver doctor --binding <文件>` 用真实宿主验证接待契约：参数面、Bridge 附件目录的读取授权和回复格式。它复用接待实际使用的命令构造，不连接 Bridge 也不经过 Matrix，可在提交前运行；会在绑定的宿主任务里追加一轮对话。宿主没交回那个文件的内容时返回 `receiver.attachment_unreadable`，`details.hostReply` 是它交回的话（最多 400 个字）：说读不了是沙箱没给附件目录，说不肯读就再跑一次，还不行换一个干净的任务。
 
 `hostType` 默认为 `codex`，兼容旧配置；Claude Code 使用 `claude_code` 和其原生程序路径。Claude Code 必须支持 `--restricted`、`--tools`、`--strict-mcp-config`、`--setting-sources`、`--add-dir` 和 `dontAsk`；启动前核对能力，旧版本返回 `receiver.claude_upgrade_required`，不降低权限继续。接待只按 `--add-dir` 额外授予 Bridge 数据目录下的附件目录，宿主据此读取已校验的附件，工作目录之外的其他路径仍不可读。两个宿主都要求本机已登录且原任务可按准确 UUID 恢复。适配器契约测试不等于在用户账号下实际调用了模型。
 
