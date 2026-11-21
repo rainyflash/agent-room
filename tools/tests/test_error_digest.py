@@ -418,6 +418,7 @@ class NoiseTableTests(unittest.TestCase):
                 "identity": [
                     event("CUSTOM_REQUIRED_ACTION_ERROR", "already_logged_in"),
                     event("CUSTOM_REQUIRED_ACTION_ERROR", "invalid_code"),
+                    event("CUSTOM_REQUIRED_ACTION_ERROR", "rejected_by_user"),
                     event("REGISTER_ERROR", "invalid_registration"),
                     event("REGISTER_ERROR", "expired_code"),
                     event("OAUTH2_DEVICE_VERIFY_USER_CODE_ERROR", "invalid_oauth2_user_code"),
@@ -442,7 +443,7 @@ class NoiseTableTests(unittest.TestCase):
         )
         summaries = [finding.signature.summary for finding in digest.findings]
         self.assertEqual(summaries, ["LOGIN_ERROR error=invalid_request"])
-        self.assertEqual(sum(digest.ignored.values()), 15)
+        self.assertEqual(sum(digest.ignored.values()), 16)
 
     def test_opening_the_sign_in_address_without_parameters_is_noise(self) -> None:
         bare = KEYCLOAK_LOGIN_ERROR.replace('clientId="agent-room-web"', 'clientId="null"').replace(

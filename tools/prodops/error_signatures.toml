@@ -186,6 +186,11 @@ reason = "别的标签页已经登录完了（比如在新标签页里点了验�
 
 [[ignore]]
 service = "identity"
+summary = '^CUSTOM_REQUIRED_ACTION_ERROR error=rejected_by_user$'
+reason = "人在验证邮箱、改密码这类必做步骤的页面上自己点了“取消”或拒绝，Keycloak 记成被用户拒绝，是人的选择、不是服务出错（2026-11-21 生产上 8 秒里 2 次、同一个账户，agent-room-ops#111）。只认 rejected_by_user：同一类事件的别的错误照常会报"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=invalid_registration$'
 reason = "注册表单没填对（密码不合要求、两次不一样、少填了），页面上直接提示了；2026-10-25 生产上那次，同一个浏览器两分钟后就登录上了"
 
