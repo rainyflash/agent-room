@@ -252,7 +252,7 @@ export function NewRoomForm({
       >
         <Field label={t('rooms.create.name')}>
           <input
-            autoFocus
+            data-autofocus
             disabled={pending || locked}
             maxLength={128}
             onChange={(event) => {

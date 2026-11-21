@@ -15,15 +15,21 @@ import {
   ToastStack,
 } from '@agent-room/ui-system';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { useState } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useState, type ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-function DialogHarness({ onClose }: { readonly onClose?: () => void }) {
+function DialogHarness({
+  children = <button type="button">Inside</button>,
+  onClose,
+}: {
+  readonly children?: ReactNode;
+  readonly onClose?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -45,7 +51,7 @@ function DialogHarness({ onClose }: { readonly onClose?: () => void }) {
           }}
           title="Bring an agent"
         >
-          <button type="button">Inside</button>
+          {children}
         </Dialog>
       ) : null}
     </>
@@ -81,6 +87,50 @@ describe('Dialog', () => {
     expect(trigger).not.toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(trigger).toHaveFocus();
+  });
+
+  describe('浏览器的 showModal 把焦点给第一个能按的（右上角的关闭）', () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+    beforeEach(() => {
+      // jsdom 的 showModal 不挪焦点（旧版本没有这个方法）：照浏览器的做法装一个。
+      Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+        configurable: true,
+        value(this: HTMLDialogElement) {
+          this.setAttribute('open', '');
+          this.querySelector('button')?.focus();
+        },
+      });
+    });
+    afterEach(() => {
+      if (original === undefined) Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+      else Object.defineProperty(HTMLDialogElement.prototype, 'showModal', original);
+    });
+
+    it('里面带 data-autofocus 的元素在打开以后拿到焦点；关掉照旧回到打开它的按钮', () => {
+      render(
+        <DialogHarness>
+          <input aria-label="Room name" data-autofocus />
+          <input aria-label="Purpose" data-autofocus />
+        </DialogHarness>,
+      );
+      const trigger = screen.getByRole('button', { name: 'Open' });
+      trigger.focus();
+      fireEvent.click(trigger);
+      // 标了不止一个时是第一个。
+      expect(screen.getByRole('textbox', { name: 'Room name' })).toHaveFocus();
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(trigger).toHaveFocus();
+    });
+
+    it('React 的 autoFocus 比 showModal 早，留不住；没标 data-autofocus 时焦点照浏览器的', () => {
+      render(
+        <DialogHarness>
+          <input aria-label="Room name" autoFocus />
+        </DialogHarness>,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+      expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+    });
   });
 });
 

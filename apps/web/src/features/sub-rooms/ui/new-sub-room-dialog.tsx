@@ -1,6 +1,6 @@
 import { Banner, Button, Details, Dialog, Field, Spinner } from '@agent-room/ui-system';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
@@ -73,11 +73,6 @@ export function NewSubRoomDialog({ list, onClose, roomAgents }: NewSubRoomDialog
     }
     return [...found.values()];
   }, [owned.data, roomAgents]);
-  const nameInput = useRef<HTMLInputElement>(null);
-  // 原生对话框打开时把焦点给第一个能按的（右上角的关闭）：打开以后再挪到名字上。
-  useEffect(() => {
-    nameInput.current?.focus();
-  }, []);
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -197,13 +192,13 @@ export function NewSubRoomDialog({ list, onClose, roomAgents }: NewSubRoomDialog
       >
         <Field error={nameError} label={t('subRooms.create.name')}>
           <input
+            data-autofocus
             disabled={pending || locked}
             maxLength={NAME_LIMIT}
             onChange={(event) => {
               setName(event.target.value);
               setFailure(null);
             }}
-            ref={nameInput}
             required
             value={name}
           />

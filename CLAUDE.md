@@ -509,7 +509,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - 子房间第 2k-2b 步（#871）：同一轮接着归档、恢复、把人移出上面那间，最后问 Synapse 他和他的 Agent 在子房间里是不是 `leave`。移出要最近登录过，用例另开一页刚登录的房主去移；移出以后他那一页读不到房间是正常的，只查房主两页的报错。
   - 子房间第 2l 步（#872）：隐私说明页的“子房间”一条，下载的数据里的 `subRooms`、`subRoomCategories`，指南“几个 AI Agent 怎么在一个房间里分工”里的子房间一节。别拆的：房主管着每一间是房主的身份，下载里只列他建的、归档的；以后子房间再记新的“谁”（比如谁装的门），同一个 PR 里加进下载、改隐私说明页。
   - 子房间第 2i-5 步（#858）：还没进的子房间是父房间地址上的 `door=<子房间号>`，卡片在 `sub-room-door.tsx`。别拆的：入场页单间问不到时按号问整间房、转到父房间（`onEntered(target, door)`），换别的 `view` 时地址里不留 `door`；归档的子房间对话上面那一行是 `ArchivedSubRoomNotice`，恢复以后刷新的是房间列表（`privateRoomListQueryKey`），不只是子房间名单。
-  - 子房间第 2i-4 步（#857）：“新建子房间”对话框（`new-sub-room-dialog.tsx`）。别拆的：房间号由网页先定好，再点是同一个请求（服务器按房间号幂等），只有填写不行的才换号；建好以后先带 Agent、再 `commands.enter`，加入没成时说“建好了，还没进去”。原生对话框打开时焦点给关闭按钮，`autoFocus` 不管用，名字框在打开以后的 effect 里拿焦点。
+  - 子房间第 2i-4 步（#857）：“新建子房间”对话框（`new-sub-room-dialog.tsx`）。别拆的：房间号由网页先定好，再点是同一个请求（服务器按房间号幂等），只有填写不行的才换号；建好以后先带 Agent、再 `commands.enter`，加入没成时说“建好了，还没进去”。名字框一打开就拿焦点，靠的是共用 `Dialog` 认的 `data-autofocus`（见下面“界面翻新”）。
   - 子房间第 2i-3 步（#856）：“浏览子房间”是房间页的 `view=sub-rooms`（`roomPanelViews`），和 Agent 表格一样展开成整页（`fullPage`）。别拆的：加入子房间先 `subRooms.join`、再照进私人房间那一套 `commands.enter`（在 Matrix 上加入）；入场页进去以后带着地址里的 `view`；“没见过的新子房间”只记在这台设备上（`use-unseen-sub-rooms.ts`），头一回打开时名单上的都算见过。
   - 子房间第 2i-2b 步（#855）：左栏里你在的子房间（`features/sub-rooms/ui/sub-room-places.tsx`）。别拆的：子房间那几行的未读和要打开的 Matrix 房间都从收件箱那一套读（`useCatalogUnread`），别另起一套计数；子房间页面里的“主房间”和顶栏的父房间名是回父房间的链接，这一间自己的对话是子房间里那一行。浏览器验收用 `lobby-scene.html?private&subRooms` 和 `?private&subRoom`。
   - 子房间第 2i-1 步（#853）：网页的子房间类型、客户端（`AppServices.subRooms`）和查询。回答别加 `.strict()`（子房间还在加东西）；查询挂在房间列表的键下面，界面刷新房间列表时跟着重问，别另起一套键。
@@ -929,6 +929,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 2026-09-29 维护者要求“全部翻新”：流程减到必要的几步，全站一套组件，说人话。设计在 [specs/interface-renewal/design.md](./specs/interface-renewal/design.md)，进度记在它的“状态”一节。2026-09-30 七步全部做完（设计 #229，实现 #230–#246），已随 Alpha 57 发布。
 - 视觉当时仍按 [游戏大厅界面重做](./specs/game-lobby-refresh/design.md) 的令牌与形状规则；那次只换了外观，这次改流程、文案和组件。2026-11-14 起外观换成“白底黑字”，2026-11-17 又定了第四稿“深色导航，颜色跟着人”，令牌和规矩见上面“重新设计：一个项目一间房”。
 - 以后加界面：先在 `packages/ui-system` 和 `shared/ui` 里找现成组件；用户看得到的说法按设计文档的“用词”一节；排查才看的 ID、错误码收进“详情”。新文案中英文一起加，删功能时顺手删掉只有它用的文案和样式。
+- 对话框（`Dialog`）一打开就该拿焦点的输入框标 `data-autofocus`，别用 React 的 `autoFocus`：它只在提交时调一次 `focus()`，比 `Dialog` 的 `showModal()` 早，浏览器接着就把焦点挪到右上角的关闭按钮上，不报错也看不出来（“新建房间”“换个房间”一直是这样，2026-11-21 才改）。标了不止一个时是第一个。
 - 第 2 步（一屏的“接入 Agent”对话框）和第 3 步（新的“我的 Agent”、这台电脑、去掉浮动面板和 `/onboarding`）要在同一个版本里发布。
 - `/onboarding` 已去掉：桌面端没有默认 Agent 时连接服务照样运行，MCP 和命令行的 Agent 都走本机会话，不依赖默认 Agent。
 - 浏览器验收里桌面端的“我的 Agent”页用 `e2e/fixtures/my-agents.html`（加 `?browser` 是网页端），`window.__agentRoomFixtureControls.arriveAgent()` 模拟一个 Agent 接走接入对话框挂着的人物。`?presence=online|unavailable|offline` 给夹具 Agent 一个 Matrix 在线状态。

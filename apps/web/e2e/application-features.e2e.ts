@@ -228,6 +228,44 @@ test('桌面端的附件由应用自己存：点一次就存好、说存到哪�
   expect(failures).toEqual([]);
 });
 
+test('新建房间、换个房间一打开，焦点就在第一个输入框上；关掉回到打开它的按钮', async ({ page }) => {
+  const failures = collectPageFailures(page);
+  await page.goto(fixture);
+  await expect(page.getByRole('heading', { name: 'Your rooms' })).toBeVisible();
+  // 用键盘打开：有的浏览器用鼠标点按钮不给它焦点，关掉以后就没处回。
+  const create = page.getByRole('button', { name: 'New room', exact: true });
+  await create.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'New room' });
+  const name = dialog.getByRole('textbox', { name: 'Name', exact: true });
+  await expect(name).toBeFocused();
+  // 不用先点一下，直接打字就是名字。
+  await page.keyboard.type('Release workshop');
+  await expect(name).toHaveValue('Release workshop');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(create).toBeFocused();
+
+  await page.getByRole('link', { name: /Design studio/ }).click();
+  const switchRoom = page.getByRole('button', { name: /^Switch room/u });
+  await switchRoom.focus();
+  await page.keyboard.press('Enter');
+  const switcher = page.getByRole('dialog', { name: 'Switch room' });
+  const search = switcher.getByRole('searchbox', { name: 'Search rooms' });
+  await expect(search).toBeFocused();
+  await page.keyboard.type('Engineering');
+  await expect(search).toHaveValue('Engineering');
+  await expect(switcher.getByRole('button', { name: /Engineering room/ })).toBeVisible();
+  // 搜索框里有字时，浏览器的 Esc 先清空它，再按一下才关对话框。
+  await page.keyboard.press('Escape');
+  await expect(search).toHaveValue('');
+  await expect(switcher).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(switcher).toHaveCount(0);
+  await expect(switchRoom).toBeFocused();
+  expect(failures).toEqual([]);
+});
+
 test('别人的邀请：在“房间”页拒绝，在“换个房间”里加入', async ({ page }) => {
   const failures = collectPageFailures(page);
   await page.goto(fixture);
