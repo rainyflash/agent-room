@@ -13,6 +13,7 @@
 //!   挪到它时失败、记录写不下去，下次启动又当成“没有记录的旧状态”：登录和这台电脑的授权每次都忘掉，
 //!   本机 Agent 的数据每次都被收进 `retired/`，Agent 再连就被服务器拒绝（agent-room-ops#35）。
 //! - 挪不走的留在原处、照样写下记录。记录写不下去，下一次启动会把刚建起来的状态再清一遍。
+//!   挪不动的目录改成逐个挪里面的东西（`move_aside`），留下的只有别的进程开着、又不许改名的那几个文件。
 //! - 没有记录、`retired/` 里却已经有归档过的目录，就是上面那种装法留下的：眼前的状态属于现在这台
 //!   服务器，补上记录、什么都不动，再把以前被误收走的本机 Agent 放回原处（`misfiled_agents`）。
 
@@ -42,6 +43,8 @@ pub(crate) const BRIDGE_LOCK: &str = "bridge.lock";
 /// 桌面端和 Bridge 的日志目录，见 `bridge_log_root`。桌面端走到这里时自己的日志已经开着。
 const LOG_DIRECTORY: &str = "logs";
 /// 锁文件不带服务器状态，而且其他进程会继续用同一路径，所以留在原处；日志还开着，也不带服务器状态。
+/// 挪不动的目录往里走几层。数据目录里最深的是 `host-agents/<Agent>/<存储>/<文件>`。
+const MOVE_ASIDE_DEPTH: u8 = 6;
 const KEPT_ENTRIES: [&str; 7] = [
     RECORD_FILENAME,
     RETIRED_DIRECTORY,
@@ -153,13 +156,14 @@ pub(crate) fn retire_previous_server_state(
             .join(unix_seconds().to_string());
         create_private_directory(&folder)?;
         for entry in entries {
-            let moved = entry
+            let left_behind = entry
                 .file_name()
-                .is_some_and(|name| fs::rename(&entry, folder.join(name)).is_ok());
-            if !moved {
+                .map_or(1, |name| move_aside(&entry, &folder.join(name)));
+            if left_behind > 0 {
                 // 多半是别的进程还开着里面的文件。名字是固定的几个目录名，可以进日志。
                 tracing::warn!(
                     entry = ?entry.file_name(),
+                    left_behind,
                     "上一个服务器的本机状态里有东西挪不走，留在原处"
                 );
             }
@@ -260,6 +264,46 @@ fn stale_entries(data_root: &Path) -> Result<Vec<PathBuf>, ServerMoveFailure> {
     }
     stale.sort();
     Ok(stale)
+}
+
+/// 把 `entry` 挪到 `destination`，返回留在原处的有几样（0 是全挪走了）。
+///
+/// Windows 不让挪里面有文件开着的目录：宿主里还在等消息的命令行开着 `cli-profiles` 下自己的锁，
+/// 整个目录就挪不动。这时逐个挪里面的东西。开着的文件能不能挪看它是怎么打开的：Rust 默认许别人
+/// 改名，命令行的锁跟着挪走；SQLite、.NET 打开的不许，留在原处，连同装着它们的目录。
+/// 不往链接里走，也不删东西；里面都挪走了的空目录去掉。
+pub(crate) fn move_aside(entry: &Path, destination: &Path) -> usize {
+    move_aside_within(entry, destination, MOVE_ASIDE_DEPTH)
+}
+
+fn move_aside_within(entry: &Path, destination: &Path, depth: u8) -> usize {
+    if fs::rename(entry, destination).is_ok() {
+        return 0;
+    }
+    let is_directory = fs::symlink_metadata(entry).is_ok_and(|metadata| metadata.is_dir());
+    if !is_directory || depth == 0 {
+        return 1;
+    }
+    let Ok(children) = fs::read_dir(entry) else {
+        return 1;
+    };
+    if create_private_directory(destination).is_err() {
+        return 1;
+    }
+    let left_behind: usize = children
+        .flatten()
+        .map(|child| {
+            move_aside_within(
+                &child.path(),
+                &destination.join(child.file_name()),
+                depth - 1,
+            )
+        })
+        .sum();
+    if left_behind == 0 && fs::remove_dir(entry).is_err() {
+        return 1;
+    }
+    left_behind
 }
 
 /// Bridge 拒绝 Unix 上权限宽于当前用户的数据目录，所以桌面先建目录时也只给自己。
@@ -454,17 +498,31 @@ mod tests {
         }
     }
 
-    /// 别的进程还开着里面的文件时，Windows 上那个目录挪不走。凭据已经删了，记录必须写下：
-    /// 不写的话下次启动会把这次重新登录以后建起来的状态再清一遍。
+    /// 别的进程开着目录里的文件时，Windows 上整个目录挪不动。里面别的东西照样挪走：许改名的
+    /// （命令行自己的锁，Rust 默认的打开方式）跟着走，不许改名的（SQLite、.NET 打开的）留在原处；
+    /// 记录照样写下：不写的话下次启动会把这次重新登录以后建起来的状态再清一遍。
     #[cfg(windows)]
     #[test]
-    fn 有东西挪不走时留在原处_照样写下记录() {
+    fn 有文件还开着的目录_别的挪走_不许改名的留在原处_照样写下记录() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
         let root = tempdir().expect("临时目录有效");
         seed_state(root.path());
+        let profiles = root.path().join("cli-profiles");
+        fs::write(profiles.join("reader.json"), "{}").expect("可写");
+        fs::create_dir_all(profiles.join("nested")).expect("可创建");
+        fs::write(profiles.join("nested").join("note.txt"), "x").expect("可写");
+        let _renamable = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(profiles.join("reader.inbox.lock"))
+            .expect("可打开");
         let _held = fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(root.path().join("cli-profiles").join("reader.lock"))
+            .share_mode(SHARE_READ_WRITE)
+            .open(profiles.join("reader.lock"))
             .expect("可打开");
 
         let ServerMoveOutcome::Retired(folder) =
@@ -473,10 +531,19 @@ mod tests {
             panic!("应退役旧状态");
         };
 
+        assert!(profiles.join("reader.lock").is_file(), "不许改名的留在原处");
         assert!(
-            root.path()
+            !profiles.join("reader.inbox.lock").exists(),
+            "许改名的跟着走"
+        );
+        assert!(!profiles.join("reader.json").exists(), "没开着的挪走");
+        assert!(!profiles.join("nested").exists(), "里面的目录整个挪走");
+        assert!(folder.join("cli-profiles").join("reader.json").is_file());
+        assert!(
+            folder
                 .join("cli-profiles")
-                .join("reader.lock")
+                .join("nested")
+                .join("note.txt")
                 .is_file()
         );
         assert!(folder.join("desktop").is_dir(), "挪得走的照样挪");
@@ -484,6 +551,30 @@ mod tests {
             retire_previous_server_state(root.path(), NEW, || panic!("已记录")).expect("可读取"),
             ServerMoveOutcome::Unchanged
         );
+    }
+
+    #[test]
+    fn 挪得动的整个挪走_不往链接里走_也不删东西() {
+        let root = tempdir().expect("临时目录有效");
+        let entry = root.path().join("attachments");
+        fs::create_dir_all(entry.join("a")).expect("可创建");
+        fs::write(entry.join("a").join("file.txt"), "内容").expect("可写");
+        let destination = root.path().join("retired").join("1").join("attachments");
+        fs::create_dir_all(destination.parent().expect("有上一级")).expect("可创建");
+
+        assert_eq!(super::move_aside(&entry, &destination), 0);
+
+        assert!(!entry.exists());
+        assert_eq!(
+            fs::read_to_string(destination.join("a").join("file.txt")).expect("挪过去了"),
+            "内容"
+        );
+        assert_eq!(
+            super::move_aside(&root.path().join("missing"), &destination.join("missing")),
+            1,
+            "没有的东西算没挪成，不建目录"
+        );
+        assert!(!destination.join("missing").exists());
     }
 
     /// 全新安装的 Windows 桌面端（Alpha 100 及以前）从来写不下记录、每次启动清一遍。升级上来时

@@ -7,8 +7,19 @@
 //! 开始之前先在数据目录里记一个标记，账户登录也清掉以后才去掉。中途退出了，下次启动时在 Bridge
 //! 起来之前接着做完，连同还存着的账户登录一起清掉：不然新起的 Bridge 会拿原账户的登录要电脑授权，
 //! 这台电脑又回到原账户。
+//!
+//! 标记留着时每次启动都先清登录、再挪东西，所以它不能因为“有东西挪不走”留下来（和 `server_move`
+//! 是同一条规矩）：
+//!
+//! - 挪不走的留在原处。Windows 不让挪里面有文件开着的目录，宿主里还在等消息的命令行开着
+//!   `cli-profiles` 下自己的锁；以前这样就算没收完、标记留着，之后每次启动都把新账户的登录和
+//!   本机数据再清一遍，直到那个命令行退出。现在逐个挪里面的东西（`server_move::move_aside`），
+//!   留下的只有别的进程开着、又不许改名的那几个文件，照样算收完。
+//! - 启动时接着做的那一次，登录一清掉就去掉标记，哪怕后面出了别的错：留着标记，下次启动清掉的
+//!   就是新账户的登录了。
 
 use std::{
+    cell::Cell,
     fs, io,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -77,11 +88,11 @@ pub(crate) fn pending(data_root: &Path) -> bool {
 }
 
 /// 删掉只对原账户有效的凭据，再收走数据目录里属于它的东西。可以重复做：已经收走的不会再碰。
-/// `forget_credentials` 先做，它失败时什么都不挪。
+/// `forget_credentials` 先做，它失败时什么都不挪。别的进程还开着的文件挪不走，留在原处，照样算收完。
 ///
 /// # Errors
 ///
-/// 还有 Bridge 占着锁、凭据删不掉、或者有东西挪不走时返回错误；标记留着，下次再做。
+/// 还有 Bridge 占着锁、凭据删不掉、或者数据目录读不了、归档目录建不了时返回错误。
 pub(crate) fn retire_account_state(
     data_root: &Path,
     forget_credentials: impl FnOnce() -> AccountReleaseResult<()>,
@@ -99,19 +110,18 @@ pub(crate) fn retire_account_state(
             .join(format!("{}{RELEASED_SUFFIX}", unix_millis()));
         server_move::create_private_directory(&folder)
             .map_err(|_| AccountReleaseFailure::new("desktop.release.directory_unavailable"))?;
-        let mut moved_all = true;
         for entry in entries {
-            let Some(name) = entry.file_name() else {
-                moved_all = false;
-                continue;
-            };
-            if fs::rename(&entry, folder.join(name)).is_err() {
-                tracing::warn!(entry = %entry.display(), "换账号时有东西挪不走");
-                moved_all = false;
+            let left_behind = entry.file_name().map_or(1, |name| {
+                server_move::move_aside(&entry, &folder.join(name))
+            });
+            if left_behind > 0 {
+                // 多半是宿主里的命令行还开着自己的锁。名字是固定的几个目录名，可以进日志。
+                tracing::warn!(
+                    entry = ?entry.file_name(),
+                    left_behind,
+                    "换账号时有东西还被别的进程开着，留在原处"
+                );
             }
-        }
-        if !moved_all {
-            return Err(AccountReleaseFailure::new("desktop.release.retire_failed"));
         }
     }
     discard_released_folders(data_root);
@@ -128,26 +138,48 @@ pub(crate) fn finish(data_root: &Path) {
 pub(crate) fn resume_interrupted(config: &DesktopBridgeConfig) {
     let data_root = config.data_root();
     if pending(&data_root) {
-        let result = retire_account_state(&data_root, || {
+        let result = resume_with(&data_root, || {
             forget_account_credentials(config)?;
             human_session::forget_stored_session(config)
                 .map_err(|_| AccountReleaseFailure::new("desktop.release.credentials_unavailable"))
         });
         match result {
-            Ok(()) => {
-                finish(&data_root);
-                tracing::info!("上次换账号做到一半，已接着做完，需要重新登录");
+            Ok(()) => tracing::info!("上次换账号做到一半，已接着做完，需要重新登录"),
+            Err(failure) if pending(&data_root) => {
+                tracing::warn!(
+                    error_code = failure.code(),
+                    "上次换账号做到一半，这次没做完"
+                );
             }
             Err(failure) => {
                 tracing::warn!(
                     error_code = failure.code(),
-                    "上次换账号做到一半，这次没做完"
+                    "上次换账号做到一半，登录已经清掉，原账户的东西没收完，不再重来"
                 );
             }
         }
     } else {
         discard_released_folders(&data_root);
     }
+}
+
+/// 接着做完上次做到一半的换账号。登录一清掉就去掉标记，哪怕后面没收完：标记留着的话，下次启动
+/// 清掉的是这次重新登录的新账户，收走的是新账户的本机数据。登录没清掉（Bridge 还在、凭据删不掉）
+/// 时什么都没动，标记留着，下次启动再做。
+fn resume_with(
+    data_root: &Path,
+    forget_everything: impl FnOnce() -> AccountReleaseResult<()>,
+) -> AccountReleaseResult<()> {
+    let forgotten = Cell::new(false);
+    let result = retire_account_state(data_root, || {
+        forget_everything()?;
+        forgotten.set(true);
+        Ok(())
+    });
+    if forgotten.get() {
+        finish(data_root);
+    }
+    result
 }
 
 /// Bridge 的设备会话和默认 Agent 的运行会话只对签发它们的账户有效。
@@ -218,7 +250,9 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{AccountReleaseFailure, abandon, begin, finish, pending, retire_account_state};
+    use super::{
+        AccountReleaseFailure, abandon, begin, finish, pending, resume_with, retire_account_state,
+    };
 
     fn seed_account(root: &std::path::Path) {
         for directory in [
@@ -343,6 +377,114 @@ mod tests {
             .expect_err("应报告 Bridge 还在");
 
         assert_eq!(failure.code(), "desktop.release.bridge_running");
+        assert!(root.path().join("owner.json").is_file());
+    }
+
+    /// 宿主里还在等消息的命令行开着 `cli-profiles` 下自己的锁，Windows 上整个目录就挪不动。
+    /// 以前这样算没收完、标记留着，之后每次启动都把新账户的登录和本机数据再清一遍。
+    #[cfg(windows)]
+    #[test]
+    fn 别的进程开着的文件_许改名的跟着走_不许的留下_照样算收完() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+        let root = tempdir().expect("临时目录有效");
+        seed_account(root.path());
+        let profiles = root.path().join("cli-profiles");
+        fs::write(profiles.join("reader.json"), "{}").expect("人物可写");
+        let _lock = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(profiles.join("reader.inbox.lock"))
+            .expect("锁可打开");
+        let _held = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .share_mode(SHARE_READ_WRITE)
+            .open(profiles.join("held.db"))
+            .expect("可打开");
+        begin(root.path()).expect("可记标记");
+
+        retire_account_state(root.path(), || Ok(())).expect("照样算收完");
+
+        assert!(profiles.join("held.db").is_file(), "不许改名的留下");
+        assert!(
+            !profiles.join("reader.inbox.lock").exists(),
+            "命令行的锁跟着走"
+        );
+        assert!(!profiles.join("reader.json").exists(), "人物收走");
+        assert!(!root.path().join("host-agents").exists());
+        assert!(!root.path().join("owner.json").exists());
+    }
+
+    #[test]
+    fn 启动时接着做_收完就去掉标记() {
+        let root = tempdir().expect("临时目录有效");
+        seed_account(root.path());
+        begin(root.path()).expect("可记标记");
+
+        resume_with(root.path(), || Ok(())).expect("可接着做完");
+
+        assert!(!pending(root.path()));
+        assert!(!root.path().join("host-agents").exists());
+    }
+
+    /// 标记留着的话，下次启动清掉的是这次重新登录的新账户。
+    #[test]
+    fn 启动时接着做_登录清掉以后没收完也去掉标记() {
+        let root = tempdir().expect("临时目录有效");
+        fs::create_dir_all(root.path().join("host-agents")).expect("目录可创建");
+        fs::write(root.path().join("retired"), "归档目录建不了").expect("可写");
+        begin(root.path()).expect("可记标记");
+        let forgotten = Cell::new(0);
+
+        let failure = resume_with(root.path(), || {
+            forgotten.set(forgotten.get() + 1);
+            Ok(())
+        })
+        .expect_err("归档目录建不了");
+
+        assert_eq!(failure.code(), "desktop.release.directory_unavailable");
+        assert_eq!(forgotten.get(), 1);
+        assert!(!pending(root.path()), "登录清掉了，下次启动不再重来");
+        assert!(root.path().join("host-agents").is_dir(), "没收走的留在原处");
+    }
+
+    #[test]
+    fn 启动时接着做_登录没清掉时标记留着_什么都不动() {
+        let root = tempdir().expect("临时目录有效");
+        seed_account(root.path());
+        begin(root.path()).expect("可记标记");
+
+        let failure = resume_with(root.path(), || {
+            Err(AccountReleaseFailure::new(
+                "desktop.release.credentials_unavailable",
+            ))
+        })
+        .expect_err("应报告失败");
+
+        assert_eq!(failure.code(), "desktop.release.credentials_unavailable");
+        assert!(pending(root.path()), "下次启动再做");
+        assert!(root.path().join("owner.json").is_file());
+    }
+
+    #[test]
+    fn 启动时接着做_还有_bridge_占着锁时标记留着() {
+        let root = tempdir().expect("临时目录有效");
+        seed_account(root.path());
+        begin(root.path()).expect("可记标记");
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(root.path().join("bridge.lock"))
+            .expect("锁文件可打开");
+        lock.lock().expect("可持有锁");
+
+        let failure = resume_with(root.path(), || panic!("Bridge 还在时不清登录"))
+            .expect_err("应报告 Bridge 还在");
+
+        assert_eq!(failure.code(), "desktop.release.bridge_running");
+        assert!(pending(root.path()));
         assert!(root.path().join("owner.json").is_file());
     }
 
