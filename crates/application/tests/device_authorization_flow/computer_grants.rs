@@ -266,6 +266,7 @@ async fn 持有证明不对不注册_授权也不算用掉() {
         rejected.kind(),
         DeviceAuthorizationFailureKind::InvalidProof
     );
+    assert_eq!(rejected.step(), Some("signature"));
 
     verifier.0.store(true, std::sync::atomic::Ordering::SeqCst);
     grants

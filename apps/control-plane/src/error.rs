@@ -433,6 +433,7 @@ impl ApiError {
             correlation.id = %correlation_id.as_uuid(),
             operation = failure.operation(),
             failure = ?failure.kind(),
+            step = failure.step(),
             "设备认证请求失败"
         );
         Self::new(status, code, category, message, correlation_id)

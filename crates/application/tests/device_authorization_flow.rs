@@ -763,6 +763,54 @@ async fn 旧客户端的轮换不能被带尝试号的请求重放() {
     assert_device_compromised(&store);
 }
 
+/// `InvalidProof` 有四处来源，日志里要分得出是哪一处（agent-room-ops#115）：前两种是那台电脑的钟，
+/// 签名对不上才可能是钥匙换了。
+#[tokio::test]
+async fn 刷新的证明没通过时记下是哪一处() {
+    let (service, _, secrets, verifier, _) = service(true);
+    let credentials = service
+        .register_device(registration(&secrets))
+        .await
+        .expect("设备注册成功");
+    let device_id = credentials.device.device_id;
+    let token = &credentials.refresh_token;
+    let step = |failure: DeviceAuthorizationFailure| (failure.kind(), failure.step());
+
+    for (issued_at, expected) in [
+        (NOW + 30_001, "issued_in_future"),
+        (NOW - 90_001, "too_old"),
+    ] {
+        let failure = refresh_at(&service, device_id, token, None, time(issued_at))
+            .await
+            .expect_err("签发时间超出范围的证明不认");
+        assert_eq!(
+            step(failure),
+            (DeviceAuthorizationFailureKind::InvalidProof, Some(expected))
+        );
+    }
+
+    let other = DeviceId::from_uuid(Uuid::now_v7());
+    let failure = refresh(&service, other, token, None)
+        .await
+        .expect_err("别的设备号的证明不认");
+    assert_eq!(
+        step(failure),
+        (DeviceAuthorizationFailureKind::InvalidProof, Some("device"))
+    );
+
+    verifier.0.store(false, Ordering::SeqCst);
+    let failure = refresh(&service, device_id, token, None)
+        .await
+        .expect_err("签名对不上的证明不认");
+    assert_eq!(
+        step(failure),
+        (
+            DeviceAuthorizationFailureKind::InvalidProof,
+            Some("signature")
+        )
+    );
+}
+
 async fn refresh(
     service: &DeviceAuthorizationService,
     device_id: DeviceId,
@@ -933,6 +981,7 @@ async fn 公钥持有证明失败时不会写入设备() {
         .expect_err("无效签名必须失败");
 
     assert_eq!(failure.kind(), DeviceAuthorizationFailureKind::InvalidProof);
+    assert_eq!(failure.step(), Some("signature"));
     assert!(
         store
             .state
