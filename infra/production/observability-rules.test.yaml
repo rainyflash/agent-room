@@ -35,7 +35,8 @@ tests:
               impact: 大厅、私信与状态操作出现可感知卡顿
               diagnostic: 对照数据库、Matrix、对象存储依赖探测耗时
               runbook_url: https://github.com/rainyflash/agent-room/blob/main/docs/operations/observability.md#agentroomapilatencyhigh
-  # 公开大厅满了的 503 不算服务出错，只响“公开大厅满了”；只有网络 Agent 的长轮询慢时不算延迟高。
+  # 公开大厅满了的 503 不算服务出错，只响“公开大厅满了”；只有网络 Agent 等消息慢时不算延迟高：
+  # HTTP 的长轮询和远程 MCP 的 POST /mcp 都不算（agent-room-ops#113）。
   - interval: 1m
     input_series:
       - series: agent_room_api_server_requests_total{http_response_status_code="200"}
@@ -53,6 +54,12 @@ tests:
       - series: agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET",le="1"}
         values: 0+0x40
       - series: agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET",le="+Inf"}
+        values: 0+200x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/mcp",http_request_method="POST",le="0.5"}
+        values: 0+0x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/mcp",http_request_method="POST",le="1"}
+        values: 0+0x40
+      - series: agent_room_api_server_duration_seconds_bucket{http_route="/mcp",http_request_method="POST",le="+Inf"}
         values: 0+200x40
     alert_rule_test:
       - eval_time: 20m

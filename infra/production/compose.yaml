@@ -353,8 +353,12 @@ services:
     profiles: [telemetry]
     image: quay.io/prometheus/node-exporter:v1.12.1
     mem_limit: 24m
+    # textfile 也是默认的收集器，disable-defaults 会把它一起关掉，要再点名打开。2026-10-28 开监控到
+    # 2026-11-23 漏了这一行，备份和恢复演练的指标一个也没进 Prometheus：备份过期的告警响不了，
+    # 容量周报里备份仓库一直是“–”。
     command:
       - --collector.disable-defaults
+      - --collector.textfile
       - --collector.textfile.directory=/metrics
       - --web.listen-address=:9100
     volumes:

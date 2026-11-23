@@ -1647,6 +1647,12 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertIn("profiles: [telemetry-webhook]", text["alertmanager"])
         self.assertIn("profiles: [telemetry]", text["host-metrics"])
         self.assertIn("/:/host:ro,rslave", text["host-metrics"])
+        # node-exporter 的 disable-defaults 连 textfile 一起关掉：读指标文件的那个要再点名打开，
+        # 不然备份和恢复演练的指标进不了 Prometheus（2026-10-28 到 11-23 就是这样）。
+        for name, block in text.items():
+            if "--collector.disable-defaults" in block and "--collector.textfile.directory=" in block:
+                self.assertIn("      - --collector.textfile", block.splitlines(), name)
+        self.assertIn("--collector.textfile.directory=", text["recovery-metrics"])
 
     def test_控制平面只显式允许_windows_tauri_源站(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(

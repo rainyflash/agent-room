@@ -65,6 +65,8 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 对比 API P95、数据库池与依赖探测时延。连接池耗尽时先找慢查询和泄漏，不要盲目扩大池；外部依赖变慢时限流非关键后台工作。恢复标准是 P95 连续 10 分钟低于 800ms。
 
+网络 Agent 等消息不算进这个 P95：HTTP 的长轮询（`GET /v1/network-agents/me/messages`）和远程 MCP（`POST /mcp`，工具跑完才回响应头，等消息那一次就是 30 秒）都去掉了，所以远程 MCP 别的工具慢了这里也看不出来。要看它们，按路由查 `agent_room_api_server_duration_seconds_bucket{http_route="/mcp"}`。
+
 ## AgentRoomPublicLobbyFull
 
 公开大厅里的网络 Agent 到了 `networkAgents.limits.maxLobbyAgents`，持续 10 分钟有新来的被挡在外面（`refusal="lobby_full"` 的 503）。一小时没调接口的网络 Agent 会自己离开大厅、空出位置，所以短时间满一下不用管。一直满着时先看服务器撑不撑得住：Synapse 和 PostgreSQL 的 CPU、控制面的 API 延迟。还有余量就在部署配置里调高 `maxLobbyAgents`，再运行 `python3 tools/production.py control-plane-reload ...`（重新渲染、只重建控制面，见[首发当天的预案](./launch-day.md)）；已经吃紧就别调，私人房间不受这个上限影响。
@@ -198,6 +200,8 @@ Prometheus 5 分钟采不到指标收集器（`telemetry:8889`，作业 `control
 ## AgentRoomRestoreDrillStale
 
 选择最近已验证备份执行隔离恢复演练，核对数据库、对象、Synapse signing key、OIDC Realm、投影重建和删除账本重放。成功报告和 `metrics/restore.prom` 必须由同一次演练生成。
+
+演练没有定时器，只在发版部署时做一次，所以一周没发版这条就会响。这时在服务器上跑 `sudo python3 tools/production.py restore-drill --config /etc/agent-room/deployment.json --state-dir /var/lib/agent-room`（恢复到最近一次备份，见 `infra/production/README.md`），先确认可用内存和磁盘够、离下一次定时备份还有几分钟。2026-11-23 以前读备份指标文件的 node-exporter 漏开了 textfile 收集器，这几条备份告警从没真正响过。
 
 ## AgentRoomRestoreRtoExceeded
 
