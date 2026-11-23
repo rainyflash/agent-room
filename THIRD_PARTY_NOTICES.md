@@ -9,7 +9,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 - Cargo packages: 916
 - npm packages: 713
 - Total locked package versions: 1629
-- `Cargo.lock` SHA-256: `46a4e23d01990ef739d9a426c2595c72a85907125172793527347f7491ff17fc`
+- `Cargo.lock` SHA-256: `e9d0068cff97d4768a16d0b51168b371bd9d82b29d8b470ef816f73fe61ba9f3`
 - `pnpm-lock.yaml` SHA-256: `f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27`
 
 ## License expressions
@@ -208,7 +208,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [const-random-macro](https://github.com/tkaitchuck/constrandom) | 0.1.16 | `MIT OR Apache-2.0` |
 | cargo | [const_panic](https://github.com/rodrimati1992/const_panic/) | 0.2.17 | `Zlib` |
 | cargo | [constant_time_eq](https://github.com/cesarb/constant_time_eq) | 0.4.2 | `CC0-1.0 OR MIT-0 OR Apache-2.0` |
-| cargo | [cookie](https://github.com/SergioBenitez/cookie-rs) | 0.18.2 | `MIT OR Apache-2.0` |
+| cargo | [cookie](https://github.com/SergioBenitez/cookie-rs) | 0.18.3 | `MIT OR Apache-2.0` |
 | cargo | [core-foundation](https://github.com/servo/core-foundation-rs) | 0.10.1 | `MIT OR Apache-2.0` |
 | cargo | [core-foundation-sys](https://github.com/servo/core-foundation-rs) | 0.8.7 | `MIT OR Apache-2.0` |
 | cargo | [core-graphics](https://github.com/servo/core-foundation-rs) | 0.25.0 | `MIT OR Apache-2.0` |
@@ -325,7 +325,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [foreign-types](https://github.com/sfackler/foreign-types) | 0.5.0 | `MIT/Apache-2.0` |
 | cargo | [foreign-types-macros](https://github.com/sfackler/foreign-types) | 0.2.4 | `MIT/Apache-2.0` |
 | cargo | [foreign-types-shared](https://github.com/sfackler/foreign-types) | 0.3.1 | `MIT/Apache-2.0` |
-| cargo | [form_urlencoded](https://github.com/servo/rust-url) | 1.2.2 | `MIT OR Apache-2.0` |
+| cargo | [form_urlencoded](https://github.com/servo/rust-url) | 1.2.3 | `MIT OR Apache-2.0` |
 | cargo | [fraction](https://github.com/dnsl48/fraction.git) | 0.16.0 | `MIT OR Apache-2.0` |
 | cargo | [fs_extra](https://github.com/webdesus/fs_extra) | 1.3.0 | `MIT` |
 | cargo | [futures](https://github.com/rust-lang/futures-rs) | 0.3.34 | `MIT OR Apache-2.0` |
@@ -858,7 +858,7 @@ Agent Room source code is licensed under the MIT License. The dependencies below
 | cargo | [unicode-xid](https://github.com/unicode-rs/unicode-xid) | 0.2.6 | `MIT OR Apache-2.0` |
 | cargo | [universal-hash](https://github.com/RustCrypto/traits) | 0.5.1 | `MIT OR Apache-2.0` |
 | cargo | [untrusted](https://github.com/briansmith/untrusted) | 0.9.0 | `ISC` |
-| cargo | [url](https://github.com/servo/rust-url) | 2.5.8 | `MIT OR Apache-2.0` |
+| cargo | [url](https://github.com/servo/rust-url) | 2.5.9 | `MIT OR Apache-2.0` |
 | cargo | [urlencoding](https://github.com/kornelski/rust_urlencoding) | 2.1.3 | `MIT` |
 | cargo | [urlpattern](https://github.com/denoland/rust-urlpattern) | 0.3.0 | `MIT` |
 | cargo | [usvg](https://github.com/linebender/resvg) | 0.50.0 | `Apache-2.0 OR MIT` |
