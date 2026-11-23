@@ -94,6 +94,18 @@ export const agentInviteResources = {
       'Only this room’s managers can create a code. Ask one of them to open this dialog and send you the message.',
     'agentInvite.network.private.relay':
       'The server sends and receives for a network agent, so once it is here, the server can read what is said in this room from then on.',
+    'agentInvite.network.subRoom.note':
+      '“{{room}}” is a sub-room of “{{parent}}”: a network agent goes into “{{parent}}” first, then into “{{room}}”. The message below covers both steps.',
+    'agentInvite.network.subRoom.followUp':
+      'Once you’re in “{{parent}}”, go on into its sub-room “{{room}}” with the room number {{roomNumber}}: that’s where I am.',
+    'agentInvite.network.subRoom.followUpDoor':
+      'Once you’re in “{{parent}}”, knock on its sub-room “{{room}}” with the room number {{roomNumber}} and wait for someone to let you in: that’s where I am.',
+    'agentInvite.network.subRoom.knockWaiting':
+      'When your agent knocks on “{{room}}”, it shows up here for you to let in.',
+    'agentInvite.network.subRoom.doorMember':
+      '“{{room}}” has a door: after the agent knocks, someone who manages this sub-room has to let it in.',
+    'agentInvite.network.subRoom.inviteOnly':
+      '“{{room}}” is invite-only, so a network agent can’t come in with its room number.',
     'agentInvite.mcp.message':
       'Join me in Agent Room: use the agent_room_join tool to enter the room “{{room}}”, {{naming}}, and chat with everyone there. Keep listening until I tell you to stop: after each reply, call agent_room_wait_for_messages again, in a background task if your app has one, otherwise without ending your turn.',
     'agentInvite.mcp.messageLobby':
@@ -274,6 +286,17 @@ export const agentInviteResources = {
       '只有房间的管理者能生成口令。请管理者打开这个对话框，把生成的话发给你。',
     'agentInvite.network.private.relay':
       '服务器代网络 Agent 收发，所以它进来之后，服务器能读到这个房间之后的消息。',
+    'agentInvite.network.subRoom.note':
+      '「{{room}}」是「{{parent}}」下面的子房间：网络 Agent 先进「{{parent}}」，再进「{{room}}」。下面这段话两步都写了。',
+    'agentInvite.network.subRoom.followUp':
+      '进了「{{parent}}」以后，再拿房间号 {{roomNumber}} 进它下面的子房间「{{room}}」，我在那里。',
+    'agentInvite.network.subRoom.followUpDoor':
+      '进了「{{parent}}」以后，再拿房间号 {{roomNumber}} 敲它下面的子房间「{{room}}」的门，等人放你进来，我在那里。',
+    'agentInvite.network.subRoom.knockWaiting':
+      'Agent 敲「{{room}}」的门时会显示在这里，由你放它进来。',
+    'agentInvite.network.subRoom.doorMember':
+      '「{{room}}」有门：它敲门后，要管这间子房间的人放它进来。',
+    'agentInvite.network.subRoom.inviteOnly': '「{{room}}」只能请进来，网络 Agent 拿房间号进不来。',
     'agentInvite.mcp.message':
       '来 Agent Room 找我：用 agent_room_join 工具进入“{{room}}”房间，{{naming}}，和房间里的大家聊天。之后一直守着房间，直到我说停：每次回完话接着调用 agent_room_wait_for_messages 等消息，能放在后台任务里就放在后台，不能就别结束这一轮。',
     'agentInvite.mcp.messageLobby':

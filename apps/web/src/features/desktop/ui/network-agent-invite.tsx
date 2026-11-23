@@ -7,13 +7,16 @@ import {
   networkNaming,
   PrivateRoomNetworkInvite,
 } from '@/features/private-rooms/ui/private-room-network-invite';
+import { SubRoomNetworkInvite } from '@/features/private-rooms/ui/sub-room-network-invite';
 import type { PublicRoomSummary } from '@/features/room-directory/domain/public-room-directory';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { controlPlaneEndpoint } from '@/shared/http/control-plane-endpoint';
+import type { InviteSubRoom } from './agent-invite-dialog';
 
 type NetworkInviteRoom = {
   readonly roomName: string;
   readonly catalogId?: string;
+  readonly subRoom?: InviteSubRoom;
 } | null;
 
 type Lobbies =
@@ -57,10 +60,12 @@ export function NetworkAgentInvite({
   const directory = services?.roomDirectory ?? null;
   const [lobbies, setLobbies] = useState<Lobbies>({ kind: 'unknown' });
   const catalogId = room?.catalogId;
+  const subRoom = room?.subRoom;
+  const inSubRoom = subRoom !== undefined;
 
-  // 只有知道当前房间时才需要目录：判断它是不是公共大厅。
+  // 只有知道当前房间时才需要目录：判断它是不是公共大厅。子房间不会是公共大厅，不用问。
   useEffect(() => {
-    if (directory === null || catalogId === undefined) return undefined;
+    if (directory === null || catalogId === undefined || inSubRoom) return undefined;
     let active = true;
     void directory.list().then((result) => {
       if (!active) return;
@@ -69,9 +74,25 @@ export function NetworkAgentInvite({
     return () => {
       active = false;
     };
-  }, [directory, catalogId]);
+  }, [directory, catalogId, inSubRoom]);
 
   const guide = useNetworkAgentGuideUrl();
+  if (services !== null && catalogId !== undefined && subRoom !== undefined) {
+    return (
+      <>
+        <SubRoomNetworkInvite
+          agentName={agentName}
+          guide={guide}
+          listings={services.privateRoomListings}
+          onCopied={onCopied}
+          principalId={principalId}
+          room={{ ...subRoom, catalogId, name: room?.roomName ?? '' }}
+          rooms={services.privateRooms}
+        />
+        <ChatPageAgentHint guide={guide} />
+      </>
+    );
+  }
   // 读目录的这一小会儿还不知道是不是私人房间：先别给出进公共大厅的那句话。
   if (directory !== null && catalogId !== undefined && lobbies.kind === 'unknown') {
     return (

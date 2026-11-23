@@ -523,6 +523,29 @@ describe('接入 Agent 对话框', () => {
     );
   });
 
+  it('在子房间里：命令行和 MCP 的话按“父房间名/子房间名”找，只写子房间名找到的是同名的整间房', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    const subRoom = {
+      ...room,
+      roomName: 'release notes',
+      subRoom: {
+        access: 'open' as const,
+        manages: true,
+        parent: { catalogId: '0198b601-77a1-7bb8-83eb-a8fe68c97e99', name: 'Builders Exchange' },
+      },
+    };
+    const view = renderDialog(gateway().value, { room: subRoom });
+
+    expect(await copyMessage(writeText)).toContain("join --room 'Builders Exchange/release notes'");
+    view.unmount();
+    writeText.mockClear();
+    rememberMethod('mcp');
+    renderDialog(gateway().value, { room: subRoom });
+    expect(await copyMessage(writeText)).toContain('“Builders Exchange/release notes”');
+  });
+
   it('没有房间时（从“我的 Agent”打开）说进公共大厅，命令不带房间', async () => {
     const writeText = clipboardMock();
     vi.stubGlobal('navigator', { clipboard: { writeText } });

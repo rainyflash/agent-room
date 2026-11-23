@@ -96,7 +96,7 @@ import {
 import { useRoomRepositoryMark } from '@/features/private-rooms/data/project-room-queries';
 import { useRoomLiveView } from '@/features/private-rooms/data/room-live-view-queries';
 import { useSubRooms } from '@/features/private-rooms/data/sub-room-queries';
-import type { SubRoom } from '@/features/private-rooms/domain/sub-rooms';
+import { managesSubRoom, type SubRoom } from '@/features/private-rooms/domain/sub-rooms';
 import { RepositoryBadgeShare } from '@/features/private-rooms/ui/project-room-badge';
 import { isSubRoomOf } from '@/features/sub-rooms/domain/sub-room-places';
 import { ArchivedSubRoomNotice } from '@/features/sub-rooms/ui/archived-sub-room-notice';
@@ -856,7 +856,20 @@ function ReadyLobby({
           }}
           owner={owner}
           presentAgents={room.agents}
-          room={{ catalogId, roomId: room.roomId, roomName: room.name }}
+          room={{
+            catalogId,
+            roomId: room.roomId,
+            roomName: room.name,
+            ...(subRoomParent === null || subRoomEntry === undefined
+              ? {}
+              : {
+                  subRoom: {
+                    parent: { catalogId: subRoomParent.catalogId, name: subRoomParent.name },
+                    access: subRoomEntry.access,
+                    manages: managesSubRoom(subRoomEntry),
+                  },
+                }),
+          }}
         />
       ) : null}
     </>

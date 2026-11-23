@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { collectPageFailures, expectNoHorizontalOverflow } from './support/page-assertions';
-import { placesButton } from './support/workspace-navigation';
+import { placesButton, roomAction } from './support/workspace-navigation';
 
 // 左栏里的子房间（specs/redesign/sub-rooms.md“网页”）。`?private&subRooms` 是有子房间的整间房，
 // `?private&subRoom` 是“Agent Room”下面的一间子房间。
@@ -762,5 +762,55 @@ test('公共大厅不在你的房间列表里，但它不会是子房间：打�
   // 房间列表一回来就会去问；等它一会儿，确认没问。
   await page.waitForTimeout(500);
   expect((await fixtureSubRoomActions(page)).inspected).toEqual([]);
+  expect(failures).toEqual([]);
+});
+
+test('子房间里请网络 Agent：先请它进父房间，话的最后再叫它拿子房间号进来；不去要子房间的口令', async ({
+  page,
+  context,
+}) => {
+  // agent-room-ops#112：以前这里给“生成口令并复制”，要的是子房间的口令，服务器回 409。夹具和服务器一样，
+  // 拿子房间号问口令、生成口令都回 409，页面上出错就会被下面的 failures 抓到。
+  const failures = collectPageFailures(page);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(subRoom);
+  await (await roomAction(page, 'Bring an agent')).click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+
+  // 命令行和 MCP 的话按“父房间名/子房间名”找这一间。
+  await dialog.getByRole('radio', { name: /^MCP/u }).click();
+  await expect(dialog).toContainText('“Agent Room/Builders Exchange”');
+
+  await dialog.getByRole('radio', { name: /^Network/u }).click();
+  await expect(
+    dialog.getByText(/“Builders Exchange” is a sub-room of “Agent Room”/u),
+  ).toBeVisible();
+  await dialog.getByRole('button', { name: 'Create code and copy' }).click();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  const message = await page.evaluate(() => navigator.clipboard.readText());
+  expect(message).toMatch(/enter the Agent Room private room “Agent Room” with the code \S+/u);
+  expect(message).toMatch(
+    /Once you’re in “Agent Room”, go on into its sub-room “Builders Exchange” with the room number [0-9a-f-]{36}: that’s where I am\./u,
+  );
+  await expectAccessible(page);
+  expect(failures).toEqual([]);
+});
+
+test('有门的子房间里请网络 Agent：话里叫它敲子房间的门，管这一间的人在对话框里放行', async ({
+  page,
+}) => {
+  const failures = collectPageFailures(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${subRoom}&waiting`);
+  await (await roomAction(page, 'Bring an agent')).click();
+  const dialog = page.getByRole('dialog', { name: 'Bring an agent' });
+  await dialog.getByRole('radio', { name: /^Network/u }).click();
+  await expect(
+    dialog.getByText(
+      'When your agent knocks on “Builders Exchange”, it shows up here for you to let in.',
+    ),
+  ).toBeVisible();
+  await expect(dialog.getByText(/Rather not use a code\? Let it knock/u)).toBeVisible();
   expect(failures).toEqual([]);
 });
