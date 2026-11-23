@@ -312,15 +312,34 @@ pub enum DeviceAuthorizationFailureKind {
 pub struct DeviceAuthorizationFailure {
     operation: &'static str,
     kind: DeviceAuthorizationFailureKind,
+    step: Option<&'static str>,
 }
 
 impl DeviceAuthorizationFailure {
     const fn new(operation: &'static str, kind: DeviceAuthorizationFailureKind) -> Self {
-        Self { operation, kind }
+        Self {
+            operation,
+            kind,
+            step: None,
+        }
+    }
+
+    const fn at_step(self, step: &'static str) -> Self {
+        Self {
+            step: Some(step),
+            ..self
+        }
     }
 
     pub const fn operation(self) -> &'static str {
         self.operation
+    }
+
+    /// 证明没通过时是哪一处：设备号对不上（`device`）、签发时间比服务器晚太多（`issued_in_future`）、
+    /// 太旧（`too_old`）、签名对不上（`signature`）。只给日志用：`InvalidProof` 有这几处来源，
+    /// 前两种是那台电脑的钟或网络的事，签名对不上才可能是钥匙换了（agent-room-ops#115）。
+    pub const fn step(self) -> Option<&'static str> {
+        self.step
     }
 
     pub const fn kind(self) -> DeviceAuthorizationFailureKind {
@@ -449,7 +468,8 @@ impl DeviceAuthorizationService {
             return Err(failure(
                 "device.register",
                 DeviceAuthorizationFailureKind::InvalidProof,
-            ));
+            )
+            .at_step("signature"));
         }
 
         let principal = crate::principal_projection::principal_registration(
@@ -791,10 +811,10 @@ impl DeviceAuthorizationService {
         now: UtcMillis,
     ) -> DeviceAuthorizationResult<()> {
         if proof.device_id() != device.id() {
-            return Err(failure(
-                "device.proof",
-                DeviceAuthorizationFailureKind::InvalidProof,
-            ));
+            return Err(
+                failure("device.proof", DeviceAuthorizationFailureKind::InvalidProof)
+                    .at_step("device"),
+            );
         }
         validate_proof_time(proof.issued_at(), now, &self.policy)?;
         let message = proof.payload().signing_message(credential_digest);
@@ -802,10 +822,10 @@ impl DeviceAuthorizationService {
             .proof_verifier
             .verify(device.public_signing_key(), &message, proof.signature())
         {
-            return Err(failure(
-                "device.proof",
-                DeviceAuthorizationFailureKind::InvalidProof,
-            ));
+            return Err(
+                failure("device.proof", DeviceAuthorizationFailureKind::InvalidProof)
+                    .at_step("signature"),
+            );
         }
         Ok(())
     }
@@ -916,11 +936,17 @@ fn validate_proof_time(
         .checked_add(policy.proof_maximum_age)
         .and_then(|value| value.checked_add(policy.allowed_clock_skew))
         .map_err(|_| internal_failure("device.proof"))?;
-    if issued_at > latest_allowed || now > expires_at {
-        return Err(failure(
-            "device.proof",
-            DeviceAuthorizationFailureKind::InvalidProof,
-        ));
+    if issued_at > latest_allowed {
+        return Err(
+            failure("device.proof", DeviceAuthorizationFailureKind::InvalidProof)
+                .at_step("issued_in_future"),
+        );
+    }
+    if now > expires_at {
+        return Err(
+            failure("device.proof", DeviceAuthorizationFailureKind::InvalidProof)
+                .at_step("too_old"),
+        );
     }
     Ok(())
 }

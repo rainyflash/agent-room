@@ -132,7 +132,8 @@ impl ComputerGrantService {
             return Err(failure(
                 REGISTER_OPERATION,
                 DeviceAuthorizationFailureKind::InvalidProof,
-            ));
+            )
+            .at_step("signature"));
         }
         let grant = self
             .grants
