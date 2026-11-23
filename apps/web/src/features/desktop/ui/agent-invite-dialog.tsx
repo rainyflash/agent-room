@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useOptionalAppServices } from '@/app/app-services';
+import type { SubRoomAccess } from '@/features/private-rooms/domain/sub-rooms';
 import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { useOnboardingStep } from '@/features/telemetry/ui/use-onboarding-step';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
@@ -34,7 +35,15 @@ export type InviteRoom = {
   readonly roomId: string;
   readonly roomName: string;
   readonly catalogId?: string;
+  /** 眼前是子房间时：它在哪间房下面、门是什么样、你管不管得了这一间（agent-room-ops#112）。 */
+  readonly subRoom?: InviteSubRoom;
 } | null;
+
+export type InviteSubRoom = {
+  readonly parent: { readonly catalogId: string; readonly name: string };
+  readonly access: SubRoomAccess;
+  readonly manages: boolean;
+};
 type InviteOwner = { readonly principalId: string; readonly displayName: string } | null;
 
 export type AgentInviteDialogProps = {

@@ -48,7 +48,16 @@ type InviteProps = {
   readonly onCopied?: (() => void) | undefined;
   /** 看的人是谁。知道了就先按房间列表判断是不是管理者，不是就不去问口令状态。 */
   readonly principalId?: string | null | undefined;
+  /**
+   * 接在给 Agent 的每一段话后面的一段：在子房间里请的是父房间，这一段再叫它进子房间（agent-room-ops#112）。
+   */
+  readonly followUp?: string | undefined;
 };
+
+/** 给 Agent 的话：有后面那一段就空一行接上。 */
+function withFollowUp(text: string, followUp: string | undefined): string {
+  return followUp === undefined ? text : `${text}\n\n${followUp}`;
+}
 
 /** 给网络 Agent 的话里关于名字的那半句。 */
 export function networkNaming(t: TFunction, agentName: string): string {
@@ -133,7 +142,15 @@ function RelayNote({ room }: { readonly room: RoomForNetworkAgents }) {
 }
 
 /** 直接进的公开房间：拿房间号就进来，不用口令、不用放行，管理者和成员拿到的是同一段话。 */
-function OpenInvite({ agentName = '', catalogId, guide, roomName, onCopied, room }: GatedProps) {
+function OpenInvite({
+  agentName = '',
+  catalogId,
+  followUp,
+  guide,
+  roomName,
+  onCopied,
+  room,
+}: GatedProps) {
   const { t } = useTranslation();
   return (
     <div className="agent-invite__private-code">
@@ -143,12 +160,15 @@ function OpenInvite({ agentName = '', catalogId, guide, roomName, onCopied, room
         copyLabel={t('agentInvite.message.copy')}
         failedLabel={t('agentInvite.message.failed')}
         onCopied={onCopied}
-        text={t('agentInvite.network.open.message', {
-          guide,
-          naming: networkNaming(t, agentName),
-          room: roomName,
-          roomNumber: catalogId,
-        })}
+        text={withFollowUp(
+          t('agentInvite.network.open.message', {
+            guide,
+            naming: networkNaming(t, agentName),
+            room: roomName,
+            roomNumber: catalogId,
+          }),
+          followUp,
+        )}
         textLabel={t('agentInvite.message.label')}
       />
       <RelayNote room={room} />
@@ -219,6 +239,7 @@ function codeState(
 function MemberInvite({
   agentName = '',
   catalogId,
+  followUp,
   guide,
   roomName,
   onCopied,
@@ -248,13 +269,16 @@ function MemberInvite({
         copyLabel={t('agentInvite.message.copy')}
         failedLabel={t('agentInvite.message.failed')}
         onCopied={onCopied}
-        text={t('agentInvite.network.knock.messageMember', {
-          guide,
-          kind: t(roomKindKey(room)),
-          naming: networkNaming(t, agentName),
-          room: roomName,
-          roomNumber: catalogId,
-        })}
+        text={withFollowUp(
+          t('agentInvite.network.knock.messageMember', {
+            guide,
+            kind: t(roomKindKey(room)),
+            naming: networkNaming(t, agentName),
+            room: roomName,
+            roomNumber: catalogId,
+          }),
+          followUp,
+        )}
         textLabel={t('agentInvite.message.label')}
       />
       <p className="agent-invite__note">{t('agentInvite.network.knock.memberNote')}</p>
@@ -278,6 +302,7 @@ function managerNoteKey(room: RoomForNetworkAgents) {
 function ManagerInvite({
   agentName = '',
   catalogId,
+  followUp,
   guide,
   roomName,
   rooms,
@@ -292,14 +317,17 @@ function ManagerInvite({
   const kind = t(roomKindKey(room));
   const naming = networkNaming(t, agentName);
   const messageFor = (value: string) =>
-    t(codeMessageKey(room), {
-      code: value,
-      guide,
-      kind,
-      naming,
-      room: roomName,
-      roomNumber: catalogId,
-    });
+    withFollowUp(
+      t(codeMessageKey(room), {
+        code: value,
+        guide,
+        kind,
+        naming,
+        room: roomName,
+        roomNumber: catalogId,
+      }),
+      followUp,
+    );
 
   const mutation = useMutation({
     mutationFn: async () => await rooms.generateJoinCode(catalogId),
@@ -389,13 +417,16 @@ function ManagerInvite({
                 copyLabel={t('agentInvite.message.copy')}
                 failedLabel={t('agentInvite.message.failed')}
                 onCopied={onCopied}
-                text={t('agentInvite.network.knock.message', {
-                  guide,
-                  kind,
-                  naming,
-                  room: roomName,
-                  roomNumber: catalogId,
-                })}
+                text={withFollowUp(
+                  t('agentInvite.network.knock.message', {
+                    guide,
+                    kind,
+                    naming,
+                    room: roomName,
+                    roomNumber: catalogId,
+                  }),
+                  followUp,
+                )}
                 textLabel={t('agentInvite.message.label')}
                 tone="ghost"
               />

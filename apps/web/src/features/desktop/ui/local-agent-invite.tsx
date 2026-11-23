@@ -63,7 +63,7 @@ export function LocalAgentInvite({
     method === 'mcp'
       ? room === null
         ? t('agentInvite.mcp.messageLobby', { naming: mcpNaming })
-        : t('agentInvite.mcp.message', { naming: mcpNaming, room: room.roomName })
+        : t('agentInvite.mcp.message', { naming: mcpNaming, room: inviteRoomJoinName(room) })
       : cliMessage(t, room, snapshot, desktop, agentName);
   const message = background
     ? `${invitation}\n${t(`agentInvite.background.${method}`)}`
@@ -104,6 +104,16 @@ export function LocalAgentInvite({
   );
 }
 
+/**
+ * 本机 Agent 按名字进房间时写的名字。子房间写“父房间名/子房间名”：只写子房间的名字，找的是同名的整间房
+ * （CLAUDE.md 子房间第 2g-2 步，agent-room-ops#112）。
+ */
+export function inviteRoomJoinName(room: NonNullable<InviteRoom>): string {
+  return room.subRoom === undefined
+    ? room.roomName
+    : `${room.subRoom.parent.name}/${room.roomName}`;
+}
+
 /** 桌面端用实际安装路径；网页端不知道 Agent 那台电脑装在哪，多给一句去哪找。 */
 function cliMessage(
   t: TFunction,
@@ -117,14 +127,14 @@ function cliMessage(
   const join =
     room === null
       ? `${invocation} join`
-      : `${invocation} join --room ${quoteCliArgument(room.roomName, platform)}`;
+      : `${invocation} join --room ${quoteCliArgument(inviteRoomJoinName(room), platform)}`;
   const command =
     agentName === '' ? join : `${join} --name ${quoteCliArgument(agentName, platform)}`;
   const text = t(room === null ? 'agentInvite.cli.messageLobby' : 'agentInvite.cli.message', {
     command,
     guide: `${invocation} guide`,
     naming: agentName === '' ? t('agentInvite.naming.cli.choose') : '',
-    room: room?.roomName ?? '',
+    room: room === null ? '' : inviteRoomJoinName(room),
   });
   return desktop ? text : `${text}\n\n${t('agentInvite.cli.locate')}`;
 }

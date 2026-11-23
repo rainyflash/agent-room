@@ -1152,6 +1152,16 @@ let fixtureJoinCode: JoinCode | null =
   codeFixture === null ? null : { code: 'K7P3-Q9XW-2DMA', createdAtUnixMs: Date.now() - 3_600_000 };
 let fixtureJoinCodeHidden = codeFixture === 'hidden';
 
+/**
+ * `?private&subRoom`：眼前这一间是子房间。子房间没有口令，和服务器一样拿它的房间号问口令、生成口令都回 409
+ * `sub_room.parent_only`（agent-room-ops#112）；父房间的照常。
+ */
+function fixtureRoomHasNoCode(catalogId: string): boolean {
+  return subRoomFixture && catalogId === fixturePrivateRoom.catalogId;
+}
+const fixtureParentOnly = () =>
+  Promise.resolve(err({ code: 'sub_room.parent_only', retryable: false }));
+
 /** 和服务器一样每次生成一个新口令：12 位 Crockford Base32，分三组。 */
 function newFixtureJoinCode(): JoinCode {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -1859,16 +1869,18 @@ const privateRooms: PrivateRoomGateway = {
       }
     : unavailablePrivateRoom,
   agentAccess: privateFixture
-    ? () =>
-        Promise.resolve(
-          ok({
-            agents: [...fixtureRoomAgents],
-            joinCode:
-              fixtureJoinCode === null
-                ? null
-                : { createdAtUnixMs: fixtureJoinCode.createdAtUnixMs },
-          }),
-        )
+    ? (catalogId) =>
+        fixtureRoomHasNoCode(catalogId)
+          ? fixtureParentOnly()
+          : Promise.resolve(
+              ok({
+                agents: [...fixtureRoomAgents],
+                joinCode:
+                  fixtureJoinCode === null
+                    ? null
+                    : { createdAtUnixMs: fixtureJoinCode.createdAtUnixMs },
+              }),
+            )
     : unavailablePrivateRoom,
   agentKnocks: privateFixture
     ? () => Promise.resolve(ok([...fixtureKnocks]))
@@ -1891,7 +1903,8 @@ const privateRooms: PrivateRoomGateway = {
       }
     : unavailablePrivateRoom,
   generateJoinCode: privateFixture
-    ? () => {
+    ? (catalogId) => {
+        if (fixtureRoomHasNoCode(catalogId)) return fixtureParentOnly();
         const generated = newFixtureJoinCode();
         fixtureJoinCode = generated;
         fixtureJoinCodeHidden = false;
@@ -1946,14 +1959,16 @@ const privateRooms: PrivateRoomGateway = {
   removeCodeAgent: unavailablePrivateRoom,
   rename: unavailablePrivateRoom,
   revealJoinCode: privateFixture
-    ? () =>
-        Promise.resolve(
-          fixtureJoinCode === null
-            ? err({ code: 'join_code.not_found', retryable: false })
-            : fixtureJoinCodeHidden
-              ? err({ code: 'join_code.not_revealable', retryable: false })
-              : ok(fixtureJoinCode),
-        )
+    ? (catalogId) =>
+        fixtureRoomHasNoCode(catalogId)
+          ? fixtureParentOnly()
+          : Promise.resolve(
+              fixtureJoinCode === null
+                ? err({ code: 'join_code.not_found', retryable: false })
+                : fixtureJoinCodeHidden
+                  ? err({ code: 'join_code.not_revealable', retryable: false })
+                  : ok(fixtureJoinCode),
+            )
     : unavailablePrivateRoom,
   transferOwnership: privateFixture
     ? (_catalogId, { formerOwnerPermissions, targetPrincipalId }) => {
