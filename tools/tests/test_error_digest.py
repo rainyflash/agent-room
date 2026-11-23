@@ -942,6 +942,40 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn("failure=Internal", finding.signature.summary)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_waiting_a_few_seconds_for_a_database_connection_is_noise(self) -> None:
+        def slow(seconds: float, route: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-22T16:17:03.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "acquired connection, but time to acquire exceeded slow threshold",
+                        "acquired_after_secs": seconds,
+                        "slow_acquire_threshold_secs": 2.0,
+                        "correlation.id": CORRELATION_ID,
+                    },
+                    "target": "sqlx::pool::acquire",
+                    "span": {"http.request.method": "GET", "url.path": route},
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {
+                "control-plane": [
+                    slow(3.466196869, "/receptions"),
+                    slow(2.0, "/inbox"),
+                    slow(4.98, f"/agent-instances/{CATALOG_ID}/handoffs/claim"),
+                    slow(12.5, "/receptions"),
+                ]
+            },
+            load_noise(NOISE_FILE),
+        )
+        [finding] = digest.findings
+        self.assertEqual(finding.count, 1)
+        self.assertIn('"acquired_after_secs": 12.5', finding.sample)
+        self.assertEqual(sum(digest.ignored.values()), 3)
+
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_accounts_without_keeping_who(self) -> None:

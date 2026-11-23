@@ -87,6 +87,11 @@ service = "control-plane"
 summary = '^WARN \S+ 等消息时没看成有没有人敲它建的房间的门，过一会儿再看 failure=Unauthorized @ '
 reason = "网络 Agent 等消息的途中令牌失效（被停用、删除或换了令牌），这一次查敲门用的还是旧令牌；这次请求本身已经通过了认证，下一次带旧令牌的请求会照常被拒，不是控制面的毛病（2026-10-29 生产上出现过一次）。别的失败类型照旧报出来"
 
+[[ignore]]
+service = "control-plane"
+summary = '^acquired connection, but time to acquire exceeded slow threshold \{.*"acquired_after_secs": [0-4](\.[0-9]+)?[,}]'
+reason = "机器一时忙不过来（整点后的定时备份读写盘、#955 以前每天更新病毒库挤占内存），一个请求等数据库连接等了 2 到 5 秒，等到了、请求照常做完。2026-11-19 03:06Z 那次正碰上更新病毒库，11-22 16:17Z 那次正碰上 16:15 的备份，那一刻内存和磁盘都在排队，CPU 只用了 27%（agent-room-ops#110）；机器本身的压力有内存、CPU、磁盘的告警看着。只认 5 秒以内的：等满 5 秒控制面就回 503，那时报的是 5xx 和可用率"
+
 # 身份服务
 
 [[ignore]]
