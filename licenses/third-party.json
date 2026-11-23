@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "inputs": {
-    "Cargo.lock": "46a4e23d01990ef739d9a426c2595c72a85907125172793527347f7491ff17fc",
+    "Cargo.lock": "e9d0068cff97d4768a16d0b51168b371bd9d82b29d8b470ef816f73fe61ba9f3",
     "pnpm-lock.yaml": "f113a1cc754ea537fbb17fdc22f9bdd8915e5aecebcd8dfe991652c2663e0a27"
   },
   "dependencies": [
@@ -946,7 +946,7 @@
     {
       "ecosystem": "cargo",
       "name": "cookie",
-      "version": "0.18.2",
+      "version": "0.18.3",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/SergioBenitez/cookie-rs"
     },
@@ -1765,7 +1765,7 @@
     {
       "ecosystem": "cargo",
       "name": "form_urlencoded",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/servo/rust-url"
     },
@@ -5496,7 +5496,7 @@
     {
       "ecosystem": "cargo",
       "name": "url",
-      "version": "2.5.8",
+      "version": "2.5.9",
       "license": "MIT OR Apache-2.0",
       "source": "https://github.com/servo/rust-url"
     },

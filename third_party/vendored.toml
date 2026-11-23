@@ -6,6 +6,21 @@
 # unaffected：这个版本不受影响）和理由。
 
 [[crate]]
+name = "ruma-identifiers-validation"
+version = "0.12.1"
+path = "third_party/ruma-identifiers-validation"
+
+[[crate.advisory]]
+id = "RUSTSEC-2026-0588"
+status = "patched"
+note = "照上游 caf1ac05 的意思补了 mxc_uri::validate：下标放不进 u8 时当服务器名不合法，不再 panic。上游改成 NonZeroU16、接受到 261 字节，ruma-common 0.19 认的是 NonZeroU8，所以 250 字节以上的服务器名这里一律不合法。"
+
+[[crate.advisory]]
+id = "RUSTSEC-2026-0589"
+status = "patched"
+note = "照上游 b2cb9b43 的意思补了 key_id::validate：按冒号的真实位置切，不再先截断成 u8；算法那一段超过 255 字节时返回 MaximumLengthExceeded（上游改成不返回下标、接受它，ruma-common 0.19 认的还是 NonZeroU8）。"
+
+[[crate]]
 name = "vodozemac"
 version = "0.10.0"
 path = "third_party/vodozemac"
