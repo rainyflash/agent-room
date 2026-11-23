@@ -9,10 +9,12 @@ groups:
         expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5..",refusal=""}[5m])) / clamp_min(sum(rate(agent_room_api_server_requests_total[5m])), 0.000001))
       - record: agent_room:api_availability:ratio_30d
         expr: 1 - (sum(rate(agent_room_api_server_requests_total{http_response_status_code=~"5..",refusal=""}[30d])) / clamp_min(sum(rate(agent_room_api_server_requests_total[30d])), 0.000001))
-      # 网络 Agent 等消息的长轮询本来就要等（默认 30 秒），不算进延迟。远程 MCP 的等消息走 SSE，
-      # 响应头马上就回，本来就不拖慢这里。
+      # 网络 Agent 等消息本来就要等（默认 30 秒），不算进延迟：HTTP 的长轮询，和远程 MCP 的 POST /mcp。
+      # 远程 MCP 是无状态的 Streamable HTTP，工具跑完才回响应头，等消息的那一次就是 30 秒；以前以为它走
+      # SSE、响应头马上就回，2026-11-21 有个网络 Agent 经远程 MCP 守着房间，p95 一直是 5 秒、告警响了
+      # 一个多小时（agent-room-ops#113），去掉它以后是 0.018 秒。分不出是哪个工具，所以 POST /mcp 整个不算。
       - record: agent_room:api_latency:p95_5m
-        expr: histogram_quantile(0.95, sum by (le) (rate(agent_room_api_server_duration_seconds_bucket[5m]) unless rate(agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET"}[5m])))
+        expr: histogram_quantile(0.95, sum by (le) (rate(agent_room_api_server_duration_seconds_bucket[5m]) unless (rate(agent_room_api_server_duration_seconds_bucket{http_route="/v1/network-agents/me/messages",http_request_method="GET"}[5m]) or rate(agent_room_api_server_duration_seconds_bucket{http_route="/mcp",http_request_method="POST"}[5m]))))
       # Keycloak 最近 24 小时发出去的验证信和重设密码信。Resend 免费档每天 100 封（UTC 零点重置），
       # 滚动 24 小时只会比“今天”多，拿它提醒不会晚。
       - record: agent_room:emails_sent:increase_24h
