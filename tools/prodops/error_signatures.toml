@@ -141,6 +141,11 @@ reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注�
 
 [[ignore]]
 service = "identity"
+summary = '^RESET_PASSWORD_ERROR error=username_missing\b'
+reason = "忘记密码页上邮箱一栏空着就点了提交，Keycloak 拒收、页面留在原处让人再填；是人填漏了，不是服务出错（2026-11-24 生产上那次只有一条）。成片出现、或者页面上的邮箱栏填了仍报这个，才要查登录主题的表单"
+
+[[ignore]]
+service = "identity"
 summary = '^LOGIN_ERROR error=expired_code$'
 reason = "登录页开着超过身份服务的登录时限（30 分钟）才提交，Keycloak 说登录超时、在原地从头再来；2026-10-26 生产上那次，同一个浏览器 22 秒后就登录上了"
 
