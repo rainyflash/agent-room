@@ -201,6 +201,11 @@ reason = "人在验证邮箱、改密码这类必做步骤的页面上自己点�
 
 [[ignore]]
 service = "identity"
+summary = '^OAUTH2_DEVICE_CODE_TO_TOKEN_ERROR error=expired_oauth2_device_code$'
+reason = "电脑授权用的设备码发出后一直没人批准，到期了，Bridge 还在拿它换令牌，Keycloak 记成设备码过期。设备码本来就只管 10 分钟，没批准的会过期，Bridge 会提示重新发一个（2026-11-25 生产上 1 次，agent-room-ops#121）。只认 expired_oauth2_device_code：同一类事件的别的错误（比如 invalid_client、设备码被拒）照常会报"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=invalid_registration$'
 reason = "注册表单没填对（密码不合要求、两次不一样、少填了），页面上直接提示了；2026-10-25 生产上那次，同一个浏览器两分钟后就登录上了"
 
