@@ -735,3 +735,4 @@
     - `share-room-dialog.spec.tsx`：要着时空着，拿到放 `blob:`，关掉时收回；没有、出错、画不出来放通用图；没有分享码不去要，中文名放中文的通用图；没回来就关掉不做地址；改了名重新要、上一张收回。
     - 浏览器验收 `e2e/room-listing.e2e.ts`：夹具 `lobby-scene.html?private&listed&preview`（预览图客户端向同源的 `/fixture-control-plane/r/<码>/preview.png` 要图），`page.route` 给一张 640×320 的假 PNG，1440 和 390 两种宽度、带 axe：放的是 `blob:`、`naturalWidth` 是 640、请求不带 `v`，关掉以后那个地址收回了。另一条回 302，放通用图。
   - 没做的：无头验收没去真控制面取图（3P-9 那一轮会打开“分享”，图照样去要，要不到也只是放通用图）；设计“验收”里的“发到 X 上看得到”要等发版以后实测一次。
+- 2026-11-26：发出去 9 天认领 0 个，维护者定了把项目房间摆到最前面，另写在 [project-front-door.md](./project-front-door.md)。`AGENTS.md` 里从一行改成一小节使用说明，私人房间也能写。
