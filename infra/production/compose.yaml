@@ -12,12 +12,15 @@ x-container-logging: &container-logging
     max-size: 10m
     max-file: '3'
 
-# 聊天服务器和控制面一天写几十 MB，多留一些，排查和发版验收时还翻得到最近一两天。
+# 聊天服务器和控制面写得多：2026-11-25 量的是聊天服务器一天 300 MB 上下、控制面 170 MB 上下。
+# 以前 4 份 50 MB，聊天服务器只回看得到 12 个小时，错误汇总开的 issue 第二天去看时日志已经没了
+# （agent-room-ops#117–#120）。现在 8 份 100 MB，聊天服务器回看 2 到 3 天，还在隐私说明写的
+# “通常几天之内”里。再加大以前先看错误汇总每小时读日志的那一下：150 MB 要读 2 秒上下。
 x-busy-container-logging: &busy-container-logging
   driver: json-file
   options:
-    max-size: 50m
-    max-file: '4'
+    max-size: 100m
+    max-file: '8'
 
 x-control-plane-runtime: &control-plane-runtime
   image: ${AGENT_ROOM_CONTROL_PLANE_IMAGE:-agent-room-control-plane:local}
