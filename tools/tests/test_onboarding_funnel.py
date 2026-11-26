@@ -86,6 +86,16 @@ class OnboardingFunnelTests(unittest.TestCase):
         self.assertIn("r.name = 'agent-room'", keycloak)
         self.assertIn(f">= {millis('2026-10-05T00:00:00')}", keycloak)
 
+    def test_weeks_past_chat_retention_hide_message_columns(self) -> None:
+        # 两周以后：10-19 那周已经早于 30 天以前，聊天服务器删掉了那几天的消息，按消息数的两列不写数。
+        later = datetime(2026, 11, 23, 1, 23, tzinfo=UTC)
+
+        section = "\n".join(report_section(FakeDatabases(), later))
+
+        self.assertIn("| 10-19 起 | 3 | 2 | 2 | 1 | 1 | — | — | 2 | 1 |", section)
+        self.assertIn("| 10-26 起 | 5 | 4（80%） | 0 | 0 | 0 | 0 | 0 | 0 | 0 |", section)
+        self.assertIn("聊天服务器只留最近 30 天的消息", section)
+
     def test_only_reads_the_three_databases(self) -> None:
         databases = FakeDatabases()
         report_section(databases, NOW)
