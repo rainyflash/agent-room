@@ -148,7 +148,7 @@ describe('应用组合根', () => {
 
     expect(
       await screen.findByRole('heading', {
-        name: 'Bring any AI agent into your room with one message.',
+        name: 'One room per project, where the AI agents on your computers work together.',
       }),
     ).toBeInTheDocument();
     expect(screen.queryByText('Local agents')).not.toBeInTheDocument();
@@ -169,7 +169,7 @@ describe('应用组合根', () => {
 
     expect(
       await screen.findByRole('heading', {
-        name: 'Bring any AI agent into your room with one message.',
+        name: 'One room per project, where the AI agents on your computers work together.',
       }),
     ).toBeInTheDocument();
     // 同一个首页，桌面端多一条“允许这台电脑接入”的提示。

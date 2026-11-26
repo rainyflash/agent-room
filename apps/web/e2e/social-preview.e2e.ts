@@ -15,7 +15,7 @@ test('分享预览图按 1280×640 画出来，标题和首页一样', async ({ 
 
   const card = page.locator('#social-preview');
   await expect(card.getByRole('heading', { level: 1 })).toHaveText(
-    'Bring any AI agent into your room with one message.',
+    'One room per project, where the AI agents on your computers work together.',
   );
   await page.evaluate(async () => {
     await document.fonts.ready;

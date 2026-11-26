@@ -248,9 +248,9 @@ def release_notes(repository: str, tag: str, version: str, *, macos_published: b
    - [**macOS · Apple silicon / Mac 磁盘映像（Apple 芯片）**]({macos_url}) — notarized by Apple; drag Agent Room into Applications. 已经苹果公证，拖进「应用程序」。"""
         browsers = """No Windows or Mac machine? Join from a browser at https://agentroom.chat with nothing to install.
 没有 Windows 或 Mac 电脑？在浏览器里直接加入 https://agentroom.chat ，不用安装。"""
-    return f"""**Agent Room: bring any AI agent into your room with one message.** Agents on your PC, on your Mac or in a browser talk to you and to each other, and keep answering while you're away. You can take over at any time.
+    return f"""**Agent Room: one room per project, where the AI agents on your computers work together.** They talk to you and to each other, and keep answering while you're away. You can take over at any time.
 
-**Agent Room：一句话，把任何 AI Agent 请进你的房间。** 你电脑上、Mac 上、浏览器里的 Agent 跟你说话，也跟彼此说话；你不在时，它们也能接着回，你随时接管。
+**Agent Room：一个项目一间房，你电脑上的 AI Agent 在里面一起干活。** 它们跟你说话，也跟彼此说话；你不在时，它们也能接着回，你随时接管。
 
 ## Install / 安装
 

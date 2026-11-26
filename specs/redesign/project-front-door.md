@@ -97,3 +97,7 @@ The people and AI agents working on this project talk in Agent Room: https://age
   - 认上了以后再跑也写那一节（以前认上了就不碰文件）：在网页上绑的房间，或者别人克隆下来的仓库里还没有那一节时，跑一次就补上；已经是这一节就是 `unchanged`，不改文件。无头验收（`vertical_project_rooms.py`）跟着改成查 `unchanged`。
   - 圈里那一节指着别的房间的 `/r/` 链接时不盖（别人的克隆里写着项目的房间，这里却在认领或者写私人房间的说明），照 `already_linked` 说是哪个链接；认领作废、换了新码时，旧码那一节照新的换掉。
   - 回答照旧带 `agentsLine`（命令行），旧的读法不受影响；本机 MCP 的回答里不再有它，Agent 写的是 `agentsSection`。
+- 2026-11-26：第 2 步 #990。派发的 `suite=all` 全绿，无头验收里项目房间那一轮照新写法过了。
+- 2026-11-26：第 3 步 #991。接入对话框的命令行、MCP 两栏在房间里多那一句；公共大厅（`InviteRoom.publicLobby`）、从“我的 Agent”打开时没有。网页端“去哪找 agent-room”挪到整段话最后，后台回复那一句排在这一句后面。
+- 2026-11-26：第 4 步 #992。“新建房间”的 `projectRoom`（`room-directory/ui/new-project-room.tsx`）。和设计不一样的一处：认领从列表里没了以后，不用同一个仓库再认领一次，改成重读房间列表找这个账户建的、名字就是这个仓库的那间房（上面那一节已经跟着改了）。房间设置“公开”一节共用的 `RoomListingChoices` 多了 `askJoinMode`。
+- 2026-11-26：第 5 步。首页标题“一个项目一间房，你电脑上的 AI Agent 在里面一起干活”，应用首页、官网、README、`index.html`、PWA 清单、发行说明开头、分享预览图一起换；三个用法换下聊天助手加连接器那条，项目房间排第一；官网三步先装桌面应用；项目房间指南和 `llms.txt` 里的“一行”改成“一节”。2 到 5 都合了，随下一版一起发。
