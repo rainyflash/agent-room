@@ -74,6 +74,7 @@ pub struct AgentAccessFailure {
     operation: &'static str,
     kind: AgentAccessFailureKind,
     retry_at: Option<UtcMillis>,
+    step: Option<&'static str>,
 }
 
 impl AgentAccessFailure {
@@ -82,6 +83,14 @@ impl AgentAccessFailure {
             operation,
             kind,
             retry_at: None,
+            step: None,
+        }
+    }
+
+    const fn at_step(self, step: &'static str) -> Self {
+        Self {
+            step: Some(step),
+            ..self
         }
     }
 
@@ -91,6 +100,7 @@ impl AgentAccessFailure {
             operation,
             kind: AgentAccessFailureKind::RateLimited,
             retry_at: Some(retry_at),
+            step: None,
         }
     }
 
@@ -105,6 +115,13 @@ impl AgentAccessFailure {
     /// 限流时何时可以再试。
     pub const fn retry_at(self) -> Option<UtcMillis> {
         self.retry_at
+    }
+
+    /// 失败落在哪一步：房间的规则不许是 `rule`，聊天服务器拒的是 `matrix`，存储报的是那一步的
+    /// 名字。只给日志用：规则不许是 Agent 问了它不能做的事，照实回 403 就行；聊天服务器也回 403
+    /// 时才是要查的，两样的种类都是 `Forbidden`，不带它分不出来。
+    pub const fn step(self) -> Option<&'static str> {
+        self.step
     }
 }
 
@@ -1056,7 +1073,7 @@ const fn domain(operation: &'static str, error: &DomainError) -> AgentAccessFail
         | DomainError::TimeOverflow
         | DomainError::VersionOverflow => AgentAccessFailureKind::Internal,
     };
-    AgentAccessFailure::new(operation, kind)
+    AgentAccessFailure::new(operation, kind).at_step("rule")
 }
 
 const fn repository(operation: &'static str, error: &RepositoryError) -> AgentAccessFailure {
@@ -1069,7 +1086,7 @@ const fn repository(operation: &'static str, error: &RepositoryError) -> AgentAc
             AgentAccessFailureKind::Internal
         }
     };
-    AgentAccessFailure::new(operation, kind)
+    AgentAccessFailure::new(operation, kind).at_step(error.operation())
 }
 
 const fn matrix(operation: &'static str, error: &MatrixFailure) -> AgentAccessFailure {
@@ -1089,5 +1106,5 @@ const fn matrix(operation: &'static str, error: &MatrixFailure) -> AgentAccessFa
         | MatrixFailureKind::StaleSyncToken
         | MatrixFailureKind::UnsupportedVersion => AgentAccessFailureKind::Internal,
     };
-    AgentAccessFailure::new(operation, kind)
+    AgentAccessFailure::new(operation, kind).at_step("matrix")
 }

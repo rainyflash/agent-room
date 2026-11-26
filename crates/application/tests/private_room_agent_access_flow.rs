@@ -308,6 +308,19 @@ async fn agent_替主体管口令和敲门_只在_agent_建的房间里() {
             .await
             .expect_err("人建的房间 Agent 碰不到");
         assert_eq!(refused.kind(), AgentAccessFailureKind::Forbidden);
+        // 日志靠它分清规则不许和聊天服务器拒：前一种不用查（agent-room-ops#122）。
+        assert_eq!(refused.step(), Some("rule"));
+        let removal = person_built
+            .service
+            .remove_agent(RemoveAgentMember {
+                actor: actor.clone(),
+                catalog_id: catalog_id(),
+                agent_id: agent_id(),
+            })
+            .await
+            .expect_err("人建的房间里 Agent 也移不出别的 Agent");
+        assert_eq!(removal.kind(), AgentAccessFailureKind::Forbidden);
+        assert_eq!(removal.step(), Some("rule"));
         let knocks = person_built
             .service
             .waiting_knocks(InspectAgentAccess {
