@@ -1011,10 +1011,13 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 
 ### 版本与其他
 
-- Alpha 103 正在发布（2026-11-26）：一个项目一间房，“新建房间”里给 GitHub 项目建房（#992），`agent-room project` 往 `AGENTS.md` 里写一节 Agent Room 的用法、私人房间也能写（#990），接入 Agent 时顺便请它写进项目的 `AGENTS.md`（#991），官网首页和 README 开头改成“一个项目一间房”（#993）；周报里早于 30 天的那几周不写按消息数的两列（#988）。
-  - 发版前的 `suite=all` 照 Alpha 99 的办法在内容和合并以后的 main 一样的临时分支上跑（`ci/alpha103-preflight`，跑完就删）；本机 `cargo deny check advisories`、`corepack pnpm@10.28.0 audit:node` 都干净。
-  - 没改登录相关路径，复用 Alpha 102 那台长期验收设备，不用设备码。没有迁移，部署配置没加新变量，没改告警规则，回滚可以退到 Alpha 102。
-  - 实机验收的宿主照规矩新建一个没跑过验收的 Codex 任务。
+- Alpha 103 已于 2026-11-26 公开，见 [发布记录](./specs/agent-access/alpha103-release.md)。
+  - 一个项目一间房：“新建房间”里给 GitHub 项目建房（#992），`agent-room project` 往 `AGENTS.md` 里写一节 Agent Room 的用法、私人房间也能写（#990），接入 Agent 时顺便请它写进项目的 `AGENTS.md`（#991），官网首页和 README 开头改成“一个项目一间房”（#993）；周报里早于 30 天的那几周不写按消息数的两列（#988）。
+  - 发版前的 `suite=all` 在临时分支 `ci/alpha103-preflight` 上跑，过了才合版本 PR（`merge_then_release.py` 认 `<版本 PR>:<运行编号>`）。没在 main 上直接派发：版本 PR 一合，main 上推送的 CI 和它同组，会把它取消。
+  - 没改登录相关路径，复用 Alpha 102 那台长期验收设备，没要设备码。没有迁移，部署配置没加新变量，没改告警规则，回滚可以退到 Alpha 102。
+  - 实机验收停在 doctor：新建的 Codex 任务看开场白是“Alpha 103 验收”、验证文件却在 alpha102 目录下（长期验收设备的数据在那里），不肯读；在同一个任务里解释了也照样拒绝。换了一个开场白里先说清目录的干净任务，等旧会话闲满 15 分钟再跑，一次通过。
+  - 公开以后核对公开资产时 SSH 被对方断开一次，那一步重跑是安全的，从头接着跑公开那一段。
+  - 版本 PR #994 合并到网页上线约 1 小时 36 分钟，其中约 25 分钟花在宿主任务上。
 - Alpha 102 已于 2026-11-26 公开，见 [发布记录](./specs/agent-access/alpha102-release.md)。
   - 子房间里“接入 Agent → 网络”先请 Agent 进父房间（#975），登录页不再偶尔卡十几秒（身份服务的堆定死、不许用交换分区，#981），网络 Agent 请求体不对时说清是哪一样（#980），Windows 上后台回复的正文带回车不再整条作废（#986），后台回复的自检说清要读的是已校验的文件（#966），ruma 两个会崩的漏洞和 `url`、`cookie` 的升级（#971）；另有日志、告警和错误汇总的几处（#967、#969、#972–#979、#984、#985）和删掉邮件提醒的开关表（#982）。
   - 第一个发布提交 `cc6fdc7c`（#983）已经部署、装到了维护者本机，实机验收两次停在 doctor：先是 Alpha 101 那个宿主任务照旧拒读验证码文件；换了干净任务，它读到了，可回的正文带着 PowerShell 输出的 `\r\n`，接收端不收回车、整条作废。真实的后台回复里一样，所以先修再发：#986 把回车换成换行，它的合并提交 `acab6bf7` 成为发布提交。照 Alpha 101 让位，另清掉了第一轮验收设备的凭据，`start` 才再发设备码。
@@ -1296,7 +1299,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
   - Codex 没有单独的读文件工具，读本机文件要么跑命令，要么碰巧找到某个 MCP 带的读文件工具。Alpha 65、66 都是 Codex 找到了维护者自己装的一个 MCP 里的读文件工具才过的；那时跑命令也不通，Codex 的 Windows 沙箱每次跑命令前要改 `runtimes/cua_node/…/node_repl.exe` 的权限，维护者开着的 Codex 应用一直占着这个文件（os error 32）。
   - 2026-10-10 Codex 自动更新以后（`codex-cli 0.162.0-alpha.17.2`）沙箱起得来了。Alpha 67 里它照 #371 用一条只读命令读附件（.NET 的 `File.ReadAllText`），#389 以后读得到，doctor 一次就过。
   - Codex 自动更新会挪程序（`%LOCALAPPDATA%\OpenAI\Codex\bin\<哈希>\codex.exe`），`qa-host.json` 里的宿主路径跟着改，不然 doctor 报 `receiver.executable_invalid`。派生脚本会找新位置，但派生以后、验收以前它也可能挪（Alpha 74 就是：绑定里记着旧路径，改了 `qa-host.json`、把 `binding.private.json` 改名留档，从绑定那一步重跑）。Alpha 76 是验收开始前几分钟，Codex 把记着的那份整个删掉了，只剩新装的那份。验收前再看一眼。
-  - doctor 没过先看 `details.hostReply`（宿主交回了什么）。说读不了是沙箱的事；说不肯读、只认经房间拿到的附件，是这个任务照后台回复的规矩来的：Alpha 101 绑着的任务就这样，Alpha 102 里同一个任务在 #966 改了提示以后照旧拒读。所以每一版都用一个没跑过验收的干净任务（见下面“下一版的发布脚本”那一条）。验收途中还是不行就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
+  - doctor 没过先看 `details.hostReply`（宿主交回了什么）。说读不了是沙箱的事；说不肯读、只认经房间拿到的附件，是这个任务照后台回复的规矩来的：Alpha 101 绑着的任务就这样，Alpha 102 里同一个任务在 #966 改了提示以后照旧拒读。所以每一版都用一个没跑过验收的干净任务（见下面“下一版的发布脚本”那一条）。复用的长期验收设备是哪一版授权的，它的数据就在哪一版的目录下：Alpha 103 新建的任务看开场白是这一版的验收、文件却在上一版的目录下，就不肯读，所以建任务的开场白里先说清那个目录（`prime_codex_qa_host.py` 的 `DEVICE_NOTE`）。验收途中还是不行就新建一个干净的 Codex 任务再试，别在记着失败的任务上接着跑：第二轮读附件会照着任务里之前的做法来。换任务时把 `qa-host.json`、`fresh-device-qa/registered.private.json` 和 `binding.private.json` 留档改名，建好新任务再跑 `run`。
   - 换了任务马上再登记会被拒（`bridge.host_session.reception_already_bound`）：验收人物在隔离 Bridge 里的会话还记着后台回复交给了旧任务（只在内存里），这个会话 15 分钟没人用才关（`host_sessions.rs` 的 `IDLE_LIFETIME`）。等 15 分钟、中间谁都不碰它，再跑 `run`（Alpha 101 第二个发布提交就这样多等了 17 分钟）。
   - 上一轮有一条投递没回完（超时、记成要人处理）时，新起的接收端先把它拿回来，核对 20 秒后报 `receiver.reply_unconfirmed` 退出：进度按 Agent 和房间记在服务器上，换任务、换发布提交都会接着来。用验收工具同一套连接 `receiver resolve --binding <binding.private.json> --event <那一条的事件 ID> --action skip`，挪开接收端的记录（`receiver-process.json`、`receiver.private.jsonl`、`receiver.private.stderr`），再跑 `run`（Alpha 101 的 `qa_newtask.py`）。
   - 验收人物不绑宿主任务（#372 起）。命令行在人物加入时会记下当时的 `CODEX_THREAD_ID`，以后换了任务就报 `cli.profile.task_mismatch`；Alpha 66 就卡在这里，是用本地补丁跑完的。现在验收工具以人物身份调用命令行时不带它，只有 `receiver` 命令带宿主任务。
@@ -1313,7 +1316,7 @@ Agent Room 的日常开发交给编码 Agent 做。2026-09-24 以前在维护者
 - 发布链经 WMI 启动，应用退出带不走它，可 Windows 结束登录会话时一样带走（2026-11-04 Alpha 88，`bash` 报 `dofork … 0xC000026B`，网页晚了 7 个多小时才上线）。新会话接手发版，先看发布目录的日志停在哪、进程还在不在，再从停下的那一步接着跑（`publish_resume.sh`）。
 - GitHub 故障时运行状态可能不更新：Alpha 88 的公开作业 `16:17Z` 已经跑完，`gh run view`、`gh run watch` 到 `16:29Z` 还说 `waiting`。说“还没公开”之前连作业的步骤和 Release 本身一起看。
 - 开版本 PR 之前先在本机跑一次 `cargo deny check advisories`（几秒钟）和 `corepack pnpm@10.28.0 audit:node`（cargo-deny 查不到 Node 的公告）：上游当天新出的公告只有版本 PR 的 CI 才撞上，Alpha 94、Alpha 96 都因此多等了一轮，Alpha 97 是发版前那次 `suite=all` 抓到的。有新公告就先开加例外或升级的 PR，合了再开版本 PR。
-- 下一版的发布脚本从 `artifacts/releases/alpha102` 派生，平常的写法（上一版 102、这一版 103；派生脚本照 `derive_alpha102.py` 改，去掉它的 `derive_alpha102_extra/`）。Alpha 102 留下的一次性脚本别带：`downgrade_to_101.py`、`recreate_synapse_log_limits.py`（第一个发布提交那几轮的 `qa_newtask.py`、`start_qa_newtask.ps1` 已经在 `attempt-cc6fdc7c/` 里）。`verify_legacy.py`、`probe_public_health.py` 发布途中临时写死过 alpha.102，发完改回了“升级前是上一版、之后是这一版”的写法，派生时照常换版本号。`reissue_code.py`、`watch_release.py`、`click_save_image.py` 照旧跟着带。宿主别沿用 `qa-host.json` 里的任务（`01a2161b…` 已经跑过一轮验收）：派生以后把 `qa-host.json` 改名留档，跑 `prime_codex_qa_host.py` 新建一个干净的任务（它看到已经初始化过的 Codex 记录就不建）。
+- 下一版的发布脚本从 `artifacts/releases/alpha103` 派生，照 `derive_alpha103.py` 改（上一版 103、这一版 104）：它不照搬 `qa-host.json`，派生完跑 `prime_codex_qa_host.py` 新建一个干净的任务（每一版都要新的，跑过一轮验收的任务下一版不肯读验证文件），开场白里已经写着长期验收设备的目录。Alpha 103 留下的一次性脚本别带：`explain_device_dir.py`、`qa_rerun.py`、`start_qa_rerun.ps1`、`qa_newtask.py`、`start_qa_newtask.ps1`、`start_rollout_resume.ps1`；`start_merge.ps1` 写死了这一版的 PR 和运行编号，照着改。`reissue_code.py`、`watch_release.py`、`click_save_image.py` 照旧跟着带。
 - 要设备码的那几版，码要让维护者看得到、来得及批（Alpha 100 七个码过期了六个）：
   - 发码的那条消息里，链接放在最后一行，之后不再调用工具、不再接别的话。桌面应用里一轮中间说的话后面一有工具调用就不显眼，维护者看到的是这一轮最后那一句；Alpha 100 有三个码就是这样没被看到的。等批准的后台脚本先起好，再发这条消息。
   - 维护者说“现在就升”到码出来还隔着等定时备份、部署服务端和升级本机，Alpha 100 是 17 分钟，他已经走开了。放行时就照 `server rollout gate` 那一行算出码大概几点几分出来，告诉他；码发出去没人理就别接着发，等他回话再发。
