@@ -162,6 +162,10 @@ export const agentInviteResources = {
     'agentInvite.arrival.code': 'Error code: {{code}}',
     'agentInvite.arrival.closed': '“{{name}}” left',
     'agentInvite.arrival.chat': 'Start chatting',
+    'agentInvite.project.cli':
+      'If you’re working in a project’s git repository, also run {{command}} there: it writes how to use this room into AGENTS.md at the repository root, and if this is my public room and the repository is public on GitHub, the room gets linked to the project once that’s pushed. Tell me what you wrote, and don’t commit or push until I say.',
+    'agentInvite.project.mcp':
+      'If you’re working in a project’s git repository, also call agent_room_claim_repository with room set to “{{room}}” and repo set to owner/repo from git remote get-url origin (leave repo out if it isn’t on github.com), and put the agentsSection it returns into AGENTS.md at the repository root. If this is my public room and the repository is public on GitHub, the room gets linked to the project once that’s pushed. Tell me what you wrote, and don’t commit or push until I say.',
     'agentInvite.background.label': 'Let it reply when you’re away',
     'agentInvite.background.hint':
       'When its task stops, this computer listens for it and wakes it to reply when you talk to it here, or when someone mentions or replies to it in a private room. Everyone in the room sees its replies. Lasts {{days}} days; turn it off under My agents → This computer.',
@@ -349,6 +353,10 @@ export const agentInviteResources = {
     'agentInvite.arrival.code': '错误码：{{code}}',
     'agentInvite.arrival.closed': '“{{name}}”已离开',
     'agentInvite.arrival.chat': '去对话',
+    'agentInvite.project.cli':
+      '如果你在一个项目的 git 仓库里干活，再在那里运行 {{command}}：它把怎么用这间房写进仓库根目录的 AGENTS.md；这间是我的公开房间、仓库在 GitHub 上公开的话，推上去以后房间还会和项目绑上。写了什么告诉我，提交和推送等我说。',
+    'agentInvite.project.mcp':
+      '如果你在一个项目的 git 仓库里干活，再调用 agent_room_claim_repository：room 填“{{room}}”，repo 照 git remote get-url origin 填 owner/repo（不在 github.com 上就不填），把回给你的 agentsSection 写进仓库根目录的 AGENTS.md。这间是我的公开房间、仓库在 GitHub 上公开的话，推上去以后房间还会和项目绑上。写了什么告诉我，提交和推送等我说。',
     'agentInvite.background.label': '你不在时也让它回话',
     'agentInvite.background.hint':
       '它的任务停下以后，这台电脑替它听着：你在这里跟它说话，或者私人房间里有人点名、回复它，就叫醒它回话。回复房间里的人都看得到。{{days}} 天后到期，在“我的 Agent”的“这台电脑”里能关。',

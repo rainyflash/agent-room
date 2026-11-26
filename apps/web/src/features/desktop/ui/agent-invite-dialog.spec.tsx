@@ -308,7 +308,9 @@ describe('接入 Agent 对话框', () => {
     const message = await copyMessage(writeText);
     expect(message).toContain("agent-room join --room 'Builders Exchange'");
     expect(message).toContain('agent-room guide');
-    expect(message).toContain('%LOCALAPPDATA%\\Agent Room\\agent-room.exe');
+    expect(message).toContain("also run agent-room project --room 'Builders Exchange' there");
+    // 去哪找 agent-room 放在整段话最后。
+    expect(message).toMatch(/AGENTS\.md[\s\S]*%LOCALAPPDATA%\\Agent Room\\agent-room\.exe/u);
     expect(message).not.toMatch(/--invite|--profile/u);
     expect(message).not.toMatch(appNames);
     expect(screen.queryByText(/Local agents/u)).toBeNull();
@@ -394,6 +396,10 @@ describe('接入 Agent 对话框', () => {
 
     const message = await copyMessage(writeText);
     expect(message).toContain("& 'C:\\Agent Room\\agent-room.exe' join --room 'Builders Exchange'");
+    expect(message).toContain(
+      "& 'C:\\Agent Room\\agent-room.exe' project --room 'Builders Exchange' there: it writes how to use this room into AGENTS.md",
+    );
+    expect(message).toContain('don’t commit or push until I say');
     expect(message).not.toContain('%LOCALAPPDATA%');
     await waitFor(() => {
       expect(runtime.offerInvitation).toHaveBeenCalled();
@@ -419,6 +425,7 @@ describe('接入 Agent 对话框', () => {
     expect(option).toHaveAccessibleDescription(/Lasts 30 days/u);
     const cli = await copyMessage(writeText);
     expect(cli).toContain('also run register as the join result says');
+    expect(cli.indexOf('AGENTS.md')).toBeLessThan(cli.indexOf('also run register'));
     expect(cli).toContain('If your app isn’t supported, skip it.');
     expect(cli).not.toMatch(appNames);
 
@@ -513,6 +520,8 @@ describe('接入 Agent 对话框', () => {
     const message = await copyMessage(writeText);
     expect(message).toContain('agent_room_join');
     expect(message).toContain('“Builders Exchange”');
+    expect(message).toContain('agent_room_claim_repository with room set to “Builders Exchange”');
+    expect(message).toContain('put the agentsSection it returns into AGENTS.md');
     expect(message).not.toMatch(/sessionKey|agent_room_open_session/u);
     const setup = screen.getByText('First time using MCP? Set it up once');
     expect(setup.closest('details')).not.toHaveAttribute('open');
@@ -538,7 +547,9 @@ describe('接入 Agent 对话框', () => {
     };
     const view = renderDialog(gateway().value, { room: subRoom });
 
-    expect(await copyMessage(writeText)).toContain("join --room 'Builders Exchange/release notes'");
+    const cli = await copyMessage(writeText);
+    expect(cli).toContain("join --room 'Builders Exchange/release notes'");
+    expect(cli).toContain("project --room 'Builders Exchange/release notes'");
     view.unmount();
     writeText.mockClear();
     rememberMethod('mcp');
@@ -556,6 +567,21 @@ describe('接入 Agent 对话框', () => {
     const message = await copyMessage(writeText);
     expect(message).toContain("& 'C:\\Agent Room\\agent-room.exe' join\n");
     expect(message).not.toContain('--room');
+    expect(message).not.toContain('AGENTS.md');
+  });
+
+  it('公共大厅里不请 Agent 往 AGENTS.md 里写：大厅没有房主、绑不了仓库', async () => {
+    const writeText = clipboardMock();
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    rememberMethod('cli');
+    const lobby = { ...room, publicLobby: true };
+    const view = renderDialog(gateway().value, { room: lobby });
+    expect(await copyMessage(writeText)).not.toContain('AGENTS.md');
+    view.unmount();
+    writeText.mockClear();
+    rememberMethod('mcp');
+    renderDialog(gateway().value, { room: lobby });
+    expect(await copyMessage(writeText)).not.toContain('agent_room_claim_repository');
   });
 
   it('打开前就在的会话不算；之后新来的 Agent 显示进来了，并告诉房间页', async () => {

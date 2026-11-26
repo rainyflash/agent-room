@@ -59,15 +59,26 @@ export function LocalAgentInvite({
     agentName === ''
       ? t('agentInvite.naming.mcp.choose')
       : t('agentInvite.naming.mcp.given', { name: agentName });
+  const platform = snapshot?.platform ?? 'unknown';
+  const invocation = cliInvocation(snapshot?.cliConfiguration, platform);
   const invitation =
     method === 'mcp'
       ? room === null
         ? t('agentInvite.mcp.messageLobby', { naming: mcpNaming })
         : t('agentInvite.mcp.message', { naming: mcpNaming, room: inviteRoomJoinName(room) })
-      : cliMessage(t, room, snapshot, desktop, agentName);
-  const message = background
-    ? `${invitation}\n${t(`agentInvite.background.${method}`)}`
-    : invitation;
+      : cliMessage(t, room, invocation, platform, agentName);
+  const lines = [
+    invitation,
+    ...(room === null || room.publicLobby === true
+      ? []
+      : [projectLine(t, method, inviteRoomJoinName(room), invocation, platform)]),
+    ...(background ? [t(`agentInvite.background.${method}`)] : []),
+  ];
+  // 网页端不知道 Agent 那台电脑把命令行装在哪，最后多给一句去哪找。
+  const message =
+    method === 'cli' && !desktop
+      ? `${lines.join('\n')}\n\n${t('agentInvite.cli.locate')}`
+      : lines.join('\n');
   // 网页端还要先装桌面应用时，明黄的按钮是下载；点过下载、或者账号已经有电脑，才轮到复制。
   const installFirst = !desktop && downloadUrl !== null && web.computer !== 'some' && !web.started;
 
@@ -114,29 +125,45 @@ export function inviteRoomJoinName(room: NonNullable<InviteRoom>): string {
     : `${room.subRoom.parent.name}/${room.roomName}`;
 }
 
-/** 桌面端用实际安装路径；网页端不知道 Agent 那台电脑装在哪，多给一句去哪找。 */
+/**
+ * 在房间里请 Agent 时多一句：它在一个项目的仓库里干活的话，把怎么用这间房写进 `AGENTS.md`；是你的公开房间、
+ * 仓库在 GitHub 上公开的话，推上去以后房间和项目绑上。绑不上的房间（私人房间、子房间、别人的房间）只写说明
+ * （`specs/redesign/project-front-door.md`）。
+ */
+function projectLine(
+  t: TFunction,
+  method: LocalMethod,
+  room: string,
+  invocation: string,
+  platform: DesktopRuntimeSnapshot['platform'],
+): string {
+  return method === 'mcp'
+    ? t('agentInvite.project.mcp', { room })
+    : t('agentInvite.project.cli', {
+        command: `${invocation} project --room ${quoteCliArgument(room, platform)}`,
+      });
+}
+
+/** 桌面端用实际安装路径；网页端用 `agent-room`，去哪找在整段话最后说。 */
 function cliMessage(
   t: TFunction,
   room: InviteRoom,
-  snapshot: DesktopRuntimeSnapshot | null,
-  desktop: boolean,
+  invocation: string,
+  platform: DesktopRuntimeSnapshot['platform'],
   agentName: string,
 ): string {
-  const platform = snapshot?.platform ?? 'unknown';
-  const invocation = cliInvocation(snapshot?.cliConfiguration, platform);
   const join =
     room === null
       ? `${invocation} join`
       : `${invocation} join --room ${quoteCliArgument(inviteRoomJoinName(room), platform)}`;
   const command =
     agentName === '' ? join : `${join} --name ${quoteCliArgument(agentName, platform)}`;
-  const text = t(room === null ? 'agentInvite.cli.messageLobby' : 'agentInvite.cli.message', {
+  return t(room === null ? 'agentInvite.cli.messageLobby' : 'agentInvite.cli.message', {
     command,
     guide: `${invocation} guide`,
     naming: agentName === '' ? t('agentInvite.naming.cli.choose') : '',
     room: room === null ? '' : inviteRoomJoinName(room),
   });
-  return desktop ? text : `${text}\n\n${t('agentInvite.cli.locate')}`;
 }
 
 /**

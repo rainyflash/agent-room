@@ -37,6 +37,8 @@ export type InviteRoom = {
   readonly catalogId?: string;
   /** 眼前是子房间时：它在哪间房下面、门是什么样、你管不管得了这一间（agent-room-ops#112）。 */
   readonly subRoom?: InviteSubRoom;
+  /** 公共大厅：没有房主，绑不了仓库，话里不请 Agent 往 `AGENTS.md` 里写它。 */
+  readonly publicLobby?: boolean;
 } | null;
 
 export type InviteSubRoom = {
