@@ -1888,9 +1888,13 @@ fn 所有工具的_schema_都公开强制的会话边界() {
             assert_eq!(schema["properties"]["code"]["maxLength"], 64);
             continue;
         }
-        // 认领仓库替这台电脑的账户做，不在会话里：只要仓库名，房间和等不等可选。
+        // 认领仓库替这台电脑的账户做，不在会话里：三样都可选（带了房间、仓库不在 github.com 上时只要说明）。
         if tool.name == "agent_room_claim_repository" {
-            assert_eq!(schema["required"], json!(["repo"]));
+            assert!(
+                schema
+                    .get("required")
+                    .is_none_or(|r| r.as_array().is_some_and(Vec::is_empty))
+            );
             let properties = schema["properties"].as_object().unwrap();
             assert_eq!(
                 properties.keys().map(String::as_str).collect::<Vec<_>>(),

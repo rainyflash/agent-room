@@ -188,19 +188,23 @@ def claim_line(data: Mapping[str, object], repository: str) -> tuple[str, str]:
 
 
 def claim_in_checkout(bridge: v.AuthorizedBridgeRuntime, root: Path, repository: str) -> tuple[str, str, str]:
-    """命令行认领、写 `AGENTS.md`；再跑一次是同一个认领，不再写。回分享链接、码和 `AGENTS.md` 的内容。"""
+    """命令行认领、在 `AGENTS.md` 里写一节；再跑一次是同一个认领，那一节不写第二遍。回分享链接、码和
+    `AGENTS.md` 的内容。"""
     first = project(bridge, root)
     share_url, code = claim_line(first, repository)
     if v.require_object(first.get("agentsFile"), "AGENTS.md").get("result") != "created":
         raise v.VerticalFailure("仓库里没有 AGENTS.md 时，命令行应该新建它。")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
-    if v.require_text(first.get("agentsLine"), "AGENTS.md 那一行") not in agents:
-        raise v.VerticalFailure("命令行写的 AGENTS.md 里没有那一行。")
+    section = v.require_text(first.get("agentsSection"), "AGENTS.md 那一节")
+    if section not in agents or share_url not in section:
+        raise v.VerticalFailure("命令行写的 AGENTS.md 里没有带这次分享链接的那一节。")
     again = project(bridge, root)
     if again.get("claimId") != first.get("claimId") or again.get("shareUrl") != share_url:
         raise v.VerticalFailure("同一个仓库再跑一次 agent-room project，应该是同一个认领。")
-    if v.require_object(again.get("agentsFile"), "AGENTS.md").get("result") != "already_linked":
-        raise v.VerticalFailure("AGENTS.md 里已经有这个链接时，命令行不该再写一行。")
+    if v.require_object(again.get("agentsFile"), "AGENTS.md").get("result") != "unchanged":
+        raise v.VerticalFailure("AGENTS.md 里已经是这一节时，命令行不该再改它。")
+    if (root / "AGENTS.md").read_text(encoding="utf-8") != agents:
+        raise v.VerticalFailure("再跑一次 agent-room project 把 AGENTS.md 改了。")
     return share_url, code, agents
 
 
@@ -651,10 +655,15 @@ def verify_project_rooms(
             catalog_id, agent, room = bind_and_enter(transport, repository, share_url)
             event_id = v.say_in_room(agent, room, first_line)
             room_is_public_and_unencrypted(catalog_id, repository)
-            # 认上了的仓库再跑一次命令行：直接回这间房，不再写文件。
+            # 认上了的仓库再跑一次命令行：直接回这间房，那一节已经在了，不再改文件。
             again = project(agent_bridge, root)
-            if again.get("status") != "bound" or again.get("catalogId") != catalog_id or "agentsFile" in again:
-                raise v.VerticalFailure("认上了的仓库再跑 agent-room project，应该直接回那间房、不碰 AGENTS.md。")
+            if (
+                again.get("status") != "bound"
+                or again.get("catalogId") != catalog_id
+                or v.require_object(again.get("agentsFile"), "AGENTS.md").get("result") != "unchanged"
+                or (root / "AGENTS.md").read_text(encoding="utf-8") != agents
+            ):
+                raise v.VerticalFailure("认上了的仓库再跑 agent-room project，应该直接回那间房、不改 AGENTS.md。")
             reads = github.paths()
             if f"/{repository}/HEAD/AGENTS.md" not in reads or not all(RAW_PATH.fullmatch(path) for path in reads):
                 raise v.VerticalFailure("核对认领时只该读这个仓库的 AGENTS.md、README.md。")

@@ -82,7 +82,7 @@ pub(crate) enum Command {
     },
     /// Give the repository you are working in a room, when the person asks. Claims the github.com
     /// repository (from git remote get-url origin, or --repo) for this computer's account and writes
-    /// one line into AGENTS.md at the repository root; prints the README badge line. Never commits or
+    /// an Agent Room section into AGENTS.md at the repository root; prints the README badge line. Never commits or
     /// pushes. Once the pushed line is recognised (usually within a few minutes) Agent Room creates a
     /// public room named owner/repo and binds it. Rerunning picks up the same claim.
     Project(ProjectArgs),
@@ -194,8 +194,8 @@ pub(crate) struct ProjectArgs {
     /// owner/repo on github.com, when the origin remote is not a github.com URL.
     #[arg(long)]
     pub(crate) repo: Option<String>,
-    /// Bind this public room the account owns instead of creating one: a room name from rooms or
-    /// its room number.
+    /// Use this room instead of creating one (a room name from rooms or its room number): a public
+    /// room the account owns is bound; for any other room only the AGENTS.md section is written.
     #[arg(long)]
     pub(crate) room: Option<String>,
     /// Wait until the pushed line is recognised (checks once a minute, up to 15 minutes), then
