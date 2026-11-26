@@ -169,6 +169,20 @@ class UsabilityAcceptanceTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertTrue(acceptance.changed_lines_match("@@ -1 +1 @@\n" + line, pattern))
 
+    def test_production_compose_counts_only_when_keycloak_settings_change(self):
+        # agent-room-ops#94 capped Keycloak's heap there: a bad value stops sign-in, so it needs a real sign-in.
+        self.assertFalse(any("infra/production/compose.yaml".startswith(path) for path in acceptance.LOGIN_PATHS))
+        pattern = acceptance.PARTIAL_LOGIN_PATHS["infra/production/compose.yaml"]
+        other_service = "\n".join([
+            "--- a/infra/production/compose.yaml", "+++ b/infra/production/compose.yaml", "@@ -18,2 +18,2 @@",
+            "-    max-size: 50m",
+            "+    max-size: 100m",
+        ])
+        self.assertFalse(acceptance.changed_lines_match(other_service, pattern))
+        for line in ("+      JAVA_OPTS_KC_HEAP: '-Xms64m -Xmx512m'", "-      KC_DB_POOL_MAX_SIZE: '20'"):
+            with self.subTest(line=line):
+                self.assertTrue(acceptance.changed_lines_match("@@ -1 +1 @@\n" + line, pattern))
+
     def test_identity_pages_and_image_count_as_login_code(self):
         # A theme or Keycloak change can break device approval, so it needs a fresh device authorization.
         for path in ("infra/identity/themes/agent-room/login/login-oauth-grant.ftl",

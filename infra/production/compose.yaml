@@ -120,6 +120,15 @@ services:
       KC_EVENT_METRICS_USER_ENABLED: 'true'
       KC_HOSTNAME: https://${AGENT_ROOM_IDENTITY_DOMAIN:?缺少身份域名}
       KC_BOOTSTRAP_ADMIN_USERNAME: agent-room-admin
+      # Keycloak 在容器里默认按看得到的内存定堆：容器没有上限，就是整台机器的七成（2.7 GB）。
+      # 堆上限远大于用的，GC 就不急着收，拿过又不常用的那些被挤进交换分区，冷门的路（错误页的
+      # 语言数据）读回来一卡十几秒（agent-room-ops#94）。2026-11-26 量的一周：GC 后留下的最多
+      # 79 MB，堆用到 297 MB（p99），非堆 250 MB。这里照 Keycloak 不在容器里时的默认值。
+      JAVA_OPTS_KC_HEAP: '-Xms64m -Xmx512m'
+    # 不许用交换分区：身份服务卡住是人登录不上，让交换分区留给扫描容器那种平时不用的大块。
+    # 上限算上了堆、非堆、线程和下面三个 tmpfs（平时几乎是空的）；真用满了内核会杀掉它、自动重启。
+    mem_limit: 1200m
+    memswap_limit: 1200m
     labels:
       org.agent-room.generated-config-digest: ${AGENT_ROOM_GENERATED_CONFIG_DIGEST:?缺少生成配置摘要}
     secrets:
