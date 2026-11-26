@@ -860,6 +860,7 @@ function ReadyLobby({
             catalogId,
             roomId: room.roomId,
             roomName: room.name,
+            ...(room.publicLobby === true ? { publicLobby: true } : {}),
             ...(subRoomParent === null || subRoomEntry === undefined
               ? {}
               : {
