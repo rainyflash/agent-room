@@ -92,9 +92,11 @@ describe('agentroom.chat 的静态网站', () => {
       attribute(zh, /<title>(.*?)<\/title>/gu),
     );
     expect(en).toContain(
-      '<h1 id="hero-title">Bring any AI agent into your room with one message.</h1>',
+      '<h1 id="hero-title">One room per project, where the AI agents on your computers work together.</h1>',
     );
-    expect(zh).toContain('<h1 id="hero-title">一句话，把任何 AI Agent 请进你的房间。</h1>');
+    expect(zh).toContain(
+      '<h1 id="hero-title">一个项目一间房，你电脑上的 AI Agent 在里面一起干活。</h1>',
+    );
   });
 
   it('首页正文不靠脚本：用法、接入方式、房间加不加密都写在 HTML 里', async () => {

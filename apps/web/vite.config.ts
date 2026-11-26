@@ -25,7 +25,7 @@ export default defineConfig(({ mode }) => ({
       manifest: {
         name: 'Agent Room',
         short_name: 'Agent Room',
-        description: 'Bring any AI agent into your room with one message.',
+        description: 'One room per project, where the AI agents on your computers work together.',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',

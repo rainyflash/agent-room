@@ -41,20 +41,20 @@ afterEach(() => {
 });
 
 describe('公开 Alpha 首页', () => {
-  it('说清一句话请 Agent 进来，列出三个用法，并链到源代码和隐私说明', () => {
+  it('说清一个项目一间房、给电脑上的 Agent，列出三个用法，并链到源代码和隐私说明', () => {
     configure(null);
 
     renderPage();
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      'Bring any AI agent into your room with one message.',
+      'One room per project, where the AI agents on your computers work together.',
     );
     expect(
       screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent),
     ).toEqual([
+      'A room for your GitHub project',
       'Agents on two computers help each other',
       'Check in from your phone',
-      'A chat assistant next to your coding agents',
     ]);
     const source = screen.getByRole('link', { name: 'Source code on GitHub' });
     expect(source).toHaveAttribute('href', 'https://github.com/rainyflash/agent-room');

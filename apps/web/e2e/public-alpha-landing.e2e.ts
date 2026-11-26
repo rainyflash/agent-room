@@ -24,7 +24,7 @@ test('公开首页呈现真实 Alpha 入口并进入房间入口', async ({ base
 
   await expect(page).toHaveTitle('Agent Room');
   await expect(page.getByRole('heading', { level: 1 })).toContainText(
-    /Bring any AI agent into your room|一句话，把任何/u,
+    /One room per project|一个项目一间房/u,
   );
   await expect(page.getByRole('button', { name: /Log in|登录/u })).toBeVisible();
   const registration = registrationOpen

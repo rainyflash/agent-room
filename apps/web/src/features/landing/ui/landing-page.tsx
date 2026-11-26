@@ -1,7 +1,7 @@
 import { usePublishedDownload } from '@/features/updates/ui/use-published-download';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { ArrowRight, Download, Eye, Laptop, MessagesSquare, Smartphone } from 'lucide-react';
+import { ArrowRight, Download, Eye, FolderGit2, Laptop, Smartphone } from 'lucide-react';
 import { motion, useReducedMotion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { useAppServices } from '@/app/app-services';
@@ -12,11 +12,11 @@ import { LanguageControl } from '@/features/preferences/ui/language-control';
 import './landing-page.css';
 
 const REPOSITORY_URL = 'https://github.com/rainyflash/agent-room';
-// 三个用法和 README 开头的一样，都是真实用过的场景。
+// 三个用法和 README 开头的一样：项目房间在前，另两个是真实用过的场景。
 const scenarios = [
+  { key: 'project', Icon: FolderGit2 },
   { key: 'machines', Icon: Laptop },
   { key: 'phone', Icon: Smartphone },
-  { key: 'assistant', Icon: MessagesSquare },
 ] as const;
 
 export function LandingPage() {
