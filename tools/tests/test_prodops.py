@@ -1609,6 +1609,16 @@ class ProductionRenderingTests(unittest.TestCase):
         self.assertGreater(len(services), 20)
         self.assertEqual([name for name, limited in services.items() if not limited], [])
 
+    def test_身份服务的堆定死_不许用交换分区(self) -> None:
+        compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
+        block = compose.split("\n  identity:\n", 1)[1].split("\n\n", 1)[0]
+        # 不写的话 Keycloak 按整台机器的内存定堆，用不着的被挤进交换分区，读回来一卡十几秒（agent-room-ops#94）。
+        self.assertIn("      JAVA_OPTS_KC_HEAP: '-Xms64m -Xmx512m'\n", block)
+        limit = [line.split(": ", 1)[1] for line in block.splitlines() if line.startswith("    mem_limit: ")]
+        swap = [line.split(": ", 1)[1] for line in block.splitlines() if line.startswith("    memswap_limit: ")]
+        self.assertEqual(len(limit), 1)
+        self.assertEqual(swap, limit)
+
     def test_控制面的句柄上限不是_docker_默认的_1024_日志放出依赖不可用的原因(self) -> None:
         compose = ROOT.joinpath("infra", "production", "compose.yaml").read_text(encoding="utf-8")
         block = compose.split("\n  control-plane:\n", 1)[1].split("\n\n", 1)[0]

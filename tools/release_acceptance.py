@@ -53,6 +53,10 @@ LOGIN_PATHS = (
 PARTIAL_LOGIN_PATHS: dict[str, re.Pattern[str]] = {
     "apps/bridge/src/config.rs": re.compile(
         r"OIDC|oidc|DEVICE_SESSION|device_session|SECURE_STORAGE|secure_storage|DEVICE_LABEL|device_label"),
+    # Keycloak's runtime settings (heap, database pool, hostname) sit in the production compose file next to
+    # every other service. Changing them can break sign-in and device approval; other services' lines must not
+    # force a fresh device authorization.
+    "infra/production/compose.yaml": re.compile(r"\bKC_|JAVA_OPTS_KC"),
 }
 LoginChanges = Callable[[str, str], list[str]]
 # A release that moves the product to another server cannot carry the old server's login, identity or

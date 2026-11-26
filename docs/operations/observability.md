@@ -135,6 +135,7 @@ Bridge 没有服务端容器可供停止，因此脚本对它运行相同规则�
 
 - `docker stats --no-stream` 看各容器占多少；`for f in /proc/[0-9]*/status; do awk '/^Name:/{n=$2} /^VmSwap:/{print $2, n}' $f; done | sort -rn | head` 看谁被换出去最多。平时大头是 ClamAV（约 1 GB）和身份服务（Java，约 500 MB）。
 - 某个容器一直在涨，看它是不是漏内存，重建它能先顶住。
+- 身份服务（Keycloak）的堆定死在 512 MB、整个容器 1200 MB 且不许用交换分区（compose 的 `JAVA_OPTS_KC_HEAP`、`mem_limit`、`memswap_limit`）。以前它默认拿整台机器的七成当堆上限，2026-11-26 交换分区里有它 270 MB，错误页一卡十几秒（agent-room-ops#94）。被内核杀掉的话 `docker inspect` 的 `OOMKilled` 是 true、容器自己会重启，OOM 告警也会响；那时看 Grafana 里 `jvm_memory_used_bytes` 是堆还是非堆涨上去了，再改这两个数。宿主的 `vm.swappiness` 早就是 10（`/etc/sysctl.d/99-agent-room.conf`）。
 - 用户多了以后整体不够，就该看升配了，先跟维护者说。
 
 ### ClamAV 每天更新病毒库
