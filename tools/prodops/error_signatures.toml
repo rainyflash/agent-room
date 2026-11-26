@@ -211,6 +211,11 @@ reason = "电脑授权用的设备码发出后一直没人批准，到期了，B
 
 [[ignore]]
 service = "identity"
+summary = '^OAUTH2_DEVICE_CODE_TO_TOKEN_ERROR error=slow_down( clientId=agent-room-bridge)?$'
+reason = "电脑授权等批准时，Bridge 换令牌问得比 Keycloak 允许的间隔勤了一点，Keycloak 回 RFC 8628 规定的 slow_down，客户端放慢再问即可，授权没受影响（2026-11-26 生产上 1 次，agent-room-ops#123）。只认 slow_down 加 agent-room-bridge：同一类事件的别的错误（invalid_client、设备码被拒）照常会报；成片出现才要查 Bridge 的轮询间隔有没有照服务器给的 interval 走"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=invalid_registration$'
 reason = "注册表单没填对（密码不合要求、两次不一样、少填了），页面上直接提示了；2026-10-25 生产上那次，同一个浏览器两分钟后就登录上了"
 
