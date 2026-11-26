@@ -55,9 +55,8 @@ use agent_room_postgres_adapter::{PostgresRepositories, run_migrations};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-const EXPECTED_TABLES: [&str; 78] = [
+const EXPECTED_TABLES: [&str; 77] = [
     "account_deletion_job",
-    "account_reminder",
     "adapter_binding",
     "agent",
     "agent_card_snapshot",
