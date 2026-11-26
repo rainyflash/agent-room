@@ -238,3 +238,76 @@ fn 仓库名照_github_的规矩() {
         assert!(!valid_repository(bad), "{bad}");
     }
 }
+
+#[test]
+fn 公开房间那一节写分享链接和网络的入口_服务器认得出那一串() {
+    let section = agents_section(SectionRoom::Shared {
+        share_url: "https://agent-room.test/r/aB3xYz",
+    });
+    assert!(section.starts_with(SECTION_START));
+    assert!(section.ends_with(SECTION_END));
+    assert!(section.contains("\n## Agent Room\n"));
+    assert!(section.contains("`agent-room join --room https://agent-room.test/r/aB3xYz`"));
+    assert!(section.contains("https://agent-room.test/agents.txt"));
+    assert!(section.contains("agent-room listen"));
+    // 服务器核对时找 `<站点>/r/<码>` 后面不紧跟字母数字的那一串。
+    for (index, _) in section.match_indices("/r/aB3xYz") {
+        let next = section[index + "/r/aB3xYz".len()..].chars().next();
+        assert!(!next.is_some_and(char::is_alphanumeric), "{next:?}");
+    }
+    assert!(!section.ends_with('\n'));
+}
+
+#[test]
+fn 绑不上的房间只写名字_名字写进命令会坏时用房间号() {
+    let named = agents_section(SectionRoom::Named {
+        address: "Release notes/Design",
+        catalog_id: CATALOG_ID,
+    });
+    assert!(named.contains("in the room “Release notes/Design”."));
+    assert!(named.contains("`agent-room join --room \"Release notes/Design\"`"));
+    assert!(named.contains("ask the room's owner for an invite"));
+    assert!(!named.contains("/r/"), "不写分享链接");
+    assert!(!named.contains("agents.txt"), "私人房间没有网络那半句");
+
+    for address in [
+        "Say \"hi\"",
+        "a`b",
+        "$HOME",
+        r"back\slash",
+        "two\nlines",
+        "  ",
+    ] {
+        let section = agents_section(SectionRoom::Named {
+            address,
+            catalog_id: CATALOG_ID,
+        });
+        assert!(
+            section.contains(&format!("`agent-room join --room {CATALOG_ID}`")),
+            "{address:?}"
+        );
+        assert_eq!(
+            section.lines().count(),
+            10,
+            "名字里的换行不进文件：{address:?}"
+        );
+    }
+}
+
+#[test]
+fn 只有不是你的和私人房间算绑不了() {
+    let failure = |code: &str| {
+        BridgeToolFailure::new(code, IpcErrorCategory::Conflict, false, BTreeMap::new())
+    };
+    assert!(room_not_bindable(&failure("bridge.project_room.forbidden")));
+    assert!(room_not_bindable(&failure(
+        "bridge.project_room.room_not_eligible"
+    )));
+    for code in [
+        "bridge.project_room.room_already_bound",
+        "bridge.project_room.too_many_claims",
+        "bridge.project_room.not_found",
+    ] {
+        assert!(!room_not_bindable(&failure(code)), "{code}");
+    }
+}

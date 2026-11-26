@@ -1,4 +1,4 @@
-//! `agent_room_claim_repository`：只认领、核对，回那一行和徽章；不开会话、不碰文件。
+//! `agent_room_claim_repository`：只认领、核对，回那一节和徽章；绑不上的房间只回那一节说明。不开会话、不碰文件。
 
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -134,7 +134,7 @@ fn bound() -> IpcRepositoryClaim {
 
 fn input(repo: &str, room: Option<&str>, wait: bool) -> Parameters<ClaimRepositoryInput> {
     Parameters(ClaimRepositoryInput {
-        repo: repo.to_owned(),
+        repo: (!repo.is_empty()).then(|| repo.to_owned()),
         room: room.map(str::to_owned),
         wait,
     })
@@ -145,7 +145,7 @@ fn structured(result: &CallToolResult) -> &Value {
 }
 
 #[tokio::test]
-async fn 认领回那一行和徽章_由_agent_自己写进文件() {
+async fn 认领回那一节和徽章_由_agent_自己写进文件() {
     let bridge = ClaimsBridge::claiming([Ok(pending())]);
     let server = AgentRoomMcpServer::new(bridge.clone());
 
@@ -158,7 +158,13 @@ async fn 认领回那一行和徽章_由_agent_自己写进文件() {
     assert_eq!(value["status"], "pending");
     assert_eq!(value["repository"], "octo/hello");
     assert_eq!(value["claimId"], CLAIM_ID);
-    assert_eq!(value["agentsLine"], pending().agents_line);
+    assert_eq!(
+        value["agentsSection"],
+        project_rooms::agents_section(SectionRoom::Shared {
+            share_url: &pending().share_url
+        })
+    );
+    assert!(value.get("agentsLine").is_none(), "只给那一节，免得写两份");
     assert_eq!(value["readmeBadge"], pending().badge_markdown);
     assert_eq!(value["shareUrl"], pending().share_url);
     assert_eq!(value["lastCheck"]["result"], "not_in_repository");
@@ -312,4 +318,50 @@ fn 认领的每种拒绝都有说法() {
     ] {
         assert!(recovery_for(code).is_some(), "{code}");
     }
+}
+
+#[tokio::test]
+async fn 绑不上的房间只回那一节说明_不认领() {
+    for code in [
+        "bridge.project_room.room_not_eligible",
+        "bridge.project_room.forbidden",
+    ] {
+        let bridge = ClaimsBridge::claiming([Err(code)]);
+        let server = AgentRoomMcpServer::new(bridge.clone());
+
+        let result = server
+            .claim_repository(input("octo/hello", Some("Octo lounge"), false))
+            .await;
+
+        assert_eq!(result.is_error, Some(false), "{code}");
+        let value = structured(&result);
+        assert_eq!(value["status"], "guide");
+        assert_eq!(value["room"], "Octo lounge");
+        assert_eq!(value["next"], GUIDE_NOT_BINDABLE);
+        let section = value["agentsSection"].as_str().unwrap();
+        assert!(section.contains("`agent-room join --room \"Octo lounge\"`"));
+        assert!(!section.contains("/r/"), "不写链接");
+        assert_eq!(bridge.checks_made(), 0);
+    }
+}
+
+#[tokio::test]
+async fn 不在_github_上的仓库带了_room_也回说明_没带_room_照旧要_repo() {
+    let bridge = ClaimsBridge::claiming([]);
+    let server = AgentRoomMcpServer::new(bridge.clone());
+
+    let result = server
+        .claim_repository(input("", Some("Octo lounge"), false))
+        .await;
+    assert_eq!(result.is_error, Some(false));
+    assert_eq!(structured(&result)["status"], "guide");
+    assert_eq!(structured(&result)["next"], GUIDE_NOT_GITHUB);
+    assert!(bridge.claim_requests().is_empty(), "不认领");
+
+    let missing = server.claim_repository(input("", None, false)).await;
+    assert_eq!(missing.is_error, Some(true));
+    assert_eq!(
+        structured(&missing)["code"],
+        "bridge.ipc.repository_invalid"
+    );
 }

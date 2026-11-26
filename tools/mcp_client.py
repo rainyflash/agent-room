@@ -50,10 +50,9 @@ SESSIONLESS_TOOLS: Final = (
     "agent_room_list_rooms", "agent_room_join", "agent_room_create_room",
     "agent_room_claim_repository",
 )
-# 不带会话的工具里必填的参数：建房间要房间名，认领仓库要仓库名，别的都不要。
+# 不带会话的工具里必填的参数：建房间要房间名，别的都不要（认领仓库带了房间时可以不给仓库名）。
 SESSIONLESS_REQUIRED: Final = {
     "agent_room_create_room": ["name"],
-    "agent_room_claim_repository": ["repo"],
 }
 AGENT_ROOM_TOOLS: Final = (
     "agent_room_open_session", "agent_room_close_session", *SESSION_SCOPED_TOOLS,
@@ -450,7 +449,7 @@ def validate_session_tool_schemas(tools: Sequence[object]) -> None:
 
 
 def validate_sessionless_tool_schema(name: str, schema: Mapping[str, object]) -> None:
-    """不带会话的工具不能接收会话标识，也不能放行额外字段；建房间必须给房间名，认领仓库必须给仓库名。"""
+    """不带会话的工具不能接收会话标识，也不能放行额外字段；建房间必须给房间名；认领仓库带了房间时可以不给仓库名。"""
     properties = schema.get("properties", {})
     required = schema.get("required", [])
     if (

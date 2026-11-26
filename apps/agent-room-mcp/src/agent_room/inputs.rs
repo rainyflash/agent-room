@@ -681,14 +681,14 @@ impl From<ReceptionHostInput> for agent_room_bridge_ipc::IpcReceptionHost {
 }
 
 /// 给仓库一间房（`specs/redesign/project-rooms.md` 3P-4c）：参数和命令行 `agent-room project` 一样，
-/// 只是 `repo` 必填（MCP 服务不知道 Agent 在哪个目录里干活，由 Agent 自己读 git remote）。
+/// `repo` 由 Agent 自己读 git remote（MCP 服务不知道它在哪个目录里干活）；带了 `room`、仓库又不在 github.com 上时可以不填，只要那一节说明（`specs/redesign/project-front-door.md`）。
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClaimRepositoryInput {
-    /// The github.com repository as owner/repo, read from git remote get-url origin in the repository you are working in.
+    /// The github.com repository as owner/repo, read from git remote get-url origin in the repository you are working in. Leave it out only with room, when the repository isn't on github.com.
     #[schemars(length(min = 3, max = 140))]
-    pub repo: String,
-    /// Bind this public room the account owns instead of having a new one created: a room name from `agent_room_list_rooms` or its room number.
+    pub repo: Option<String>,
+    /// Use this room instead of having a new one created (a room name from `agent_room_list_rooms` or its room number): a public room the account owns is bound to the repository; for any other room nothing is claimed and agentsSection only says how to use it.
     #[schemars(length(min = 1, max = 256))]
     pub room: Option<String>,
     /// true checks once a minute until the pushed line is recognised, for up to 15 minutes; otherwise the claim comes back at once.
