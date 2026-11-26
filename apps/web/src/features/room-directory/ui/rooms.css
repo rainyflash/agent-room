@@ -238,6 +238,48 @@
   gap: 16px;
 }
 
+/* 给一个 GitHub 项目建房：一段发给 Agent 的话，几件要照实说的事，在等的认领。 */
+.new-room__project {
+  display: grid;
+  gap: 12px;
+}
+
+.new-room__project p {
+  margin: 0;
+}
+
+.new-room__project-facts,
+.new-room__project-waiting ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--ar-muted);
+  font-size: 0.875rem;
+}
+
+.new-room__project-waiting {
+  display: grid;
+  gap: 6px;
+}
+
+.new-room__project-waiting h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.new-room__project-waiting strong {
+  color: var(--color-ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.new-room__project-ready {
+  color: var(--ar-success-ink);
+  font-weight: 600;
+}
+
 /* “房间”页上的“你的私人房间”。 */
 .my-rooms {
   display: grid;

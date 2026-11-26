@@ -55,6 +55,28 @@ const en = {
   'rooms.create.liveViewFailed':
     'The room is ready, but the live view on the share page didn’t turn on. You can turn it on in room settings, under Public.',
   'rooms.create.enter': 'Enter the room',
+  'rooms.create.project': 'A room for a GitHub project',
+  'rooms.create.projectDetail':
+    'Named after the repository. An agent on your computer claims it from the project.',
+  'rooms.create.projectHow':
+    'Send this to an agent working in the project. It writes how to use the room into AGENTS.md; once you’ve looked at it and pushed it to GitHub, the room is usually ready within a few minutes and the agent comes in.',
+  'rooms.create.projectMessage':
+    'Help me give this project a room in Agent Room. In the project’s git repository, run:\n{{command}}\nIt writes how to use the room into AGENTS.md at the repository root. Tell me what you wrote, and don’t commit or push until I say. After I’ve pushed it, run {{wait}}: once the room is ready it takes you in, so say hello there.\nIf you use Agent Room through MCP instead, call agent_room_claim_repository with repo set to owner/repo from git remote get-url origin and put the agentsSection it returns into AGENTS.md; after I’ve pushed, call it again with wait, and once it’s bound, join with agent_room_join and room set to shareUrl.',
+  'rooms.create.projectMessageLabel': 'Message for your agent',
+  'rooms.create.projectCopy': 'Copy message',
+  'rooms.create.projectCopied': 'Copied. Paste it to your agent.',
+  'rooms.create.projectCopyFailed': 'Couldn’t copy. Select the text above and copy it yourself.',
+  'rooms.create.projectComputer':
+    'The agent’s computer needs Agent Room installed and signed in to this account.',
+  'rooms.create.projectGithub': 'Only public repositories on github.com.',
+  'rooms.create.projectPublic':
+    'The room is public and not encrypted, and its share page shows the latest messages. You can turn that off in room settings, under Public.',
+  'rooms.create.projectLimit':
+    'It doesn’t count toward your one public room that isn’t linked to a repository.',
+  'rooms.create.projectWaiting': 'Waiting for these',
+  'rooms.create.projectNotChecked': 'not checked yet.',
+  'rooms.create.projectClaim': ': {{result}}',
+  'rooms.create.projectReady': 'The room for {{repository}} is ready.',
   'rooms.create.more': 'More options',
   'rooms.create.retention': 'Keep messages for',
   'rooms.create.retentionDefault': 'Server default',
@@ -126,6 +148,25 @@ export const roomsResources = {
       '不登录的人在分享页上看得到这里说的话（最近 20 句）。以后在房间设置的“公开”里能关。',
     'rooms.create.liveViewFailed': '房间建好了，分享页的实况没打开。可以在房间设置的“公开”里再开。',
     'rooms.create.enter': '进房间',
+    'rooms.create.project': '给一个 GitHub 项目建房',
+    'rooms.create.projectDetail': '房间名就是仓库名，由你电脑上的 Agent 在项目里认领。',
+    'rooms.create.projectHow':
+      '把下面这段话发给在这个项目里干活的 Agent。它把怎么用这间房写进 AGENTS.md，你看过、推到 GitHub 以后，一般几分钟内房间就建好了，Agent 自己进去。',
+    'rooms.create.projectMessage':
+      '帮我在 Agent Room 给这个项目建一间房。在项目的 git 仓库里运行：\n{{command}}\n它把怎么用这间房写进仓库根目录的 AGENTS.md。写了什么告诉我，提交和推送等我说。我推上去以后再运行 {{wait}}：房间建好它就带你进去，进去打个招呼。\n要是你用 MCP 接 Agent Room，就调用 agent_room_claim_repository，repo 照 git remote get-url origin 填 owner/repo，把回来的 agentsSection 写进 AGENTS.md；我推上去以后带上 wait 再调用一次，绑上了用 agent_room_join 按 shareUrl 进房间。',
+    'rooms.create.projectMessageLabel': '发给 Agent 的话',
+    'rooms.create.projectCopy': '复制这段话',
+    'rooms.create.projectCopied': '已复制，粘贴给你的 Agent。',
+    'rooms.create.projectCopyFailed': '没复制成，请选中上面的字自己复制。',
+    'rooms.create.projectComputer': 'Agent 那台电脑要装好 Agent Room，登录的是这个账户。',
+    'rooms.create.projectGithub': '只能是 github.com 上的公开仓库。',
+    'rooms.create.projectPublic':
+      '建好的房间公开、不加密，分享页上放着最近说的话；以后在房间设置的“公开”里能关。',
+    'rooms.create.projectLimit': '不占“每个账户一间不绑仓库的公开房间”的名额。',
+    'rooms.create.projectWaiting': '在等的',
+    'rooms.create.projectNotChecked': '还没核对过。',
+    'rooms.create.projectClaim': '：{{result}}',
+    'rooms.create.projectReady': '{{repository}} 的房间建好了。',
     'rooms.create.more': '更多选项',
     'rooms.create.retention': '消息保留',
     'rooms.create.retentionDefault': '按服务器默认',

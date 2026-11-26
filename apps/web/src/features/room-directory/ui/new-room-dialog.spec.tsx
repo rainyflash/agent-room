@@ -11,7 +11,12 @@ import type {
   PrivateRoom,
   PrivateRoomFailure,
 } from '@/features/private-rooms/domain/private-room';
+import type { RepositoryClaim } from '@/features/private-rooms/domain/project-rooms';
 import { NewRoomForm } from '@/features/room-directory/ui/new-room-dialog';
+import {
+  PROJECT_CLAIM_POLL_MS,
+  type ProjectRoomSource,
+} from '@/features/room-directory/ui/new-project-room';
 import { i18n, initializeI18n } from '@/shared/i18n/i18n';
 import { err, ok, type Result } from '@/shared/result';
 
@@ -54,6 +59,7 @@ function renderForm(
   onCreate: CreateCall = vi.fn<CreateCall>(() => Promise.resolve(ok(created))),
   initiallyListed = false,
   onTurnOnLiveView?: LiveViewCall,
+  projectRoom?: ProjectRoomSource,
 ) {
   const onClose = vi.fn();
   const onEnter = vi.fn<EnterCall>(() => Promise.resolve());
@@ -65,6 +71,7 @@ function renderForm(
         onCreate={onCreate}
         onEnter={onEnter}
         onTurnOnLiveView={onTurnOnLiveView}
+        projectRoom={projectRoom}
       />
     </I18nextProvider>,
   );
@@ -408,5 +415,159 @@ describe('新建时就公开的房间：分享页放实况', () => {
       expect(onClose).toHaveBeenCalledOnce();
     });
     expect(turnOn).toHaveBeenCalledOnce();
+  });
+
+  describe('给一个 GitHub 项目建房', () => {
+    const projectRoomName = /^A room for a GitHub project/u;
+    const projectRoomBox = () => screen.queryByRole('checkbox', { name: projectRoomName });
+    const chooseProjectRoom = () => {
+      fireEvent.click(screen.getByRole('checkbox', { name: projectRoomName }));
+    };
+
+    function waitingClaim(repository: string, catalogId: string | null = null): RepositoryClaim {
+      return {
+        agentsLine: `Agent Room: https://agentroom.test/r/aB3xYz`,
+        badgeMarkdown: '[![Agent Room](b)](https://agentroom.test/r/aB3xYz)',
+        catalogId,
+        claimId: '0198b601-77a2-7f41-b4f4-940f29195190',
+        claimedAtUnixMs: 1_000,
+        lastCheck: { atUnixMs: 2_000, result: 'not_in_repository' },
+        repository,
+        shareCode: 'aB3xYz',
+        shareUrl: 'https://agentroom.test/r/aB3xYz',
+        status: 'pending',
+      };
+    }
+
+    function source(overrides: Partial<ProjectRoomSource> = {}): ProjectRoomSource {
+      return {
+        claims: vi.fn(() => Promise.resolve(ok([]))),
+        findRoom: vi.fn(() => Promise.resolve(null)),
+        invocation: 'agent-room',
+        locate: true,
+        ...overrides,
+      };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('只在选公开时有；勾上以后名字、用途、怎么进、实况和更多选项都收起来，换成发给 Agent 的话', () => {
+      renderForm(undefined, false, vi.fn<LiveViewCall>(), source());
+
+      expect(projectRoomBox()).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole('radio', { name: /^Public/u }));
+      const box = screen.getByRole('checkbox', { name: projectRoomName });
+      expect(box).not.toBeChecked();
+      expect(box).toHaveAccessibleName(/Named after the repository/u);
+      chooseProjectRoom();
+
+      expect(screen.queryByRole('textbox', { name: 'Name' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('textbox', { name: 'Purpose' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: 'How people join' })).not.toBeInTheDocument();
+      expect(liveViewBox()).not.toBeInTheDocument();
+      expect(screen.queryByText('More options')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Public rooms are not encrypted/u)).not.toBeInTheDocument();
+      // 房间由服务器认上以后建：没有“建好进去”，明黄的只有复制。
+      expect(screen.queryByRole('button', { name: /Create and enter/u })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy message' })).toHaveClass(
+        'ar-button--primary',
+      );
+      const message = screen.getByText(/Help me give this project a room/u).textContent;
+      expect(message).toContain('\nagent-room project\n');
+      expect(message).toContain('run agent-room project --wait');
+      expect(message).toContain('agent_room_claim_repository');
+      expect(message).toContain('don’t commit or push until I say');
+      expect(message).toMatch(/%LOCALAPPDATA%\\Agent Room\\agent-room\.exe/u);
+      expect(screen.getByText('Only public repositories on github.com.')).toBeInTheDocument();
+      expect(screen.getByText(/The room is public and not encrypted/u)).toBeInTheDocument();
+      expect(screen.getByText(/doesn’t count toward your one public room/u)).toBeInTheDocument();
+
+      // 改回私密：照常建一间普通的房。
+      fireEvent.click(screen.getByRole('radio', { name: /^Private/u }));
+      expect(projectRoomBox()).not.toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Name' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Create and enter/u })).toBeInTheDocument();
+    });
+
+    it('桌面端写实际安装路径，不说去哪找', () => {
+      renderForm(
+        undefined,
+        true,
+        undefined,
+        source({ invocation: "& 'C:\\Agent Room\\agent-room.exe'", locate: false }),
+      );
+      chooseProjectRoom();
+      const message = screen.getByText(/Help me give this project a room/u).textContent;
+      expect(message).toContain("& 'C:\\Agent Room\\agent-room.exe' project --wait");
+      expect(message).not.toContain('%LOCALAPPDATA%');
+    });
+
+    it('列出在等的认领；一个没了、找到了同名的房，就给“进房间”', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const ready: PrivateRoom = { ...created, name: 'octo/hello' };
+      const claims = vi
+        .fn<ProjectRoomSource['claims']>()
+        .mockResolvedValueOnce(
+          ok([waitingClaim('octo/hello'), waitingClaim('octo/bound-elsewhere', created.catalogId)]),
+        )
+        .mockResolvedValue(ok([]));
+      const findRoom = vi.fn<ProjectRoomSource['findRoom']>(() => Promise.resolve(ready));
+      const { onClose, onEnter } = renderForm(
+        undefined,
+        true,
+        undefined,
+        source({ claims, findRoom }),
+      );
+      chooseProjectRoom();
+
+      const waiting = await screen.findByRole('heading', { name: 'Waiting for these' });
+      expect(waiting.parentElement).toHaveTextContent(
+        /octo\/hello: the line isn’t in the repository yet/u,
+      );
+      // 绑已有房间的认领不在这里。
+      expect(screen.queryByText('octo/bound-elsewhere')).not.toBeInTheDocument();
+      expect(findRoom).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(PROJECT_CLAIM_POLL_MS);
+      expect(await screen.findByRole('status')).toHaveTextContent(
+        'The room for octo/hello is ready.',
+      );
+      expect(findRoom).toHaveBeenCalledWith('octo/hello');
+      expect(screen.queryByRole('heading', { name: 'Waiting for these' })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy message' })).toHaveClass('ar-button--ghost');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Enter the room' }));
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce();
+      });
+      expect(onEnter).toHaveBeenCalledWith(ready);
+    });
+
+    it('认领没了却找不到房间（过期、撤掉了）：只是从列表里消失', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const claims = vi
+        .fn<ProjectRoomSource['claims']>()
+        .mockResolvedValueOnce(ok([waitingClaim('octo/hello')]))
+        .mockResolvedValue(ok([]));
+      const findRoom = vi.fn<ProjectRoomSource['findRoom']>(() => Promise.resolve(null));
+      renderForm(undefined, true, undefined, source({ claims, findRoom }));
+      chooseProjectRoom();
+      await screen.findByRole('heading', { name: 'Waiting for these' });
+
+      await vi.advanceTimersByTimeAsync(PROJECT_CLAIM_POLL_MS);
+      await waitFor(() => {
+        expect(findRoom).toHaveBeenCalledWith('octo/hello');
+      });
+      expect(screen.queryByRole('heading', { name: 'Waiting for these' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Enter the room' })).not.toBeInTheDocument();
+    });
+
+    it('没有认领这项服务时不给这个选项', () => {
+      renderForm(undefined, true);
+      expect(projectRoomBox()).not.toBeInTheDocument();
+    });
   });
 });
