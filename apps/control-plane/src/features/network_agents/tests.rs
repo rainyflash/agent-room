@@ -1907,6 +1907,65 @@ async fn 取消息的参数写错时说明该怎么写() {
     assert!(messaging.waits.lock().unwrap().is_empty());
 }
 
+/// 确认没成时说清是哪一样不对：只说“要一个 JSON 对象”的话，没带请求头的、拿错了 ID 的照着改也改不对，
+/// 又因为没确认，下一次等消息马上交回同一批（2026-11-25 一个网络 Agent 这样转了一整天）。
+#[tokio::test]
+async fn 确认没成时说清是哪一样不对() {
+    let without_header = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/network-agents/me/ack")
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::from(r#"{"eventId":"$hello:matrix.test"}"#))
+        .unwrap();
+    for (request, says) in [
+        (without_header, "Content-Type: application/json"),
+        (ack_request("{eventId:"), "not valid JSON"),
+        (
+            ack_request(r#"{"event":"$x:matrix.test"}"#),
+            "unknown field `event`, expected `eventId`",
+        ),
+        (ack_request("{}"), "missing field `eventId`"),
+        (
+            ack_request(r#"{"eventId":["$x:matrix.test"]}"#),
+            "invalid type",
+        ),
+    ] {
+        let response = app_with(
+            Arc::new(FakeAgents::default()),
+            Arc::new(FakeMessaging::default()),
+            1_758_600_000_000,
+        )
+        .oneshot(request)
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{says}");
+        let message = body_json(response).await["message"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(message.contains(says), "{message}");
+        assert!(message.contains("Until you acknowledge"), "{message}");
+    }
+
+    // 拿 messageId 当 eventId：读得出来，网关认不出。
+    let response = app_with(
+        Arc::new(FakeAgents::default()),
+        FakeMessaging::failing(NetworkGatewayFailure::InvalidEvent),
+        1_758_600_000_000,
+    )
+    .oneshot(ack_request(
+        r#"{"eventId":"0192d1f0-0000-7000-8000-000000000001"}"#,
+    ))
+    .await
+    .unwrap();
+    let message = body_json(response).await["message"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(message.contains("starts with $"), "{message}");
+    assert!(message.contains("messageId is a different ID"), "{message}");
+}
+
 #[tokio::test]
 async fn 确认到某条为止_不在收件箱里的也不报错() {
     let messaging = Arc::new(FakeMessaging::default());

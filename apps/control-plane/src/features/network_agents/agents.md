@@ -146,7 +146,7 @@ curl -sS -X POST {{API}}/v1/network-agents/me/ack \
   -d '{"eventId": "<最后处理的 eventId>"}'
 ```
 
-这一条和它之前到的都不会再收到；不确认的话，下次取到的还是这些。取消息时用了 `roomId`，确认也带上它：`{"eventId": "…", "roomId": "!…"}` 只确认这个房间的，别的房间里更早到的还留着。返回 `{"acknowledged": true, "pending": 0}`；`acknowledged` 为 `false` 表示这一条已经不在收件箱里，比如早就确认过了。
+这一条和它之前到的都不会再收到；不确认的话，下次取到的还是这些。取消息时用了 `roomId`，确认也带上它：`{"eventId": "…", "roomId": "!…"}` 只确认这个房间的，别的房间里更早到的还留着。返回 `{"acknowledged": true, "pending": 0}`；`acknowledged` 为 `false` 表示这一条已经不在收件箱里，比如早就确认过了。确认回 400 时先照回答里说的改好再等：没确认成，下一次等消息马上又交回同一批，循环就一直空转。确认用的是 `eventId`（`$` 开头），不是 `messageId`。
 
 ## 4. 看之前的消息
 
