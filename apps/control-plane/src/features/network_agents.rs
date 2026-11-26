@@ -636,20 +636,25 @@ async fn create(
     headers: HeaderMap,
     body: Result<Json<CreateBody>, JsonRejection>,
 ) -> Response {
-    let Some((name, room)) = body
-        .ok()
-        .and_then(|Json(body)| Some((body.name, room_request(body.room, body.code)?)))
-    else {
-        return no_store(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "network_agent.invalid_request",
-                ErrorCategory::Validation,
-                "The request body must be a JSON object: {\"name\": your name, \"room\": optional public lobby name or private room number, \"code\": optional private room Agent code}. Give room or code, not both.",
-                correlation_id,
-            )
-            .into_response(),
-        );
+    let parsed = read_body(body).and_then(|body| {
+        room_request(body.room, body.code)
+            .map(|room| (body.name, room))
+            .ok_or_else(String::new)
+    });
+    let (name, room) = match parsed {
+        Ok(parsed) => parsed,
+        Err(problem) => {
+            return no_store(
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "network_agent.invalid_request",
+                    ErrorCategory::Validation,
+                    &format!("The request body must be a JSON object: {{\"name\": your name, \"room\": optional public lobby name or private room number, \"code\": optional private room Agent code}}. Give room or code, not both.{problem}"),
+                    correlation_id,
+                )
+                .into_response(),
+            );
+        }
     };
     let request = CreateNetworkAgent {
         name,
@@ -677,20 +682,22 @@ async fn enter_room(
     headers: HeaderMap,
     body: Result<Json<EnterRoomBody>, JsonRejection>,
 ) -> Response {
-    let Some(room) = body
-        .ok()
-        .and_then(|Json(body)| room_request(body.room, body.code))
-    else {
-        return no_store(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "network_agent.invalid_request",
-                ErrorCategory::Validation,
-                "The request body must be a JSON object: {\"room\": a public lobby name or private room number} or {\"code\": a private room Agent code}, not both.",
-                correlation_id,
-            )
-            .into_response(),
-        );
+    let parsed =
+        read_body(body).and_then(|body| room_request(body.room, body.code).ok_or_else(String::new));
+    let room = match parsed {
+        Ok(room) => room,
+        Err(problem) => {
+            return no_store(
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "network_agent.invalid_request",
+                    ErrorCategory::Validation,
+                    &format!("The request body must be a JSON object: {{\"room\": a public lobby name or private room number}} or {{\"code\": a private room Agent code}}, not both.{problem}"),
+                    correlation_id,
+                )
+                .into_response(),
+            );
+        }
     };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
@@ -789,17 +796,20 @@ async fn send_message(
     headers: HeaderMap,
     body: Result<Json<SendBody>, JsonRejection>,
 ) -> Response {
-    let Ok(Json(body)) = body else {
-        return no_store(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "network_agent.invalid_request",
-                ErrorCategory::Validation,
-                "The request body must be a JSON object: {\"text\": what to say}, optionally with \"roomId\", \"replyTo\", \"mentions\", \"mentionsEveryone\" and \"submissionId\".",
-                correlation_id,
-            )
-            .into_response(),
-        );
+    let body = match read_body(body) {
+        Ok(body) => body,
+        Err(problem) => {
+            return no_store(
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "network_agent.invalid_request",
+                    ErrorCategory::Validation,
+                    &format!("The request body must be a JSON object: {{\"text\": what to say}}, optionally with \"roomId\", \"replyTo\", \"mentions\", \"mentionsEveryone\" and \"submissionId\".{problem}"),
+                    correlation_id,
+                )
+                .into_response(),
+            );
+        }
     };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
@@ -893,8 +903,20 @@ async fn acknowledge(
     headers: HeaderMap,
     body: Result<Json<AckBody>, JsonRejection>,
 ) -> Response {
-    let Ok(Json(body)) = body else {
-        return invalid_event(correlation_id);
+    let body = match read_body(body) {
+        Ok(body) => body,
+        Err(problem) => {
+            return no_store(
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "network_agent.invalid_request",
+                    ErrorCategory::Validation,
+                    &format!("The request body must be a JSON object: {{\"eventId\": the eventId of a message you received}}.{problem} {UNTIL_ACKNOWLEDGED}"),
+                    correlation_id,
+                )
+                .into_response(),
+            );
+        }
     };
     let token = bearer_secret(&headers).ok();
     let token = token.as_ref().map_or("", |token| token.expose());
@@ -1015,18 +1037,53 @@ fn simple(
     ApiError::new(status, code, category, message, correlation_id)
 }
 
-fn invalid_event(correlation_id: CorrelationId) -> Response {
-    no_store(invalid_event_error(correlation_id).into_response())
-}
+/// 确认没成时多说的一句：不确认，下一次等消息马上又交回同一批。写循环的 Agent 只看到 400 就接着
+/// 等的话，会一直空转（2026-11-25 一个网络 Agent 每 1.5 秒确认一次，转了一整天）。
+const UNTIL_ACKNOWLEDGED: &str = "Until you acknowledge, every wait returns these same messages at once, so fix this before waiting again.";
 
+/// 给的 eventId 不像一条消息的 eventId；HTTP 接口和远程 MCP 共用。消息上还有一个 messageId，
+/// 拿错了就是这一种。
 fn invalid_event_error(correlation_id: CorrelationId) -> ApiError {
     ApiError::new(
         StatusCode::BAD_REQUEST,
         "network_agent.invalid_request",
         ErrorCategory::Validation,
-        "The request body must be a JSON object: {\"eventId\": the eventId of a message you received}.",
+        &format!(
+            "eventId must be the eventId of a message you received: it starts with $ (a message's messageId is a different ID). {UNTIL_ACKNOWLEDGED}"
+        ),
         correlation_id,
     )
+}
+
+/// 读出请求体；读不出来时给回答多说一句是哪一样不对（`body_problem`）。读出来了、内容不对的由调用方说。
+fn read_body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, String> {
+    body.map(|Json(body)| body)
+        .map_err(|rejection| body_problem(&rejection))
+}
+
+/// 请求体读不成要的样子时是哪一样不对。以前一律只说“要一个 JSON 对象”，没带
+/// `Content-Type: application/json` 的客户端照着改也改不对。字段不对时带上 serde 的那句（缺了哪个
+/// 字段、类型不对）：只回给发请求的这一个，不进日志。
+fn body_problem(rejection: &JsonRejection) -> String {
+    match rejection {
+        JsonRejection::MissingJsonContentType(_) => {
+            " Send it with the header Content-Type: application/json.".to_owned()
+        }
+        JsonRejection::JsonSyntaxError(_) => " What was sent is not valid JSON.".to_owned(),
+        JsonRejection::JsonDataError(error) => {
+            let text = error.body_text();
+            let detail = text
+                .strip_prefix("Failed to deserialize the JSON body into the target type: ")
+                .unwrap_or(&text);
+            let detail: String = detail
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(160)
+                .collect();
+            format!(" What is wrong: {detail}.")
+        }
+        _ => String::new(),
+    }
 }
 
 impl NetworkAgentHttpState {
