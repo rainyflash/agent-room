@@ -977,6 +977,38 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn('"acquired_after_secs": 12.5', finding.sample)
         self.assertEqual(sum(digest.ignored.values()), 3)
 
+    def test_an_agent_refused_by_the_room_rules_when_removing_agents_is_noise(self) -> None:
+        def removal(step: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-25T15:19:21.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "Agent 口令请求失败",
+                        "correlation.id": CORRELATION_ID,
+                        "operation": "private_room.agent_member.remove",
+                        "failure": "Forbidden",
+                        "step": step,
+                    },
+                    "target": "agent_room_control_plane::error",
+                    "span": {
+                        "correlation.id": CORRELATION_ID,
+                        "http.request.method": "DELETE",
+                        "url.path": f"/devices/current/private-rooms/{CATALOG_ID}/agents/{CORRELATION_ID}",
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [removal("rule"), removal("rule"), removal("matrix")]},
+            load_noise(NOISE_FILE),
+        )
+        [finding] = digest.findings
+        self.assertEqual(finding.count, 1)
+        self.assertIn('"step": "matrix"', finding.sample)
+        self.assertEqual(sum(digest.ignored.values()), 2)
+
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_accounts_without_keeping_who(self) -> None:

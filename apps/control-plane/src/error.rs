@@ -1754,6 +1754,7 @@ fn log_agent_access_failure(failure: AgentAccessFailure, correlation_id: Correla
         correlation.id = %correlation_id.as_uuid(),
         operation = failure.operation(),
         failure = ?failure.kind(),
+        step = failure.step(),
         "Agent 口令请求失败"
     );
 }
