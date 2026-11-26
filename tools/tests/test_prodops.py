@@ -25,6 +25,7 @@ from tools.prodops.config import (
     load_deployment_config,
 )
 from tools.prodops.network_agents import NetworkAgentTargetError, disable_statement
+from tools.prodops.onboarding_funnel import CHAT_RETENTION
 from tools.prodops.render import (
     APP_PAGE_PATHS,
     CONTAINER_CONFIG_DIRECTORY_MODE,
@@ -749,6 +750,8 @@ class ProductionRenderingTests(unittest.TestCase):
             f"sso:\n  client_whitelist:\n    - \"{self.config.public.app_origin}/\"\n", homeserver
         )
         self.assertIn("max_lifetime: 30d", homeserver)
+        # 周报“新用户走到哪一步”照这个时长把早于它的那几周按消息数的列写成“—”，改了一起改。
+        self.assertIn(f"max_lifetime: {CHAT_RETENTION.days}d", homeserver)
         self.assertFalse(realm["registrationAllowed"])
         self.assertTrue(realm["verifyEmail"])
         self.assertTrue(realm["registrationEmailAsUsername"])

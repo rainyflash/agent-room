@@ -39,6 +39,11 @@ STEPS = (
 )
 # 注册满 7 天才算得出来的那几列；没满的那一周写“—”。
 LATER_STEPS = ("came_back", "spoke_again")
+# 聊天服务器只留最近 30 天的消息（`render.py` 里 Synapse 的 `retention.default_policy.max_lifetime`），
+# 更早的每天删一次。注册那周早于这个的，头几天说的话已经没了，按消息数的这两列只会越数越少，写“—”。
+# “一周后又说了话”不受影响：表里最早的那周是 35 天以前，满 7 天以后说的话最早也在 28 天以前。
+CHAT_RETENTION = timedelta(days=30)
+MESSAGE_STEPS = ("agent_spoke", "spoke")
 
 
 class Databases(Protocol):
@@ -222,7 +227,11 @@ def section(people: Sequence[Person], now: datetime) -> list[str]:
         cohort = [person for person in people if start <= person.registered_at < start + timedelta(weeks=1)]
         total = len(cohort)
         cells = []
+        purged = start < now - CHAT_RETENTION
         for key, _ in STEPS:
+            if total and purged and key in MESSAGE_STEPS:
+                cells.append("—")
+                continue
             if key in LATER_STEPS:
                 answers = [getattr(person, key)(now) for person in cohort]
                 if total and all(answer is None for answer in answers):
@@ -241,6 +250,7 @@ def section(people: Sequence[Person], now: datetime) -> list[str]:
             "所以这个数偏大。",
             "- “一周后又说了话”：注册 7 天以后他自己又发过消息，看留存看这一列。",
             "- 这两列注册还没满 7 天的写“—”；上一周注册的人能回来的时间还短，数会偏小，下周再看。",
+            "- 聊天服务器只留最近 30 天的消息：注册那周早于 30 天以前的，“Agent 说过话”“自己说过话”数不全，写“—”。",
             "- 维护者自己的账户和发版验收用的都算在里面；人数少于 5 的那一周不写百分比。",
             "",
         ]
