@@ -47,10 +47,11 @@ impl HostReply {
         }
         let reply: ReplyContent = serde_json::from_str(unfenced(text))
             .map_err(|_| Failure::local("receiver.host_reply_invalid"))?;
-        if reply.body.trim().is_empty() {
+        let body = unix_line_endings(&reply.body);
+        if body.trim().is_empty() {
             return Ok(Self::silent());
         }
-        Self::new(reply.body)
+        Self::new(body)
     }
 
     pub(crate) fn into_request(
@@ -88,6 +89,13 @@ impl HostReply {
             },
         })
     }
+}
+
+/// 消息正文收换行，不收回车。Windows 上宿主照抄命令输出时会带回 CRLF（Alpha 102 实机验收：Codex 用
+/// PowerShell 读了验证码文件，回的正文是 `…\r\n`），不换掉的话整条回复作废、这一批没人回。
+/// 和命令行发消息之前做的一样：CRLF 和单独的回车都换成换行。
+fn unix_line_endings(body: &str) -> String {
+    body.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// 模型即使被要求不要，偶尔也会把 JSON 整段包进一个 Markdown 代码块（```json … ```）。
@@ -129,6 +137,28 @@ mod tests {
             assert!(HostReply::parse(input).is_err());
         }
         assert!(HostReply::new("x".repeat(4001)).is_err());
+    }
+
+    #[test]
+    fn 正文里的回车换成换行() {
+        assert_eq!(
+            HostReply::parse(r#"{"body":"agent-room-contract-x\r\n"}"#)
+                .unwrap()
+                .body(),
+            "agent-room-contract-x\n"
+        );
+        assert_eq!(
+            HostReply::parse(r#"{"body":"第一行\r\n第二行\r第三行"}"#)
+                .unwrap()
+                .body(),
+            "第一行\n第二行\n第三行"
+        );
+        // 只有回车和空白：看过了，不用回。
+        assert!(
+            HostReply::parse(r#"{"body":"\r\n\r"}"#)
+                .unwrap()
+                .is_silent()
+        );
     }
 
     #[test]
