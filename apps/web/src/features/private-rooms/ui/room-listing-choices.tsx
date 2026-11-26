@@ -18,13 +18,21 @@ export type RoomListingChoicesProps = {
   readonly name: string;
   readonly onChange: (next: Partial<RoomListingChoice>) => void;
   readonly value: RoomListingChoice;
+  /** 新建房间时给 GitHub 项目建房：项目房间都是直接进的，不问怎么进。 */
+  readonly askJoinMode?: boolean;
 };
 
 /**
  * 公开还是私密，公开了别人怎么进（`specs/public-rooms/design.md`“网页”）。房间设置的“公开”一节和
  * 新建房间共用；私密时不问怎么进。
  */
-export function RoomListingChoices({ disabled, name, onChange, value }: RoomListingChoicesProps) {
+export function RoomListingChoices({
+  askJoinMode = true,
+  disabled,
+  name,
+  onChange,
+  value,
+}: RoomListingChoicesProps) {
   const { t } = useTranslation();
   return (
     <>
@@ -47,7 +55,7 @@ export function RoomListingChoices({ disabled, name, onChange, value }: RoomList
           </label>
         ))}
       </fieldset>
-      {value.listed ? (
+      {value.listed && askJoinMode ? (
         <fieldset
           className="room-listing__choices room-listing__choices--three"
           disabled={disabled}

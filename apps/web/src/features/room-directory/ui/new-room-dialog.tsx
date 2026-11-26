@@ -5,6 +5,9 @@ import { useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useAppServices } from '@/app/app-services';
+import { cliInvocation } from '@/features/desktop/domain/cli-invitation';
+import { useOptionalDesktopRuntimeController } from '@/features/desktop/ui/desktop-runtime-provider';
+import { privateRoomListQueryOptions } from '@/features/private-rooms/data/private-room-queries';
 import { roomLiveViewQueryKey } from '@/features/private-rooms/data/room-live-view-queries';
 import {
   permissions,
@@ -20,7 +23,12 @@ import {
   RoomListingChoices,
   type RoomListingChoice,
 } from '@/features/private-rooms/ui/room-listing-choices';
+import {
+  NewProjectRoom,
+  type ProjectRoomSource,
+} from '@/features/room-directory/ui/new-project-room';
 import { useRoomCommands } from '@/features/room-directory/ui/use-rooms';
+import { useOptionalSession } from '@/features/session/ui/session-provider';
 import { BrowserUuidV7Factory } from '@/shared/ids/browser-uuid-v7-factory';
 import type { Result } from '@/shared/result';
 
@@ -46,14 +54,48 @@ export function NewRoomDialog({
   readonly onClose: () => void;
 }) {
   const commands = useRoomCommands();
-  const { roomLiveViews } = useAppServices();
+  const { privateRooms, projectRooms, roomLiveViews } = useAppServices();
   const queryClient = useQueryClient();
+  const principalId = useOptionalSession()?.snapshot.context.principal?.principalId;
+  const desktop = useOptionalDesktopRuntimeController();
+  const onDesktop = desktop?.available === true;
+  const platform = desktop?.snapshot?.platform ?? 'unknown';
+  const cliConfiguration = onDesktop ? desktop.snapshot?.cliConfiguration : undefined;
+  const projectRoom = useMemo<ProjectRoomSource | undefined>(
+    () =>
+      projectRooms === undefined
+        ? undefined
+        : {
+            invocation: cliInvocation(cliConfiguration, platform),
+            locate: !onDesktop,
+            claims: async () => await projectRooms.claims(),
+            // 认上以后控制面替这个账户建好房间，名字就是仓库名：重读房间列表找它。
+            findRoom: async (repository) => {
+              const rooms = await queryClient.query({
+                ...privateRoomListQueryOptions(privateRooms, principalId),
+                staleTime: 0,
+              });
+              if (!rooms.ok) return null;
+              const wanted = repository.toLowerCase();
+              return (
+                rooms.value.find(
+                  (room) =>
+                    room.status === 'active' &&
+                    room.ownerPrincipalId === principalId &&
+                    room.name.toLowerCase() === wanted,
+                ) ?? null
+              );
+            },
+          },
+    [cliConfiguration, onDesktop, platform, principalId, privateRooms, projectRooms, queryClient],
+  );
   return (
     <NewRoomForm
       initiallyListed={initiallyListed}
       onClose={onClose}
       onCreate={commands.create}
       onEnter={commands.show}
+      projectRoom={projectRoom}
       onTurnOnLiveView={
         roomLiveViews === undefined
           ? undefined
@@ -84,13 +126,19 @@ export type NewRoomFormProps = {
    */
   readonly onTurnOnLiveView?:
     ((catalogId: string) => Promise<Result<unknown, PrivateRoomFailure>>) | undefined;
+  /**
+   * 选公开时多一个“给一个 GitHub 项目建房”（`specs/redesign/project-front-door.md`）。没有认领这项服务时
+   * 没有这个选项。
+   */
+  readonly projectRoom?: ProjectRoomSource | undefined;
 };
 
 /**
  * 一屏建好房间：名字、用途、私密还是公开（`specs/public-rooms/design.md`“网页”）；保留多久、现在就
  * 邀请谁放在“更多选项”里，不填就用默认值。选公开就说清楚不加密，新成员的权限和网络 Agent 先用默认的，
  * 以后在房间设置的“公开”里改。公开、直接进的房间多一个“分享页放实况”的勾，默认勾上；建好以后再打开它，
- * 没开成房间照样在，说一句、给“进房间”。
+ * 没开成房间照样在，说一句、给“进房间”。选了“给一个 GitHub 项目建房”时名字、用途、怎么进和更多选项都
+ * 收起来，换成发给 Agent 的一段话：房间由服务器认上仓库以后建，这里不建；建好了底下给“进房间”。
  */
 export function NewRoomForm({
   initiallyListed = false,
@@ -98,6 +146,7 @@ export function NewRoomForm({
   onCreate,
   onEnter,
   onTurnOnLiveView,
+  projectRoom,
 }: NewRoomFormProps) {
   const { t } = useTranslation();
   const formId = useId();
@@ -109,14 +158,17 @@ export function NewRoomForm({
     listed: initiallyListed,
   });
   const [liveView, setLiveView] = useState(true);
+  const [project, setProject] = useState(false);
+  const [projectReady, setProjectReady] = useState<PrivateRoom | null>(null);
+  const forProject = projectRoom !== undefined && listing.listed && project;
   // 房间建好了、实况没开成：不再建，按钮换成“进房间”。
   const [liveViewMissed, setLiveViewMissed] = useState<{
     readonly failure: PrivateRoomFailure;
     readonly room: PrivateRoom;
   } | null>(null);
-  // 只有公开、直接进的房间能放实况：要申请、只能邀请的不出这个勾。
+  // 只有公开、直接进的房间能放实况：要申请、只能邀请的不出这个勾。项目房间建出来就开着实况。
   const offersLiveView =
-    onTurnOnLiveView !== undefined && listing.listed && listing.joinMode === 'open';
+    onTurnOnLiveView !== undefined && listing.listed && listing.joinMode === 'open' && !forProject;
   const [retention, setRetention] = useState('');
   const [inviteText, setInviteText] = useState('');
   const [invitePermissions, setInvitePermissions] = useState<PrivateRoomPermissions>(
@@ -148,17 +200,27 @@ export function NewRoomForm({
     onClose();
   };
 
+  const enterOnce = async (room: PrivateRoom): Promise<void> => {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    try {
+      await enter(room);
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
+
   const submit = async (): Promise<void> => {
     if (pendingRef.current) return;
     if (liveViewMissed !== null) {
-      pendingRef.current = true;
-      setPending(true);
-      try {
-        await enter(liveViewMissed.room);
-      } finally {
-        pendingRef.current = false;
-        setPending(false);
-      }
+      await enterOnce(liveViewMissed.room);
+      return;
+    }
+    // 项目房间由服务器认上仓库以后建：这里只有建好以后的“进房间”。
+    if (forProject) {
+      if (projectReady !== null) await enterOnce(projectReady);
       return;
     }
     if (!locked && !ready) return;
@@ -220,22 +282,35 @@ export function NewRoomForm({
       closeLabel={t('rooms.close')}
       description={t('rooms.create.detail')}
       footer={
-        <Button
-          disabled={pending || (!locked && !ready)}
-          form={formId}
-          icon={pending ? <Spinner /> : <DoorOpen aria-hidden="true" />}
-          type="submit"
-        >
-          {t(
-            liveViewMissed !== null
-              ? 'rooms.create.enter'
-              : pending
-                ? 'rooms.create.creating'
-                : failure === null || rejected
-                  ? 'rooms.create.submit'
-                  : 'rooms.retry',
-          )}
-        </Button>
+        forProject ? (
+          projectReady === null ? undefined : (
+            <Button
+              disabled={pending}
+              form={formId}
+              icon={pending ? <Spinner /> : <DoorOpen aria-hidden="true" />}
+              type="submit"
+            >
+              {t('rooms.create.enter')}
+            </Button>
+          )
+        ) : (
+          <Button
+            disabled={pending || (!locked && !ready)}
+            form={formId}
+            icon={pending ? <Spinner /> : <DoorOpen aria-hidden="true" />}
+            type="submit"
+          >
+            {t(
+              liveViewMissed !== null
+                ? 'rooms.create.enter'
+                : pending
+                  ? 'rooms.create.creating'
+                  : failure === null || rejected
+                    ? 'rooms.create.submit'
+                    : 'rooms.retry',
+            )}
+          </Button>
+        )
       }
       onClose={() => {
         if (!pending) onClose();
@@ -250,32 +325,37 @@ export function NewRoomForm({
           void submit();
         }}
       >
-        <Field label={t('rooms.create.name')}>
-          <input
-            data-autofocus
-            disabled={pending || locked}
-            maxLength={128}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-            placeholder={t('rooms.create.namePlaceholder')}
-            required
-            value={name}
-          />
-        </Field>
-        <Field label={t('rooms.create.purpose')}>
-          <textarea
-            disabled={pending || locked}
-            maxLength={2_048}
-            onChange={(event) => {
-              setPurpose(event.target.value);
-            }}
-            placeholder={t('rooms.create.purposePlaceholder')}
-            rows={3}
-            value={purpose}
-          />
-        </Field>
+        {forProject ? null : (
+          <>
+            <Field label={t('rooms.create.name')}>
+              <input
+                data-autofocus
+                disabled={pending || locked}
+                maxLength={128}
+                onChange={(event) => {
+                  setName(event.target.value);
+                }}
+                placeholder={t('rooms.create.namePlaceholder')}
+                required
+                value={name}
+              />
+            </Field>
+            <Field label={t('rooms.create.purpose')}>
+              <textarea
+                disabled={pending || locked}
+                maxLength={2_048}
+                onChange={(event) => {
+                  setPurpose(event.target.value);
+                }}
+                placeholder={t('rooms.create.purposePlaceholder')}
+                rows={3}
+                value={purpose}
+              />
+            </Field>
+          </>
+        )}
         <RoomListingChoices
+          askJoinMode={!forProject}
           disabled={pending || locked}
           name={formId}
           onChange={(next) => {
@@ -283,7 +363,25 @@ export function NewRoomForm({
           }}
           value={listing}
         />
-        {listing.listed ? (
+        {projectRoom !== undefined && listing.listed ? (
+          <label className="room-listing__toggle">
+            <input
+              checked={project}
+              disabled={pending || locked}
+              onChange={(event) => {
+                setProject(event.target.checked);
+              }}
+              type="checkbox"
+            />
+            <span>
+              <strong>{t('rooms.create.project')}</strong>
+              <small>{t('rooms.create.projectDetail')}</small>
+            </span>
+          </label>
+        ) : null}
+        {forProject ? (
+          <NewProjectRoom onReady={setProjectReady} ready={projectReady} source={projectRoom} />
+        ) : listing.listed ? (
           <p className="room-listing__note room-listing__note--plain">
             {t('rooms.create.publicNote')}
           </p>
@@ -304,47 +402,49 @@ export function NewRoomForm({
             </span>
           </label>
         ) : null}
-        <Details className="new-room__more" summary={t('rooms.create.more')}>
-          <Field label={t('rooms.create.retention')}>
-            <select
-              disabled={pending || locked}
-              onChange={(event) => {
-                setRetention(event.target.value);
-              }}
-              value={retention}
+        {forProject ? null : (
+          <Details className="new-room__more" summary={t('rooms.create.more')}>
+            <Field label={t('rooms.create.retention')}>
+              <select
+                disabled={pending || locked}
+                onChange={(event) => {
+                  setRetention(event.target.value);
+                }}
+                value={retention}
+              >
+                <option value="">{t('rooms.create.retentionDefault')}</option>
+                {RETENTION_CHOICES.map((days) => (
+                  <option key={days} value={String(days)}>
+                    {t('rooms.create.retentionDays', { count: days })}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              error={inviteError}
+              hint={t('rooms.create.invitesHint')}
+              label={t('rooms.create.invites')}
             >
-              <option value="">{t('rooms.create.retentionDefault')}</option>
-              {RETENTION_CHOICES.map((days) => (
-                <option key={days} value={String(days)}>
-                  {t('rooms.create.retentionDays', { count: days })}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field
-            error={inviteError}
-            hint={t('rooms.create.invitesHint')}
-            label={t('rooms.create.invites')}
-          >
-            <textarea
-              disabled={pending || locked}
-              onChange={(event) => {
-                setInviteText(event.target.value);
-              }}
-              placeholder={t('rooms.create.invitesPlaceholder')}
-              rows={3}
-              value={inviteText}
-            />
-          </Field>
-          {invitations.ok && invitations.principalIds.length > 0 ? (
-            <PrivateRoomCapabilityEditor
-              disabled={pending || locked}
-              legend={t('rooms.create.permissions')}
-              onChange={setInvitePermissions}
-              value={invitePermissions}
-            />
-          ) : null}
-        </Details>
+              <textarea
+                disabled={pending || locked}
+                onChange={(event) => {
+                  setInviteText(event.target.value);
+                }}
+                placeholder={t('rooms.create.invitesPlaceholder')}
+                rows={3}
+                value={inviteText}
+              />
+            </Field>
+            {invitations.ok && invitations.principalIds.length > 0 ? (
+              <PrivateRoomCapabilityEditor
+                disabled={pending || locked}
+                legend={t('rooms.create.permissions')}
+                onChange={setInvitePermissions}
+                value={invitePermissions}
+              />
+            ) : null}
+          </Details>
+        )}
       </form>
       {liveViewMissed === null ? null : (
         <Banner tone="warning">
