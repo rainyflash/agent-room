@@ -216,6 +216,11 @@ reason = "电脑授权等批准时，Bridge 换令牌问得比 Keycloak 允许�
 
 [[ignore]]
 service = "identity"
+summary = '^OAUTH2_DEVICE_CODE_TO_TOKEN_ERROR error=invalid_oauth2_device_code( clientId=agent-room-bridge)?$'
+reason = "电脑授权的设备码已经过期被 Keycloak 清掉、或者已经换过令牌用完了，Bridge 还拿着它再问一次，Keycloak 记成设备码无效；设备码本来就只管 10 分钟，Bridge 会提示重新发一个，授权没受影响（2026-11-26 生产上 1 次，当天正在发 Alpha 102、验收在发设备码，agent-room-ops#124）。只认 invalid_oauth2_device_code 加 agent-room-bridge：同一类事件的别的错误（invalid_client、设备码被拒）照常会报；成片出现才要查 Bridge 有没有在拿用完的设备码一直问"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=invalid_registration$'
 reason = "注册表单没填对（密码不合要求、两次不一样、少填了），页面上直接提示了；2026-10-25 生产上那次，同一个浏览器两分钟后就登录上了"
 
