@@ -58,7 +58,8 @@ export type MatrixLobbyRoomSnapshot = {
 
 export type MatrixLobbySourceRead =
   | { readonly kind: 'matrix-unavailable' }
-  | { readonly kind: 'room-not-joined' }
+  /** `invited`：Matrix 上你是受邀、还没加入（不是受邀的，比如刚进公共大厅、同步还没带回“已加入”，不给）。 */
+  | { readonly kind: 'room-not-joined'; readonly invited?: true }
   | { readonly kind: 'ready'; readonly room: MatrixLobbyRoomSnapshot };
 
 export type MatrixLobbySource = {
@@ -83,7 +84,9 @@ export class MatrixSdkLobbySource implements MatrixLobbySource {
     }
     const room = client.getRoom(roomId);
     if (room?.getMyMembership() !== 'join') {
-      return { kind: 'room-not-joined' };
+      return room?.getMyMembership() === 'invite'
+        ? { invited: true, kind: 'room-not-joined' }
+        : { kind: 'room-not-joined' };
     }
     const state = room.getLiveTimeline().getState(forwardTimelineDirection);
     if (state === undefined) {

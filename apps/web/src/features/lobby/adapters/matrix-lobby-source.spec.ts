@@ -103,10 +103,19 @@ describe('MatrixSdkLobbySource', () => {
     expect(canSpeak(matrixState({}), null)).toBe(false);
   });
 
-  it.each(['invite', 'leave', 'ban'])('缓存中的 %s 房间不能继续显示在场人物', (membership) => {
+  it.each(['leave', 'ban'])('缓存中的 %s 房间不能继续显示在场人物', (membership) => {
     const registry = new MatrixClientRegistry();
     registry.replace(matrixClient(matrixRoom(matrixState({}), membership)).value);
     expect(new MatrixSdkLobbySource(registry).read('!public:agent-room.test')).toEqual({
+      kind: 'room-not-joined',
+    });
+  });
+
+  it('受邀还没加入的房间也不显示在场人物，另外说一声是受邀', () => {
+    const registry = new MatrixClientRegistry();
+    registry.replace(matrixClient(matrixRoom(matrixState({}), 'invite')).value);
+    expect(new MatrixSdkLobbySource(registry).read('!public:agent-room.test')).toEqual({
+      invited: true,
       kind: 'room-not-joined',
     });
   });
