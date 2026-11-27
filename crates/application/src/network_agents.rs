@@ -568,12 +568,14 @@ pub trait NetworkAgentUseCases: Send + Sync {
 
     /// 进加密房间要用的秘密：存储口令与正文根密钥缺了就生成并封存；恢复凭据有就带上。
     /// 秘密在库里却解不开时报依赖不可用，绝不重新生成去覆盖：那会让已有的加密存储再也打不开。
+    /// 停用了的回答未认证：它的钥匙要删掉，不能再替它生成。
     fn encryption_secrets(
         &self,
         id: NetworkAgentId,
     ) -> PortFuture<'_, NetworkAgentResult<NetworkAgentEncryptionSecrets>>;
 
     /// 开启服务器端密钥备份之前，先封存要用的恢复凭据；备份开好了凭据却没存下，就再也恢复不了。
+    /// 停用了的回答未认证。
     fn store_recovery_credential<'a>(
         &'a self,
         id: NetworkAgentId,
@@ -1488,6 +1490,7 @@ impl NetworkAgentService {
         &self,
         id: NetworkAgentId,
     ) -> NetworkAgentResult<NetworkAgentEncryptionSecrets> {
+        self.ensure_not_disabled(id).await?;
         let store_passphrase = self
             .generated_secret(id, NetworkAgentSecretKind::MatrixStorePassphrase)
             .await?;
@@ -1507,6 +1510,20 @@ impl NetworkAgentService {
             content_root_key,
             recovery_credential,
         })
+    }
+
+    /// 停用了的网络 Agent 不再取、更不再生成或写回加密要用的秘密。停用以后定时清理删掉它的加密存储和
+    /// 钥匙（隐私说明页），停用前已经进来、还在等消息的那次请求却还会替它打开加密客户端：看到存储没了
+    /// 就当成丢了去重建，缺了的秘密照“第一次要用”生成、写回库里（agent-room-ops#132）。没有这个网络
+    /// Agent 也回答未认证。
+    async fn ensure_not_disabled(&self, id: NetworkAgentId) -> NetworkAgentResult<()> {
+        self.store
+            .find(id)
+            .await
+            .map_err(repository)?
+            .filter(|record| record.status != NetworkAgentStatus::Disabled)
+            .map(|_| ())
+            .ok_or_else(|| NetworkAgentFailure::new(NetworkAgentFailureKind::Unauthorized))
     }
 
     async fn replace_matrix_device_internal(
@@ -2273,7 +2290,11 @@ impl NetworkAgentUseCases for NetworkAgentService {
         id: NetworkAgentId,
         credential: &'a SecretValue,
     ) -> PortFuture<'a, NetworkAgentResult<()>> {
-        Box::pin(self.put_text_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey, credential))
+        Box::pin(async move {
+            self.ensure_not_disabled(id).await?;
+            self.put_text_secret(id, NetworkAgentSecretKind::MatrixRecoveryKey, credential)
+                .await
+        })
     }
 
     fn replace_matrix_device(

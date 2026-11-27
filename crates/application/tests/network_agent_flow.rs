@@ -2845,6 +2845,38 @@ async fn assert_keys_deleted_after_exit(harness: &Harness, id: NetworkAgentId) {
 }
 
 #[tokio::test]
+async fn 停用以后不再取加密秘密_删了钥匙也不会再生成回来() {
+    let harness = Harness::enabled();
+    let created = harness.create("Retired", None).await.unwrap();
+    let id = created.network_agent_id;
+    harness.service.encryption_secrets(id).await.unwrap();
+    harness
+        .service
+        .disable(created.token.expose())
+        .await
+        .unwrap();
+
+    // 停用前已经进来、还在等消息的请求再要秘密：不给，也不去生成。
+    let refused = harness.service.encryption_secrets(id).await.unwrap_err();
+    assert_eq!(refused.kind(), NetworkAgentFailureKind::Unauthorized);
+    harness.service.mark_rooms_left(id).await.unwrap();
+    harness.service.delete_keys(id).await.unwrap();
+    let refused = harness.service.encryption_secrets(id).await.unwrap_err();
+    assert_eq!(refused.kind(), NetworkAgentFailureKind::Unauthorized);
+    let credential = SecretValue::new("recovery-passphrase-for-backup").unwrap();
+    let refused = harness
+        .service
+        .store_recovery_credential(id, &credential)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.kind(), NetworkAgentFailureKind::Unauthorized);
+    assert!(
+        harness.store.with(id, |agent| agent.secrets.is_empty()),
+        "删掉的钥匙没有被补回来"
+    );
+}
+
+#[tokio::test]
 async fn 加密存储口令与正文根密钥第一次要用时生成并封存_之后不变_解不开时不覆盖() {
     let harness = Harness::enabled();
     let created = harness.create("Cipher", None).await.unwrap();
