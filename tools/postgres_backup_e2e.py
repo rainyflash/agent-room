@@ -502,9 +502,10 @@ def drill(name: str, root: Path) -> dict[str, object]:
     archive_point(source, repository, password, 1, anchor)
     check_store(store, ["anchor", "point", "point"])
     second = store.points()[-1]
-    idle_switch = idle_switch_names_the_switched_segment(source, repository)
     sql(source, "agent_room", "INSERT INTO messages SELECT g, 'after' FROM generate_series(201601, 201800) g")
     broken_segment_is_refused(source, repository, password, anchor)
+    # 放在坏段那一步后面：它拿归档目录里最早的一段去写乱码，这里切出去的段只有恢复点和切换记录，乱码写在读不到的地方。
+    idle_switch = idle_switch_names_the_switched_segment(source, repository)
 
     candidates = (BaseCandidate(BACKUP_ID, point),)
 
