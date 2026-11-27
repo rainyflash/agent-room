@@ -177,6 +177,15 @@ class ProductionConfigTests(unittest.TestCase):
         self.assertIn('[ "$(stat -c %s "$archive/$file")" = "$segment_size" ]', script)
         self.assertIn('[ "$file" \\> "$wal_file" ] || rm -f "$path"', script)
 
+    def test_switched_segment_is_named_one_byte_before_the_switch_position(self) -> None:
+        # 切换落空时 pg_switch_wal() 回的是新一段的起点，PostgreSQL 18 的 pg_walfile_name 在那里认的是还在写的
+        # 新一段，等它归档要等到下一次切换（agent-room-ops#131）。“生产备份实跑”用生产同款镜像核对这一点。
+        for name in ("postgres-wal-archive.sh", "postgres-base-backup.sh"):
+            script = (ROOT / "infra" / "production" / name).read_text(encoding="utf-8")
+            with self.subTest(script=name):
+                self.assertIn("pg_walfile_name(pg_switch_wal() - 1)", script)
+                self.assertNotIn("pg_walfile_name(pg_switch_wal())", script)
+
     @unittest.skipUnless(shutil.which("sh"), "需要 sh")
     def test_wal_archive_computes_segment_names_like_postgres(self) -> None:
         script = (ROOT / "infra" / "production" / "postgres-wal-archive.sh").read_text(encoding="utf-8")

@@ -115,7 +115,11 @@ to_lsn=$1
 created_at=$2
 matches "$to_lsn" "$LSN" || fail "恢复点 LSN 无效"
 matches "$created_at" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$' || fail "恢复点时间无效"
-wal_file=$(query "SELECT pg_walfile_name(pg_switch_wal())")
+# 按切换的位置减一个字节认段。真切了的话，位置在切换记录后面、还在这一段里。检查点进程按 archive_timeout
+# 的那次切换正好落在上面打恢复点和这次切换之间、中间又没有别的写入时，这次切换落空，回的是新一段的起点；
+# PostgreSQL 18 的 pg_walfile_name 在段的起点上认的是新的那一段（还在写，下一次切换才归档）。减一才是刚切
+# 出去、装着恢复点、马上归档的那一段。不减一的话这里白等 180 秒、整次备份失败，每天一两次（agent-room-ops#131）。
+wal_file=$(query "SELECT pg_walfile_name(pg_switch_wal() - 1)")
 matches "$wal_file" "$SEGMENT" || fail "切换后的 WAL 段无效"
 [ "$(printf '%s' "$wal_file" | cut -c1-8)" = "$timeline" ] ||
   fail "时间线变了（$last_segment → $wal_file），要从一套新的全量重新接起"

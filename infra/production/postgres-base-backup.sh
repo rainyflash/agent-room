@@ -59,6 +59,8 @@ restore_lsn=$(psql \
   --tuples-only \
   --no-align \
   --command "SELECT pg_create_restore_point('$restore_name')")
+# 按切换的位置减一个字节认段：切换落空时（archive_timeout 的切换刚好抢在前面）回的是新一段的起点，
+# pg_walfile_name 在那里认的是还在写的新一段（postgres-wal-archive.sh 里写得更细）。
 wal_file=$(psql \
   --host "$AGENT_ROOM_DB_HOST" \
   --port "$AGENT_ROOM_DB_PORT" \
@@ -67,7 +69,7 @@ wal_file=$(psql \
   --no-password \
   --tuples-only \
   --no-align \
-  --command "SELECT pg_walfile_name(pg_switch_wal())")
+  --command "SELECT pg_walfile_name(pg_switch_wal() - 1)")
 printf '%s' "$wal_file" | grep -Eq '^[0-9A-F]{24}$' || fail "恢复点末端 WAL 无效"
 [ "$start_wal" \> "$wal_file" ] && fail "WAL 恢复区间倒置"
 
