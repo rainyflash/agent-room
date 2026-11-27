@@ -5,6 +5,8 @@ export type LobbyRoomState =
   | {
       readonly code:
         'lobby.matrix_unavailable' | 'lobby.room_not_joined' | 'lobby.room_projection_invalid';
+      /** Matrix 上你是受邀、还没加入（`lobby.room_not_joined` 才有）。 */
+      readonly invited?: true;
       readonly kind: 'failed';
       readonly retryable: boolean;
     }
@@ -66,6 +68,7 @@ export class LobbyRoomStore {
       ? Object.freeze({ kind: 'ready', room: result.value })
       : Object.freeze({
           code: result.error.code,
+          ...(result.error.invited === true ? { invited: true as const } : {}),
           kind: 'failed',
           retryable: result.error.retryable,
         });

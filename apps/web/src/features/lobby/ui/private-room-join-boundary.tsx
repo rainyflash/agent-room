@@ -32,12 +32,15 @@ export function PrivateRoomJoinBoundary({
   state,
 }: PrivateRoomJoinBoundaryProps) {
   const { privateRoomMatrix, privateRooms } = useAppServices();
-  // 子房间不在房间列表里，单独问这一间（`usePrivateRoomListWith`）。
+  // 子房间不在房间列表里，单独问这一间（`usePrivateRoomListWith`）。只在 Matrix 上是受邀时问：服务器把人记进
+  // 子房间时会邀请他。刚进公共大厅、同步还没带回“已加入”的那一下也会走到这里，它不在列表里、也不是子房间，
+  // 问了是 404，控制面记一条告警（agent-room-ops#133）。邀请晚一步同步到时，房间状态跟着变，那时再问。
   const list = usePrivateRoomListWith(
     privateRooms,
     principalId ?? undefined,
     catalogId,
     principalId !== null,
+    state.invited === true,
   );
   const room =
     principalId !== null && list.data?.ok === true

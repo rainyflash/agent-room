@@ -26,6 +26,14 @@ describe('MatrixLobbyGateway', () => {
       error: { code: 'lobby.room_not_joined', retryable: true },
       ok: false,
     });
+    const invited = new MatrixLobbyGateway(
+      source({ invited: true, kind: 'room-not-joined' }),
+      () => NOW,
+    );
+    expect(invited.read('!room:agent-room.test')).toEqual({
+      error: { code: 'lobby.room_not_joined', invited: true, retryable: true },
+      ok: false,
+    });
   });
 
   it('按 Agent 聚合多实例，并让需要关注的有效状态取得代表权', () => {

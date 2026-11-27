@@ -418,7 +418,9 @@ const lobby: LobbyGateway = {
       return parentNoticeFixture
         ? ok(fixtureParentRoom())
         : err({ code: 'lobby.room_not_joined', retryable: true });
-    return matrixInvited ? err({ code: 'lobby.room_not_joined', retryable: true }) : ok(room);
+    return matrixInvited
+      ? err({ code: 'lobby.room_not_joined', invited: true, retryable: true })
+      : ok(room);
   },
   subscribe: (_roomId, listener) => {
     lobbyListeners.add(listener);

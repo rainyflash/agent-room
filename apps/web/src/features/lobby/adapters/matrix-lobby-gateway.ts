@@ -155,7 +155,11 @@ export class MatrixLobbyGateway implements LobbyGateway {
         return err({ code: 'lobby.matrix_unavailable', retryable: true });
       }
       if (read.kind === 'room-not-joined') {
-        return err({ code: 'lobby.room_not_joined', retryable: true });
+        return err({
+          code: 'lobby.room_not_joined',
+          ...(read.invited === true ? { invited: true as const } : {}),
+          retryable: true,
+        });
       }
       const observedAtUnixMs = this.#now();
       return ok(projectRoom(read.room, observedAtUnixMs));

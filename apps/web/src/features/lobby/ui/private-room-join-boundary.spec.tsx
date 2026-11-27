@@ -38,27 +38,33 @@ const ROOM = {
   version: 0,
 } satisfies PrivateRoom;
 const NOT_JOINED = { code: 'lobby.room_not_joined', kind: 'failed', retryable: true } as const;
+const INVITED = { ...NOT_JOINED, invited: true } as const;
 
 function renderBoundary({
   join = vi.fn<PrivateRoomMatrixGateway['join']>(() => Promise.resolve(ok(undefined))),
   principalId = OWNER,
   rooms = [ROOM],
   single = null,
+  state = NOT_JOINED,
 }: {
   readonly join?: ReturnType<typeof vi.fn<PrivateRoomMatrixGateway['join']>>;
   readonly principalId?: string | null;
   readonly rooms?: readonly PrivateRoom[];
   /** 单独问这一间时的回答（子房间不在房间列表里）；`null` 是找不到。 */
   readonly single?: PrivateRoom | null;
+  /** Matrix 上是不是受邀：只有受邀的才单独去问。 */
+  readonly state?: typeof NOT_JOINED | typeof INVITED;
 } = {}) {
   const onRetry = vi.fn();
+  const inspect = vi.fn(() =>
+    Promise.resolve(
+      single === null ? err({ code: 'private_room.not_found', retryable: false }) : ok(single),
+    ),
+  );
   const services = {
     privateRoomMatrix: { join, leave: vi.fn() } satisfies PrivateRoomMatrixGateway,
     privateRooms: {
-      inspect: () =>
-        Promise.resolve(
-          single === null ? err({ code: 'private_room.not_found', retryable: false }) : ok(single),
-        ),
+      inspect,
       list: () => Promise.resolve(ok(rooms)),
     } as unknown as PrivateRoomGateway,
   } as unknown as AppServices;
@@ -71,13 +77,13 @@ function renderBoundary({
             onRetry={onRetry}
             principalId={principalId}
             roomId={ROOM.matrixRoomId}
-            state={NOT_JOINED}
+            state={state}
           />
         </AppServicesProvider>
       </QueryClientProvider>
     </I18nextProvider>,
   );
-  return { join, onRetry };
+  return { inspect, join, onRetry };
 }
 
 beforeAll(async () => {
@@ -108,15 +114,23 @@ describe('打开 Matrix 上还没加入的私人房间', () => {
     expect(join).not.toHaveBeenCalled();
   });
 
-  it('不在你的私人房间里（公共大厅、别人的房间）也不加入', async () => {
-    const { join } = renderBoundary({ rooms: [] });
+  it('不在你的私人房间里（别人的房间）也不加入', async () => {
+    const { join } = renderBoundary({ rooms: [], state: INVITED });
 
     expect(await screen.findByText('You are not in this room yet')).toBeVisible();
     expect(join).not.toHaveBeenCalled();
   });
 
+  it('Matrix 上不是受邀（刚进公共大厅、同步还没到）：不单独去问，也不加入', async () => {
+    const { inspect, join } = renderBoundary({ rooms: [] });
+
+    expect(await screen.findByText('You are not in this room yet')).toBeVisible();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(join).not.toHaveBeenCalled();
+  });
+
   it('子房间不在房间列表里：单独问到服务器记着你在里面，照样替你加入', async () => {
-    const { join } = renderBoundary({ rooms: [], single: ROOM });
+    const { join } = renderBoundary({ rooms: [], single: ROOM, state: INVITED });
 
     await waitFor(() => {
       expect(join).toHaveBeenCalledWith(ROOM.matrixRoomId);

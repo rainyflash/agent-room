@@ -80,6 +80,8 @@ export type LobbyFailureCode =
 
 export type LobbyFailure = {
   readonly code: LobbyFailureCode;
+  /** 只跟着 `lobby.room_not_joined`：Matrix 上你是受邀、还没加入。 */
+  readonly invited?: true;
   readonly retryable: boolean;
 };
 
