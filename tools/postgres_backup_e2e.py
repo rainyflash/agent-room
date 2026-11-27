@@ -300,6 +300,41 @@ def archive_point(source: str, repository: Path, password: Path, index: int, anc
         raise DrillFailure(f"WAL 归档失败：{result.stderr.strip()[-2000:]}")
 
 
+SWITCHED_SEGMENT = "pg_walfile_name(pg_switch_wal() - 1)"
+
+
+def idle_switch_names_the_switched_segment(source: str, repository: Path) -> dict[str, str]:
+    """切换落空时，两个脚本认出的那一段也会归档（agent-room-ops#131）。
+
+    检查点进程按 archive_timeout 的那次切换正好落在脚本打恢复点和切换之间时，脚本的切换落空，
+    pg_switch_wal() 回的是新一段的起点。这里连着切两次让第二次落空：按脚本的写法（减一个字节）认出的
+    是第一次切出去的那一段，要在一分钟内归档；不减一认出的是还在写的新一段，下一次切换以前不会归档。
+    只写恢复点记录，不动 messages，后面各次恢复的行数不受影响。
+    """
+
+    for script in (SCRIPT, ARCHIVE_SCRIPT):
+        if SWITCHED_SEGMENT not in script.read_text(encoding="utf-8"):
+            raise DrillFailure(f"{script.name} 没有按 {SWITCHED_SEGMENT} 认切换出去的段。")
+    for _ in range(3):
+        sql(source, "postgres", "SELECT pg_create_restore_point('idle_switch_check')")
+        first = sql(source, "postgres", f"SELECT {SWITCHED_SEGMENT}")
+        idle = sql(
+            source, "postgres",
+            "SELECT pg_walfile_name(lsn - 1) || ' ' || pg_walfile_name(lsn) || ' '"
+            " || ((lsn - '0/0'::pg_lsn) % pg_size_bytes(current_setting('wal_segment_size')) = 0)"
+            " FROM (SELECT pg_switch_wal() AS lsn) AS switched",
+        ).split()
+        if idle[2] == "true":
+            break
+    else:
+        raise DrillFailure("连着切了三次，第二次切换都没落空：两次之间一直有别的写入。")
+    named, current = idle[0], idle[1]
+    if named != first or current == first:
+        raise DrillFailure(f"切换落空时认出的是 {named}、新一段是 {current}，第一次切出去的是 {first}。")
+    wait_until(f"落空的切换认出的 {named} 归档完", lambda: named in archived_segments(repository), 60)
+    return {"switched": first, "namedAfterIdleSwitch": named, "stillWriting": current}
+
+
 def broken_segment_is_refused(source: str, repository: Path, password: Path, anchor: WalAnchor) -> None:
     """收到坏段时停下：不收、不记、不删归档目录里的原文件。"""
 
@@ -467,6 +502,7 @@ def drill(name: str, root: Path) -> dict[str, object]:
     archive_point(source, repository, password, 1, anchor)
     check_store(store, ["anchor", "point", "point"])
     second = store.points()[-1]
+    idle_switch = idle_switch_names_the_switched_segment(source, repository)
     sql(source, "agent_room", "INSERT INTO messages SELECT g, 'after' FROM generate_series(201601, 201800) g")
     broken_segment_is_refused(source, repository, password, anchor)
 
@@ -480,6 +516,7 @@ def drill(name: str, root: Path) -> dict[str, object]:
         "logicalDumps": dumps,
         "deletionLedger": deletions_in(checkpoint),
         "walStore": list(store.segments()),
+        "idleSwitch": idle_switch,
     }
     evidence["fromFull"] = restore(
         f"{name}-full", physical, store, plan(RestoreTarget(restore_point=point.name)), ROWS_BEFORE_BACKUP,
