@@ -151,6 +151,11 @@ reason = "有人（扫描器、或者按 OIDC 标准试着自动注册客户端�
 
 [[ignore]]
 service = "identity"
+summary = '^LOGIN_ERROR error=client_not_found clientId=agent-room-desktop$'
+reason = "有人拿 agent-room-desktop 这个客户端名向身份服务的登录地址发了请求（扫描器照产品名猜客户端，2026-11-28 生产上 2 秒内 5 次，agent-room-ops#140）。身份服务里从没有过这个客户端：桌面端登录走控制面的网页登录加原生层，本机 Bridge 用 agent-room-bridge，我们自己的程序都不会带这个名字，所以不是正常登录被挡。只认这一个名字：别的 clientId 报 client_not_found 照常会报（那可能是部署时客户端没建好）；成片持续出现、或者桌面端用户登录不了时才要查"
+
+[[ignore]]
+service = "identity"
 summary = '^RESET_PASSWORD_ERROR error=user_not_found$'
 reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注册过）。页面照样说邮件已发出，不透露有没有这个账户"
 
