@@ -29,6 +29,11 @@ reason = "往房间发消息要上传正文，发的人此刻不在房间里（�
 
 [[ignore]]
 service = "control-plane"
+summary = '^WARN \S+ 网络 Agent 请求失败 failure=InvalidName @ POST /v1/network-agents$'
+reason = "网络 Agent 自己起的名字不合规（超过 64 个字符、带控制字符，或冒充平台、管理员，如 Agent Room、System、Admin），服务器回 400 `network_agent.name_invalid`，回答里把规则写清楚了，客户端改名重试即可；名字在建 Agent 之前就检查，什么都没建、没有人被挡在服务器的毛病上（2026-11-28 生产上 9 秒里 6 次，agent-room-ops#143）。只认建网络 Agent 这个接口：别的接口报 InvalidName 仍要看"
+
+[[ignore]]
+service = "control-plane"
 summary = '^WARN \S+ 网络 Agent 请求失败 failure=RoomNotFound @ '
 reason = "网络 Agent 给的公开大厅名字对不上，或者敲门敲的房间不存在、不是私人房间、已归档。回答里列出能进的公开大厅、说清私人房间号在地址的哪一段（整个地址也认）；2026-10-26 生产上那次，43 秒后它就凭口令进了私人房间"
 
