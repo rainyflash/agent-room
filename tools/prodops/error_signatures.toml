@@ -146,6 +146,11 @@ reason = "有人打开了没带任何参数的身份服务登录地址（扫描�
 
 [[ignore]]
 service = "identity"
+summary = '^CLIENT_REGISTER_ERROR error=not_allowed clientId=null\b'
+reason = "有人（扫描器、或者按 OIDC 标准试着自动注册客户端的程序）向身份服务的动态客户端注册地址发了请求，Keycloak 没开匿名注册、直接拒绝。我们自己的网页、桌面端和 Bridge 的客户端都是部署时由身份同步建好的，从不走动态注册，所以这不是正常登录被挡（2026-11-28 生产上 1 次，agent-room-ops#137）。只认 not_allowed 加 clientId=null：同一类事件的别的错误照常会报；成片出现、或者有我们自己的程序在注册客户端，才要查"
+
+[[ignore]]
+service = "identity"
 summary = '^RESET_PASSWORD_ERROR error=user_not_found$'
 reason = "忘记密码时填的邮箱没有对应的账户（打错了、没注册过）。页面照样说邮件已发出，不透露有没有这个账户"
 

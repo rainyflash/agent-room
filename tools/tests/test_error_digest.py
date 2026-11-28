@@ -464,6 +464,24 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn("Invalid scopes", digest.findings[0].sample)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_anonymous_client_registration_attempt_is_noise(self) -> None:
+        def register(error: str, client: str) -> str:
+            return (
+                KEYCLOAK_LOGIN_ERROR.replace("LOGIN_ERROR", "CLIENT_REGISTER_ERROR")
+                .replace("invalid_request", error)
+                .replace('clientId="agent-room-web"', f'clientId="{client}"')
+            )
+
+        digest = summarize(
+            {"identity": [register("not_allowed", "null"), register("invalid_client", "null")]},
+            load_noise(NOISE_FILE),
+        )
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            ["CLIENT_REGISTER_ERROR error=invalid_client"],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_browser_dropping_mid_response_is_noise(self) -> None:
         dropped = [
             "2026-11-15 13:56:07,100 ERROR [org.keycloak.services.error.KeycloakErrorHandler] (executor-thread-5) "
