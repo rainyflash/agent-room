@@ -251,6 +251,11 @@ reason = "打开了已经过期或用过的设备码批准链接，页面上让�
 
 [[ignore]]
 service = "identity"
+summary = "^WARN org\\.keycloak\\.services KC-SERVICES0099: Operation '[^']*' rejected\\. Policy '[^']*' rejected request to client-registration service\\. Details: Host not trusted\\.$"
+reason = "有人（扫描器、探测工具）向身份服务的动态客户端注册接口发请求，来源不在 Keycloak 的“受信任主机”策略里，被拒绝，没有客户端被注册。我们自己的客户端都是部署时由身份同步建好的，从不走动态注册，所以这是外面的探测，被策略挡下正是该有的结果（2026-11-28 生产上只出现一次，agent-room-ops#139）。只认 Host not trusted 这一句：策略换成别的原因（比如允许的客户端类型、过期令牌）或注册真的成功，报的是别的行，照常会报"
+
+[[ignore]]
+service = "identity"
 summary = '^WARN org\.keycloak\.common\.Profile Deprecated features '
 reason = "Keycloak 启动时提示有默认开着的旧功能，每次重建身份服务都有"
 
