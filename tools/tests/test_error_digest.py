@@ -1054,6 +1054,38 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn('"step": "matrix"', finding.sample)
         self.assertEqual(sum(digest.ignored.values()), 2)
 
+    def test_a_member_refused_by_the_room_rules_when_reading_agent_access_is_noise(self) -> None:
+        def inspect(step: str) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-11-28T03:22:47.000000Z",
+                    "level": "WARN",
+                    "fields": {
+                        "message": "Agent 口令请求失败",
+                        "correlation.id": CORRELATION_ID,
+                        "operation": "private_room.agent_access.inspect",
+                        "failure": "Forbidden",
+                        "step": step,
+                    },
+                    "target": "agent_room_control_plane::error",
+                    "span": {
+                        "correlation.id": CORRELATION_ID,
+                        "http.request.method": "GET",
+                        "url.path": f"/private-rooms/{CATALOG_ID}/agent-access",
+                    },
+                },
+                ensure_ascii=False,
+            )
+
+        digest = summarize(
+            {"control-plane": [inspect("rule"), inspect("matrix")]},
+            load_noise(NOISE_FILE),
+        )
+        [finding] = digest.findings
+        self.assertEqual(finding.count, 1)
+        self.assertIn('"step": "matrix"', finding.sample)
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_accounts_without_keeping_who(self) -> None:
