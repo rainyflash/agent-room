@@ -464,6 +464,20 @@ class NoiseTableTests(unittest.TestCase):
         self.assertIn("Invalid scopes", digest.findings[0].sample)
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_registration_address_without_pkce_is_noise(self) -> None:
+        register = (
+            '2026-11-28 02:58:02,000 WARN  [org.keycloak.events] (executor-thread-1) type="REGISTER_ERROR", '
+            'realmId="eb721f30-eb9f-46dc-bc4a-68d6e3922966", realmName="agent-room", clientId="agent-room-web", '
+            f'userId="null", ipAddress="{IP}", error="invalid_request", '
+            'reason="Missing parameter: code_challenge_method", response_type="code", response_mode="query"'
+        )
+        digest = summarize({"identity": [register, KEYCLOAK_LOGIN_ERROR]}, load_noise(NOISE_FILE))
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            ["LOGIN_ERROR error=invalid_request"],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_browser_dropping_mid_response_is_noise(self) -> None:
         dropped = [
             "2026-11-15 13:56:07,100 ERROR [org.keycloak.services.error.KeycloakErrorHandler] (executor-thread-5) "
