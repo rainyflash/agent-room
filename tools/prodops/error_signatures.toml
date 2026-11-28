@@ -231,6 +231,11 @@ reason = "注册表单没填对（密码不合要求、两次不一样、少填�
 
 [[ignore]]
 service = "identity"
+summary = '^REGISTER_ERROR error=invalid_request clientId=agent-room-web reason=Missing parameter: code_challenge_method\b'
+reason = "有人打开了缺 PKCE 参数的注册地址（扫描器、手敲或被截断的网址、很旧的书签）；我们的网页和桌面端发起登录和注册时一定带 code_challenge_method。2026-11-28 生产上只有一条。只认这一个缺参数的原因：别的 invalid_request（比如 Invalid scopes）仍会报出来；成片出现、或同时有正常登录失败，才要查网页是不是少带了参数"
+
+[[ignore]]
+service = "identity"
 summary = '^REGISTER_ERROR error=email_in_use$'
 reason = "拿已经注册过的邮箱又注册一次，注册页上直接说这个邮箱已经有账户；2026-10-27 生产上那次是验证链接过期了、以为要重新注册，两分钟后就登录上了"
 
