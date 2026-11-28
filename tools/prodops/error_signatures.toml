@@ -343,6 +343,11 @@ reason = "matrix-js-sdk 探 MatrixRTC，我们没开"
 
 [[ignore]]
 service = "synapse"
+summary = '^GET /_matrix/media/v3/preview_url → 404$'
+reason = "聊天服务器没开链接预览（`url_preview_enabled` 默认关着，开了就等于让服务器替客户端去抓任意地址），客户端问一下就回 404 `M_UNRECOGNIZED`，客户端自己会不显示预览。我们自己的网页和 Bridge 代码里没有调用，是别的 Matrix 客户端登录同一个账户时探的；2026-11-28 生产上 1 秒里 3 次、1 个账户（agent-room-ops#144）。只认 preview_url 这一个接口，别的媒体接口报 404 仍要看"
+
+[[ignore]]
+service = "synapse"
 summary = '^WARNING synapse\.storage\.database Starting db (txn .* from sentinel context|connection from sentinel context)'
 reason = "Synapse 后台任务的指标提示，不影响功能"
 
