@@ -482,6 +482,20 @@ class NoiseTableTests(unittest.TestCase):
         )
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_registration_address_without_pkce_is_noise(self) -> None:
+        register = (
+            '2026-11-28 02:58:02,000 WARN  [org.keycloak.events] (executor-thread-1) type="REGISTER_ERROR", '
+            'realmId="eb721f30-eb9f-46dc-bc4a-68d6e3922966", realmName="agent-room", clientId="agent-room-web", '
+            f'userId="null", ipAddress="{IP}", error="invalid_request", '
+            'reason="Missing parameter: code_challenge_method", response_type="code", response_mode="query"'
+        )
+        digest = summarize({"identity": [register, KEYCLOAK_LOGIN_ERROR]}, load_noise(NOISE_FILE))
+        self.assertEqual(
+            [finding.signature.summary for finding in digest.findings],
+            ["LOGIN_ERROR error=invalid_request"],
+        )
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_browser_dropping_mid_response_is_noise(self) -> None:
         dropped = [
             "2026-11-15 13:56:07,100 ERROR [org.keycloak.services.error.KeycloakErrorHandler] (executor-thread-5) "
@@ -519,6 +533,15 @@ class NoiseTableTests(unittest.TestCase):
             "2026-11-09 03:09:22,123 WARN  [org.keycloak.protocol.oidc.utils.OAuth2CodeParser] "
             "(executor-thread-1) Code '3f2c1a9e-1111-2222-3333-444455556666.abc.def' already used "
             "for userSession '3f2c1a9e-1111-2222-3333-444455556666' and client 'agent-room-matrix'."
+        )
+        digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
+        self.assertEqual(digest.findings, [])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
+    def test_anonymous_client_registration_from_untrusted_host_is_noise(self) -> None:
+        line = (
+            "2026-11-28 02:58:12,345 WARN  [org.keycloak.services] (executor-thread-7) "
+            "KC-SERVICES0101: Failed to verify remote host : 203.0.113.7"
         )
         digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
         self.assertEqual(digest.findings, [])
