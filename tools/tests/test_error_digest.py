@@ -506,6 +506,15 @@ class NoiseTableTests(unittest.TestCase):
         self.assertEqual(digest.findings, [])
         self.assertEqual(sum(digest.ignored.values()), 1)
 
+    def test_anonymous_client_registration_from_untrusted_host_is_noise(self) -> None:
+        line = (
+            "2026-11-28 02:58:12,345 WARN  [org.keycloak.services] (executor-thread-7) "
+            "KC-SERVICES0101: Failed to verify remote host : 203.0.113.7"
+        )
+        digest = summarize({"identity": [line]}, load_noise(NOISE_FILE))
+        self.assertEqual(digest.findings, [])
+        self.assertEqual(sum(digest.ignored.values()), 1)
+
     def test_recipient_refused_by_the_mail_server_is_noise(self) -> None:
         def failure(exception: str) -> str:
             return KEYCLOAK_SERVICES.replace(
